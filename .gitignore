@@ -1,0 +1,13 @@
+.env
+node_modules/
+frontend/dist/
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+models/
+*.onnx
+*.wav
+.DS_Store
+.idea/
+.vscode/
