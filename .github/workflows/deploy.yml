@@ -42,10 +42,33 @@ jobs:
           ECS_SSH_PORT: ${{ vars.ECS_SSH_PORT || '22' }}
         run: |
           set -euo pipefail
+
+          missing=()
+          [[ -n "${ECS_HOST:-}" ]] || missing+=("ECS_HOST")
+          [[ -n "${ECS_SSH_KEY:-}" ]] || missing+=("ECS_SSH_KEY")
+          if ((${#missing[@]} > 0)); then
+            echo "::error::Missing GitHub Actions secrets: ${missing[*]}"
+            echo "Add them under Settings → Secrets and variables → Actions."
+            echo "Also set ECS_USER before the rsync step."
+            exit 1
+          fi
+
           mkdir -p ~/.ssh
           printf '%s\n' "$ECS_SSH_KEY" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
-          ssh-keyscan -H -p "$ECS_SSH_PORT" "$ECS_HOST" >> ~/.ssh/known_hosts
+
+          if ! grep -q 'BEGIN .*PRIVATE KEY' ~/.ssh/id_rsa; then
+            echo "::error::ECS_SSH_KEY does not look like a PEM private key."
+            echo "Paste the full key, including -----BEGIN ... PRIVATE KEY----- lines."
+            exit 1
+          fi
+
+          echo "Fetching host key from ${ECS_HOST}:${ECS_SSH_PORT} ..."
+          if ! ssh-keyscan -T 15 -H -p "$ECS_SSH_PORT" "$ECS_HOST" >> ~/.ssh/known_hosts 2>&1; then
+            echo "::error::Could not reach SSH on ${ECS_HOST}:${ECS_SSH_PORT}."
+            echo "Check: ECS security group allows inbound TCP ${ECS_SSH_PORT} from 0.0.0.0/0 (or GitHub Actions IPs), sshd is running, and ECS_HOST is the public IP/domain."
+            exit 1
+          fi
 
       - name: Sync project files
         env:
