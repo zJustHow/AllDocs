@@ -35,6 +35,8 @@ export async function getDocumentFileUrl(documentId: string): Promise<string> {
 }
 
 export interface StreamHandlers {
+  onStatus?: (stage: string) => void;
+  onCitations?: (citations: Citation[]) => void;
   onDelta: (text: string) => void;
   onDone: (payload: { sessionId: string; citations: Citation[]; language: string }) => void;
   onError: (message: string) => void;
@@ -76,6 +78,8 @@ export async function streamChat(
     for (const line of lines) {
       if (!line.startsWith("data: ")) continue;
       const payload = JSON.parse(line.slice(6));
+      if (payload.type === "status") handlers.onStatus?.(payload.stage);
+      if (payload.type === "citations") handlers.onCitations?.(payload.citations ?? []);
       if (payload.type === "delta") handlers.onDelta(payload.content);
       if (payload.type === "done") {
         finished = true;

@@ -17,6 +17,18 @@ sync_engine = create_engine(settings.postgres_url_sync)
 SyncSession = sessionmaker(bind=sync_engine)
 
 
+def _set_progress(
+    db: OrmSession,
+    document: Document,
+    progress: int,
+    message: str | None = None,
+) -> None:
+    document.progress = min(max(progress, 0), 100)
+    if message is not None:
+        document.progress_message = message
+    db.commit()
+
+
 @celery_app.task(name="process_document")
 def process_document(document_id: str) -> None:
     doc_uuid = uuid.UUID(document_id)
@@ -27,11 +39,20 @@ def process_document(document_id: str) -> None:
 
         document.status = DocumentStatus.processing
         document.error_message = None
-        db.commit()
+        _set_progress(db, document, 5, "开始处理")
 
         try:
+            _set_progress(db, document, 10, "读取文件")
             file_bytes = StorageService().download(document.object_key)
-            parse_result = IngestionService().parse_pdf(file_bytes)
+
+            def on_page_progress(current: int, total: int) -> None:
+                pct = 10 + int(45 * current / total)
+                _set_progress(db, document, pct, f"解析第 {current}/{total} 页")
+
+            parse_result = IngestionService().parse_pdf(
+                file_bytes,
+                on_page_progress=on_page_progress,
+            )
             parsed_chunks = parse_result.chunks
             page_count = parse_result.page_count
             if not parsed_chunks:
@@ -40,6 +61,7 @@ def process_document(document_id: str) -> None:
             db.query(Chunk).filter(Chunk.document_id == doc_uuid).delete()
             db.commit()
 
+            _set_progress(db, document, 58, "保存文本块")
             chunk_rows: list[Chunk] = []
             for parsed in parsed_chunks:
                 chunk = Chunk(
@@ -54,6 +76,7 @@ def process_document(document_id: str) -> None:
                 chunk_rows.append(chunk)
             db.flush()
 
+            _set_progress(db, document, 65, "生成向量")
             vectors = EmbeddingService().embed_documents([chunk.text for chunk in chunk_rows])
             payloads = [
                 {
@@ -66,6 +89,8 @@ def process_document(document_id: str) -> None:
                 }
                 for chunk in chunk_rows
             ]
+
+            _set_progress(db, document, 80, "写入向量库")
             vector_store = VectorStore()
             vector_store.upsert_chunks(
                 chunk_ids=[chunk.id for chunk in chunk_rows],
@@ -75,6 +100,7 @@ def process_document(document_id: str) -> None:
 
             settings = get_settings()
             if settings.hybrid_enabled:
+                _set_progress(db, document, 90, "写入全文索引")
                 fulltext_store = FulltextStore()
                 fulltext_store.delete_by_document(doc_uuid)
                 fulltext_store.upsert_chunks(
@@ -90,9 +116,12 @@ def process_document(document_id: str) -> None:
             document.page_count = page_count
             document.ocr_pages = parse_result.ocr_pages
             document.error_message = None
+            _set_progress(db, document, 100, "完成")
             db.commit()
         except Exception as exc:
             document.status = DocumentStatus.failed
             document.error_message = str(exc)
+            document.progress = 0
+            document.progress_message = None
             db.commit()
             raise

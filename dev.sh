@@ -19,7 +19,7 @@ AllDocs 一键启动脚本
 
 用法:
   ./dev.sh              开发模式：Docker 后端 + 本地 Vite 前端（默认）
-  ./dev.sh --docker     生产模式：全部服务运行在 Docker 中
+  ./dev.sh --docker     生产模式：docker-compose.prod.yml（含 Nginx 前端，端口 3000）
   ./dev.sh --build      重新构建镜像后启动
   ./dev.sh --stop       停止所有 Docker 服务
   ./dev.sh --help       显示此帮助
@@ -79,13 +79,63 @@ ensure_piper_models() {
   bash "$ROOT/scripts/download_piper_models.sh" "$model_dir"
 }
 
+patch_env_var() {
+  local key="$1"
+  local value="$2"
+  local file="$ROOT/.env"
+
+  if grep -q "^${key}=" "$file"; then
+    sed -i.bak "s|^${key}=.*|${key}=${value}|" "$file"
+  else
+    printf '%s=%s\n' "$key" "$value" >>"$file"
+  fi
+  rm -f "$file.bak"
+}
+
 ensure_embedding_model() {
-  local local_model="$ROOT/models/modelscope/BAAI/bge-m3/config.json"
-  if [[ -f "$local_model" ]]; then
+  local model_root="$ROOT/models/modelscope"
+  local embed_model="$model_root/BAAI/bge-m3/config.json"
+  local rerank_model="$model_root/BAAI/bge-reranker-v2-m3/config.json"
+
+  if [[ -f "$embed_model" && -f "$rerank_model" ]]; then
+    patch_env_var "EMBEDDING_MODEL" "/app/models/modelscope/BAAI/bge-m3"
+    patch_env_var "RERANK_MODEL" "/app/models/modelscope/BAAI/bge-reranker-v2-m3"
     return
   fi
-  warn "未找到本地 BGE-M3 模型 (models/modelscope/BAAI/bge-m3)"
-  warn "首次启动时容器会自动从 ModelScope/HuggingFace 下载，可能需要较长时间"
+
+  warn "Embedding / Rerank 模型缺失，正在通过 Docker 容器下载（首次较慢）..."
+  require_docker
+  "${COMPOSE[@]}" up -d api >/dev/null 2>&1 || true
+  docker compose -f "$ROOT/docker-compose.yml" exec -T api python - <<'PY'
+import os
+import sys
+import subprocess
+
+subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "modelscope"])
+
+from modelscope import snapshot_download
+
+models = [
+    ("BAAI/bge-m3", "/app/models/modelscope/BAAI/bge-m3"),
+    ("BAAI/bge-reranker-v2-m3", "/app/models/modelscope/BAAI/bge-reranker-v2-m3"),
+]
+for repo_id, local_dir in models:
+    if os.path.isfile(os.path.join(local_dir, "config.json")):
+        print(f"Already exists: {repo_id}")
+        continue
+    print(f"Downloading {repo_id} -> {local_dir} ...")
+    snapshot_download(repo_id, local_dir=local_dir)
+    print(f"Ready: {repo_id}")
+PY
+
+  if [[ -f "$embed_model" ]]; then
+    patch_env_var "EMBEDDING_MODEL" "/app/models/modelscope/BAAI/bge-m3"
+  fi
+  if [[ -f "$rerank_model" ]]; then
+    patch_env_var "RERANK_MODEL" "/app/models/modelscope/BAAI/bge-reranker-v2-m3"
+  else
+    warn "Rerank 模型仍未就绪，可在 .env 中设置 RERANK_ENABLED=false 临时跳过"
+  fi
 }
 
 ensure_frontend_deps() {
@@ -115,9 +165,10 @@ wait_for_api() {
 }
 
 print_urls() {
+  local frontend_url="${1:-http://localhost:3000}"
   echo
   info "AllDocs 已启动"
-  echo "  前端:  http://localhost:3000"
+  echo "  前端:  ${frontend_url}"
   echo "  API:   http://localhost:8000"
   echo "  文档:  http://localhost:8000/docs"
   echo "  MinIO: http://localhost:9001  (minioadmin / minioadmin)"
@@ -161,10 +212,10 @@ start_docker() {
     bash "$ROOT/scripts/pull_docker_base.sh"
   fi
 
-  info "启动全部 Docker 服务（含前端）..."
-  "${COMPOSE[@]}" up -d "${build_flag[@]}"
+  info "启动生产 Compose（含 Nginx 前端）..."
+  FRONTEND_PORT=3000 "${COMPOSE[@]}" -f docker-compose.prod.yml up -d "${build_flag[@]}"
   wait_for_api
-  print_urls
+  print_urls "http://localhost:3000"
 }
 
 stop_all() {

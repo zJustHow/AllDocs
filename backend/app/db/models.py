@@ -30,6 +30,8 @@ class Document(Base):
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     page_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     ocr_pages: Mapped[int | None] = mapped_column(Integer, nullable=True, default=0)
+    progress: Mapped[int] = mapped_column(Integer, default=0)
+    progress_message: Mapped[str | None] = mapped_column(String(256), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()

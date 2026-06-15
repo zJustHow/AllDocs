@@ -1,4 +1,5 @@
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import fitz
@@ -132,7 +133,11 @@ class IngestionService:
             return ocr_text, True
         return native_text, False
 
-    def parse_pdf(self, file_bytes: bytes) -> ParseResult:
+    def parse_pdf(
+        self,
+        file_bytes: bytes,
+        on_page_progress: Callable[[int, int], None] | None = None,
+    ) -> ParseResult:
         doc = fitz.open(stream=file_bytes, filetype="pdf")
         page_count = doc.page_count
         sections: list[tuple[str | None, str, int | None]] = []
@@ -147,6 +152,8 @@ class IngestionService:
             if not page_text.strip():
                 continue
             sections.extend(_split_page_into_sections(page_text, page_number))
+            if on_page_progress is not None:
+                on_page_progress(page_number, page_count)
 
         if not sections:
             raise ValueError("No text extracted from PDF")

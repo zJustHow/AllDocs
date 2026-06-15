@@ -4,6 +4,8 @@ export interface DocumentItem {
   status: "pending" | "processing" | "ready" | "failed";
   page_count: number | null;
   ocr_pages: number | null;
+  progress: number;
+  progress_message: string | null;
   error_message: string | null;
   created_at: string;
 }

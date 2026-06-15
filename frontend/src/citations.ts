@@ -32,6 +32,12 @@ export function citationToViewerTarget(citation: Citation): ViewerTarget {
 }
 
 function parseInlineCitationRef(inner: string, citations: Citation[]): Citation | null {
+  const numericRefs = inner.match(/\d+/g);
+  if (numericRefs?.length === 1 && /^\s*\d+\s*$/.test(inner)) {
+    const index = Number(numericRefs[0]) - 1;
+    return citations[index] ?? null;
+  }
+
   const indexMatch = inner.match(/^\[?(\d+)\]?$/);
   if (indexMatch) {
     const index = Number(indexMatch[1]) - 1;
@@ -80,7 +86,7 @@ export function splitMessageWithCitations(
     return [{ type: "text", value: content }];
   }
 
-  const pattern = /\[([^\]]+)\]/g;
+  const pattern = /\[\s*(\d+)\s*\]|【\s*(\d+)\s*】|\[([^\]]+)\]/g;
   const segments: MessageSegment[] = [];
   let lastIndex = 0;
   let match: RegExpExecArray | null;
@@ -90,12 +96,23 @@ export function splitMessageWithCitations(
       segments.push({ type: "text", value: content.slice(lastIndex, match.index) });
     }
 
-    const inner = match[1];
-    const citation = parseInlineCitationRef(inner, citations);
-    if (citation) {
-      segments.push({ type: "citation", value: match[0], citation });
+    const numericRef = match[1] ?? match[2];
+    if (numericRef) {
+      const index = Number(numericRef) - 1;
+      const citation = citations[index];
+      if (citation) {
+        segments.push({ type: "citation", value: match[0], citation });
+      } else {
+        segments.push({ type: "text", value: match[0] });
+      }
     } else {
-      segments.push({ type: "text", value: match[0] });
+      const inner = match[3];
+      const citation = parseInlineCitationRef(inner, citations);
+      if (citation) {
+        segments.push({ type: "citation", value: match[0], citation });
+      } else {
+        segments.push({ type: "text", value: match[0] });
+      }
     }
     lastIndex = match.index + match[0].length;
   }

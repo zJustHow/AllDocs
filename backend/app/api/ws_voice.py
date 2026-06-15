@@ -9,12 +9,18 @@ from sqlalchemy import select
 
 from app.db.models import Message, Session
 from app.db.session import async_session_factory
+from app.services.citations_util import normalize_answer_citations, public_citations
 from app.services.rag import RAGService, detect_language
 from app.services.speech import SpeechService
 
 router = APIRouter(tags=["voice-ws"])
 
 _SENTENCE_SPLIT = re.compile(r"(?<=[。！？.!?])\s*")
+_CITATION_MARKER = re.compile(r"\[\d+\]")
+
+
+def _strip_citation_markers(text: str) -> str:
+    return _CITATION_MARKER.sub("", text).strip()
 
 
 def _split_sentences(text: str) -> tuple[list[str], str]:
@@ -131,6 +137,8 @@ async def voice_websocket(websocket: WebSocket) -> None:
                     continue
 
                 context = rag.build_context(citations)
+                refs = public_citations(citations)
+                await _send_json(websocket, {"type": "citations", "citations": refs})
                 answer_parts: list[str] = []
                 pending_tts = ""
 
@@ -144,33 +152,27 @@ async def voice_websocket(websocket: WebSocket) -> None:
                     if with_audio:
                         complete, pending_tts = _split_sentences(pending_tts)
                         for sentence in complete:
+                            spoken = _strip_citation_markers(sentence)
+                            if not spoken:
+                                continue
                             await _send_json(websocket, {"type": "status", "stage": "speaking"})
-                            audio_wav = await asyncio.to_thread(speech.synthesize, sentence, lang)
+                            audio_wav = await asyncio.to_thread(speech.synthesize, spoken, lang)
                             await _send_json(
                                 websocket,
                                 {"type": "audio", "data": base64.b64encode(audio_wav).decode("ascii")},
                             )
 
                 if with_audio and pending_tts.strip():
-                    await _send_json(websocket, {"type": "status", "stage": "speaking"})
-                    audio_wav = await asyncio.to_thread(speech.synthesize, pending_tts.strip(), lang)
-                    await _send_json(
-                        websocket,
-                        {"type": "audio", "data": base64.b64encode(audio_wav).decode("ascii")},
-                    )
+                    spoken = _strip_citation_markers(pending_tts.strip())
+                    if spoken:
+                        await _send_json(websocket, {"type": "status", "stage": "speaking"})
+                        audio_wav = await asyncio.to_thread(speech.synthesize, spoken, lang)
+                        await _send_json(
+                            websocket,
+                            {"type": "audio", "data": base64.b64encode(audio_wav).decode("ascii")},
+                        )
 
-                answer = "".join(answer_parts)
-                public_citations = [
-                    {
-                        "document_id": item["document_id"],
-                        "document_name": item["document_name"],
-                        "page": item["page"],
-                        "section": item["section"],
-                        "snippet": item["snippet"],
-                        "score": item["score"],
-                    }
-                    for item in citations
-                ]
+                answer = normalize_answer_citations("".join(answer_parts))
 
                 db.add(Message(session_id=session.id, role="user", content=question))
                 db.add(
@@ -178,7 +180,7 @@ async def voice_websocket(websocket: WebSocket) -> None:
                         session_id=session.id,
                         role="assistant",
                         content=answer,
-                        citations=public_citations,
+                        citations=refs,
                     )
                 )
                 await db.commit()
@@ -188,7 +190,7 @@ async def voice_websocket(websocket: WebSocket) -> None:
                     {
                         "type": "done",
                         "session_id": str(session.id),
-                        "citations": public_citations,
+                        "citations": refs,
                         "language": lang,
                     },
                 )

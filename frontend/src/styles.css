@@ -21,12 +21,19 @@ body,
 #root {
   height: 100%;
   overflow: hidden;
+  overscroll-behavior: none;
 }
 
 body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
+}
+
+#root {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
 button,
@@ -37,7 +44,10 @@ textarea {
 .app {
   display: grid;
   grid-template-columns: 320px 1fr;
+  flex: 1;
+  min-height: 0;
   height: 100%;
+  max-height: 100dvh;
   overflow: hidden;
 }
 
@@ -84,7 +94,8 @@ textarea {
 .doc-list {
   flex: 1;
   min-height: 0;
-  overflow: auto;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .doc-list h2 {
@@ -137,6 +148,31 @@ textarea {
 .status.failed {
   background: #fee2e2;
   color: #991b1b;
+}
+
+.index-progress {
+  margin: 8px 0 4px;
+}
+
+.index-progress-bar {
+  height: 6px;
+  border-radius: 999px;
+  background: #e5e7eb;
+  overflow: hidden;
+}
+
+.index-progress-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #3b82f6, #2563eb);
+  transition: width 0.4s ease;
+}
+
+.index-progress-label {
+  display: block;
+  margin-top: 4px;
+  font-size: 0.75rem;
+  color: var(--muted);
 }
 
 .error-text {
@@ -212,7 +248,9 @@ textarea {
 .messages {
   flex: 1;
   min-height: 0;
-  overflow: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
   padding: 12px 28px 24px;
 }
 
@@ -407,39 +445,32 @@ textarea {
 }
 
 @media (max-width: 900px) {
-  html,
-  body,
-  #root {
-    overflow: auto;
+  .app {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(0, auto) minmax(0, 1fr);
   }
 
-  .app,
   .app.with-viewer {
     grid-template-columns: 1fr;
-    height: auto;
-    min-height: 100%;
-    overflow: visible;
+    grid-template-rows: minmax(0, auto) minmax(0, 1fr) minmax(0, 1fr);
   }
 
   .sidebar {
+    max-height: 38vh;
     border-right: none;
     border-bottom: 1px solid var(--line);
-    overflow: visible;
-  }
-
-  .doc-list {
-    overflow: visible;
+    overflow: hidden;
   }
 
   .chat {
-    min-height: 70vh;
-    overflow: visible;
+    min-height: 0;
+    overflow: hidden;
   }
 
   .doc-viewer {
     border-left: none;
     border-top: 1px solid var(--line);
-    min-height: 60vh;
-    overflow: visible;
+    min-height: 0;
+    overflow: hidden;
   }
 }

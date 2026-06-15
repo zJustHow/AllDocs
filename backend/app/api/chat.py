@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.schemas import ChatRequest, ChatResponse
 from app.db.models import Message, Session
 from app.db.session import get_db
+from app.services.citations_util import normalize_answer_citations, public_citations
 from app.services.rag import RAGService, detect_language
 
 router = APIRouter(prefix="/chat", tags=["chat"])
@@ -57,11 +58,13 @@ async def chat(
     doc_ids = payload.doc_ids or [uuid.UUID(doc_id) for doc_id in session.doc_ids]
 
     if payload.stream:
-        citations = await rag.retrieve(db, payload.message, doc_ids or None)
         lang = detect_language(payload.message)
 
         async def event_stream():
             try:
+                yield f"data: {json.dumps({'type': 'status', 'stage': 'retrieving'}, ensure_ascii=False)}\n\n"
+                citations = await rag.retrieve(db, payload.message, doc_ids or None)
+
                 if not citations:
                     fallback = (
                         "Not found in the manual."
@@ -83,31 +86,23 @@ async def chat(
                     return
 
                 context = rag.build_context(citations)
+                refs = public_citations(citations)
+                yield f"data: {json.dumps({'type': 'citations', 'citations': refs}, ensure_ascii=False)}\n\n"
+
                 answer_parts: list[str] = []
                 async for delta in rag.llm.chat_stream(payload.message, context, history):
                     answer_parts.append(delta)
                     yield f"data: {json.dumps({'type': 'delta', 'content': delta}, ensure_ascii=False)}\n\n"
 
-                answer = "".join(answer_parts)
-                public_citations = [
-                    {
-                        "document_id": item["document_id"],
-                        "document_name": item["document_name"],
-                        "page": item["page"],
-                        "section": item["section"],
-                        "snippet": item["snippet"],
-                        "score": item["score"],
-                    }
-                    for item in citations
-                ]
-                yield f"data: {json.dumps({'type': 'done', 'session_id': str(session.id), 'citations': public_citations, 'language': lang}, ensure_ascii=False)}\n\n"
+                answer = normalize_answer_citations("".join(answer_parts))
+                yield f"data: {json.dumps({'type': 'done', 'session_id': str(session.id), 'citations': refs, 'language': lang}, ensure_ascii=False)}\n\n"
                 db.add(Message(session_id=session.id, role="user", content=payload.message))
                 db.add(
                     Message(
                         session_id=session.id,
                         role="assistant",
                         content=answer,
-                        citations=public_citations,
+                        citations=refs,
                     )
                 )
                 await db.commit()

@@ -1,3 +1,5 @@
+import logging
+import os
 from uuid import UUID
 
 from langdetect import DetectorFactory, detect
@@ -6,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings, get_settings
 from app.db.models import Chunk, Document
+from app.services.citations_util import normalize_answer_citations
 from app.services.embedding import EmbeddingService
 from app.services.fulltext_store import FulltextStore
 from app.services.hybrid import reciprocal_rank_fusion
@@ -14,6 +17,13 @@ from app.services.reranker import RerankerService
 from app.services.vector_store import VectorStore
 
 DetectorFactory.seed = 0
+logger = logging.getLogger(__name__)
+
+
+def model_path_ready(model_ref: str) -> bool:
+    if not model_ref.startswith("/"):
+        return True
+    return os.path.isfile(os.path.join(model_ref, "config.json"))
 
 
 def detect_language(text: str) -> str:
@@ -33,7 +43,15 @@ class RAGService:
             FulltextStore(self.settings) if self.settings.hybrid_enabled else None
         )
         self.llm = LLMService(self.settings)
-        self.reranker = RerankerService(self.settings) if self.settings.rerank_enabled else None
+        self.reranker = None
+        if self.settings.rerank_enabled:
+            if model_path_ready(self.settings.rerank_model):
+                self.reranker = RerankerService(self.settings)
+            else:
+                logger.warning(
+                    "Rerank model not found at %s; rerank disabled for this process",
+                    self.settings.rerank_model,
+                )
 
     async def _load_citations(
         self,
@@ -148,6 +166,7 @@ class RAGService:
 
         context = self.build_context(citations)
         answer = await self.llm.chat(question, context, chat_history)
+        answer = normalize_answer_citations(answer)
         public_citations = [
             {
                 "document_id": item["document_id"],

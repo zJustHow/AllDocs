@@ -22,3 +22,11 @@ async def init_db() -> None:
         await conn.execute(
             text("ALTER TABLE documents ADD COLUMN IF NOT EXISTS ocr_pages INTEGER DEFAULT 0")
         )
+        await conn.execute(
+            text("ALTER TABLE documents ADD COLUMN IF NOT EXISTS progress INTEGER DEFAULT 0")
+        )
+        await conn.execute(
+            text(
+                "ALTER TABLE documents ADD COLUMN IF NOT EXISTS progress_message VARCHAR(256)"
+            )
+        )

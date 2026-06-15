@@ -11,6 +11,8 @@ class DocumentResponse(BaseModel):
     status: str
     page_count: int | None
     ocr_pages: int | None = 0
+    progress: int = 0
+    progress_message: str | None = None
     error_message: str | None
     created_at: datetime
 

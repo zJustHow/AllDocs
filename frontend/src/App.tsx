@@ -29,6 +29,7 @@ export default function App() {
   const [input, setInput] = useState("");
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [chatStage, setChatStage] = useState<string | null>(null);
   const [voiceStage, setVoiceStage] = useState<string | null>(null);
   const [recording, setRecording] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -47,6 +48,11 @@ export default function App() {
     [documents],
   );
 
+  const indexingDocs = useMemo(
+    () => documents.filter((doc) => doc.status === "pending" || doc.status === "processing"),
+    [documents],
+  );
+
   const refreshDocuments = useCallback(async () => {
     const docs = await listDocuments();
     setDocuments(docs);
@@ -59,16 +65,17 @@ export default function App() {
 
   useEffect(() => {
     refreshDocuments().catch((err) => setError(String(err)));
+    const intervalMs = indexingDocs.length > 0 ? 1500 : 5000;
     const timer = setInterval(() => {
       refreshDocuments().catch(() => undefined);
-    }, 5000);
+    }, intervalMs);
     return () => clearInterval(timer);
-  }, [refreshDocuments]);
+  }, [refreshDocuments, indexingDocs.length]);
 
   useEffect(() => {
     const container = messagesRef.current;
     if (!container) return;
-    container.scrollTo({ top: container.scrollHeight, behavior: "smooth" });
+    container.scrollTop = container.scrollHeight;
   }, [messages, loading]);
 
   const playNextAudio = useCallback(() => {
@@ -132,6 +139,7 @@ export default function App() {
     setError(null);
     setInput("");
     setLoading(true);
+    setChatStage("思考中...");
 
     const userMessage: ChatMessage = { id: newId(), role: "user", content: text };
     const assistantId = newId();
@@ -143,7 +151,16 @@ export default function App() {
 
     try {
       await streamChat(text, sessionId, selectedDocIds, {
+        onStatus: (stage) => {
+          if (stage === "retrieving") setChatStage("检索文档...");
+        },
+        onCitations: (citations) => {
+          setMessages((prev) =>
+            prev.map((msg) => (msg.id === assistantId ? { ...msg, citations } : msg)),
+          );
+        },
         onDelta: (delta) => {
+          setChatStage("生成回答...");
           setMessages((prev) =>
             prev.map((msg) =>
               msg.id === assistantId ? { ...msg, content: msg.content + delta } : msg,
@@ -152,6 +169,7 @@ export default function App() {
         },
         onDone: ({ sessionId: sid, citations }) => {
           setSessionId(sid);
+          setChatStage(null);
           setLoading(false);
           setMessages((prev) =>
             prev.map((msg) =>
@@ -163,6 +181,7 @@ export default function App() {
         },
         onError: (message) => {
           setError(message);
+          setChatStage(null);
           setLoading(false);
           setMessages((prev) =>
             prev.map((msg) =>
@@ -175,6 +194,7 @@ export default function App() {
       setError(String(err));
       setMessages((prev) => prev.filter((msg) => msg.id !== assistantId));
     } finally {
+      setChatStage(null);
       setLoading(false);
     }
   };
@@ -260,8 +280,17 @@ export default function App() {
           setMessages((prev) => [
             ...prev,
             { id: newId(), role: "user", content: payload.text as string },
-            { id: assistantId, role: "assistant", content: "", streaming: true },
+            { id: assistantId, role: "assistant", content: "", streaming: true, citations: [] },
           ]);
+        }
+        if (payload.type === "citations") {
+          setMessages((prev) =>
+            prev.map((msg) =>
+              msg.id === assistantId
+                ? { ...msg, citations: (payload.citations as ChatMessage["citations"]) ?? [] }
+                : msg,
+            ),
+          );
         }
         if (payload.type === "answer_delta") {
           setMessages((prev) =>
@@ -371,6 +400,21 @@ export default function App() {
                 <div>
                   <strong>{doc.name}</strong>
                   <span className={`status ${doc.status}`}>{STATUS_LABEL[doc.status]}</span>
+                  {(doc.status === "pending" || doc.status === "processing") && (
+                    <div className="index-progress">
+                      <div className="index-progress-bar">
+                        <div
+                          className="index-progress-fill"
+                          style={{ width: `${doc.status === "pending" ? 0 : doc.progress}%` }}
+                        />
+                      </div>
+                      <span className="index-progress-label">
+                        {doc.progress_message ??
+                          (doc.status === "pending" ? "等待处理" : "索引中...")}
+                        {doc.status === "processing" ? ` ${doc.progress}%` : ""}
+                      </span>
+                    </div>
+                  )}
                   {doc.page_count ? <span className="muted">{doc.page_count} 页</span> : null}
                   {doc.ocr_pages ? <span className="muted">OCR {doc.ocr_pages} 页</span> : null}
                   {doc.error_message ? <span className="error-text">{doc.error_message}</span> : null}
@@ -392,7 +436,7 @@ export default function App() {
       <main className="chat">
         <header className="chat-header">
           <h2>问答</h2>
-          <p>支持中文 / 英文提问，答案附引用来源</p>
+          <p>支持中文 / 英文提问</p>
         </header>
 
         <section className="messages" ref={messagesRef}>
@@ -406,10 +450,10 @@ export default function App() {
             <article key={msg.id} className={`bubble ${msg.role}`}>
               <div className="bubble-meta">{msg.role === "user" ? "你" : "助手"}</div>
               <div className="bubble-content">
-                {msg.role === "assistant" && msg.citations?.length ? (
+                {msg.role === "assistant" ? (
                   <MessageContent
                     content={msg.content}
-                    citations={msg.citations}
+                    citations={msg.citations ?? []}
                     onOpenDocument={openDocument}
                   />
                 ) : (
@@ -446,7 +490,7 @@ export default function App() {
               {recording ? "停止" : "语音"}
             </button>
             <button className="primary" onClick={sendText} disabled={loading || !input.trim()}>
-              {voiceStage ?? (loading ? "思考中..." : "发送")}
+              {voiceStage ?? chatStage ?? (loading ? "处理中..." : "发送")}
             </button>
           </div>
         </footer>
