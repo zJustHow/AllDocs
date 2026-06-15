@@ -102,6 +102,7 @@ services:
 
   worker:
     image: alldocs-backend
+    pull_policy: never
     restart: unless-stopped
     env_file: .env
     volumes:

@@ -3,23 +3,10 @@ FROM python:3.11-slim
 WORKDIR /app
 
 ENV DEBIAN_FRONTEND=noninteractive
-ARG TARGETARCH
 
 RUN sed -i 's|http://deb.debian.org|https://mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/debian.sources \
     && apt-get update \
-    && apt-get install -y --no-install-recommends build-essential curl xz-utils libgomp1 libgl1 libglib2.0-0 \
-    && case "${TARGETARCH}" in \
-        arm64) ffmpeg_arch=arm64 ;; \
-        amd64) ffmpeg_arch=amd64 ;; \
-        *) echo "Unsupported TARGETARCH: ${TARGETARCH}" && exit 1 ;; \
-       esac \
-    && curl -fsSL "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-${ffmpeg_arch}-static.tar.xz" -o /tmp/ffmpeg.tar.xz \
-    && tar -xf /tmp/ffmpeg.tar.xz -C /tmp \
-    && mv /tmp/ffmpeg-*-static/ffmpeg /usr/local/bin/ \
-    && mv /tmp/ffmpeg-*-static/ffprobe /usr/local/bin/ \
-    && rm -rf /tmp/ffmpeg* \
-    && apt-get purge -y curl xz-utils \
-    && apt-get autoremove -y \
+    && apt-get install -y --no-install-recommends build-essential libgomp1 libgl1 libglib2.0-0 ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .

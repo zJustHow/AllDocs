@@ -41,15 +41,23 @@ require_command() {
 install_docker() {
   if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
     info "Docker 与 Compose 插件已安装"
+    configure_docker_mirror
     return
   fi
 
-  require_command curl
   warn "正在安装 Docker（需要 root 或 sudo）..."
-  curl -fsSL https://get.docker.com | sh
+  if curl -fsSL --connect-timeout 15 https://get.docker.com | sh; then
+    info "已通过 get.docker.com 安装 Docker"
+  else
+    warn "get.docker.com 不可用，改用 apt 安装 docker.io + docker-compose-v2..."
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update -qq
+    apt-get install -y -qq docker.io docker-compose-v2
+    systemctl enable --now docker
+  fi
 
   if ! docker compose version >/dev/null 2>&1; then
-    error "Docker 已安装但未找到 compose 插件，请手动安装 docker-compose-plugin"
+    error "Docker 已安装但未找到 compose 插件，请手动安装 docker-compose-v2 或 docker-compose-plugin"
     exit 1
   fi
 
@@ -59,6 +67,26 @@ install_docker() {
   fi
 
   info "Docker 安装完成"
+  configure_docker_mirror
+}
+
+configure_docker_mirror() {
+  local mirror="${DOCKER_MIRROR:-docker.m.daocloud.io}"
+  mkdir -p /etc/docker
+
+  if [[ -f /etc/docker/daemon.json ]] && grep -q "$mirror" /etc/docker/daemon.json 2>/dev/null; then
+    info "Docker 镜像加速已配置 ($mirror)"
+    return
+  fi
+
+  warn "配置 Docker 镜像加速 ($mirror)，解决国内拉取 docker.io 超时..."
+  cat >/etc/docker/daemon.json <<EOF
+{
+  "registry-mirrors": ["https://${mirror}"]
+}
+EOF
+  systemctl restart docker
+  info "Docker 镜像加速已启用"
 }
 
 ensure_env() {
@@ -155,8 +183,9 @@ print_next_steps() {
   info "初始化完成，后续步骤："
   echo "  1. 编辑 .env，至少设置 LLM_API_KEY"
   echo "  2. 阿里云安全组放行 80（以及 GitHub Actions 所需的 22）"
-  echo "  3. 在 GitHub 仓库配置 Secrets: ECS_HOST, ECS_USER, ECS_SSH_KEY"
-  echo "  4. push 到 main 触发自动部署，或手动执行:"
+  echo "  3. 若拉取镜像超时，确认已配置 Docker 镜像加速（bootstrap 会自动配置）"
+  echo "  4. 在 GitHub 仓库配置 Secrets: ECS_HOST, ECS_USER, ECS_SSH_KEY"
+  echo "  5. push 到 main 触发自动部署，或手动执行:"
   echo "       docker compose -f docker-compose.prod.yml up -d --build"
   echo
   echo "  查看日志: docker compose -f docker-compose.prod.yml logs -f api worker"

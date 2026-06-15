@@ -97,6 +97,7 @@ services:
 
   worker:
     image: alldocs-backend
+    pull_policy: never
     env_file: .env
     volumes:
       - ./backend/app:/app/app
