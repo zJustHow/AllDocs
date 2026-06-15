@@ -58,7 +58,10 @@ export default function App() {
   const [viewerOpen, setViewerOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
-  const messagesRef = useRef<HTMLElement>(null);
+  const chatAreaRef = useRef<HTMLDivElement>(null);
+  const messageRefs = useRef<Map<string, HTMLElement>>(new Map());
+  const scrollUserMessageIdRef = useRef<string | null>(null);
+  const spacerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const viewerCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -96,11 +99,36 @@ export default function App() {
     return () => clearInterval(timer);
   }, [refreshDocuments, indexingDocs.length]);
 
+  const scrollUserMessageToTop = useCallback((userMessageId: string) => {
+    const messageEl = messageRefs.current.get(userMessageId);
+    if (!messageEl) return;
+    messageEl.scrollIntoView({ block: "start", behavior: "instant" });
+  }, []);
+
   useEffect(() => {
-    const container = messagesRef.current;
-    if (!container) return;
-    container.scrollTop = container.scrollHeight;
-  }, [messages, loading]);
+    const userMessageId = scrollUserMessageIdRef.current;
+    if (!userMessageId) return;
+
+    requestAnimationFrame(() => {
+      const container = chatAreaRef.current;
+      const messageEl = messageRefs.current.get(userMessageId);
+      const spacer = spacerRef.current;
+      if (container && messageEl && spacer) {
+        const topGap =
+          parseFloat(
+            getComputedStyle(document.documentElement).getPropertyValue("--chat-content-top"),
+          ) || 32;
+        const room =
+          container.clientHeight - messageEl.getBoundingClientRect().height - topGap - 24;
+        spacer.style.minHeight = `${Math.max(room, 0)}px`;
+      }
+
+      requestAnimationFrame(() => {
+        scrollUserMessageToTop(userMessageId);
+        scrollUserMessageIdRef.current = null;
+      });
+    });
+  }, [messages, scrollUserMessageToTop]);
 
   useEffect(
     () => () => {
@@ -180,6 +208,8 @@ export default function App() {
     setSessionId(null);
     setError(null);
     setInput("");
+    scrollUserMessageIdRef.current = null;
+    if (spacerRef.current) spacerRef.current.style.minHeight = "";
   };
 
   const sendText = async (textOverride?: string) => {
@@ -198,6 +228,7 @@ export default function App() {
     let assistantId: string | null = null;
     try {
       const userMessage: ChatMessage = { id: newId(), role: "user", content: text };
+      scrollUserMessageIdRef.current = userMessage.id;
       assistantId = newId();
       setMessages((prev) => [
         ...prev,
@@ -339,9 +370,11 @@ export default function App() {
         }
         if (payload.type === "transcript") {
           setVoiceStage("生成回答...");
+          const userMessageId = newId();
+          scrollUserMessageIdRef.current = userMessageId;
           setMessages((prev) => [
             ...prev,
-            { id: newId(), role: "user", content: payload.text as string },
+            { id: userMessageId, role: "user", content: payload.text as string },
             { id: assistantId, role: "assistant", content: "", streaming: true, citations: [] },
           ]);
         }
@@ -567,14 +600,18 @@ export default function App() {
             <MenuIcon />
           </button>
           <span className="top-bar-title">AllDocs</span>
-          {selectedDocIds.length > 0 && (
+          {selectedDocIds.length > 0 ? (
             <span className="top-bar-sub">
               <DocIcon /> {selectedDocIds.length} 份文档已选
+            </span>
+          ) : (
+            <span className="top-bar-sub top-bar-hint">
+              {readyDocs.length === 0 ? "请先上传 PDF 说明书" : "请在左侧选择文档"}
             </span>
           )}
         </header>
 
-        <div className="chat-area">
+        <div className="chat-area" ref={chatAreaRef}>
           {!hasMessages ? (
             <div className="welcome">
               <div className="welcome-logo">
@@ -599,9 +636,16 @@ export default function App() {
               </div>
             </div>
           ) : (
-            <section className="messages" ref={messagesRef}>
+            <section className="messages">
               {messages.map((msg) => (
-                <article key={msg.id} className={`message ${msg.role}`}>
+                <article
+                  key={msg.id}
+                  className={`message ${msg.role}`}
+                  ref={(el) => {
+                    if (el) messageRefs.current.set(msg.id, el);
+                    else messageRefs.current.delete(msg.id);
+                  }}
+                >
                   <div className="message-avatar">
                     {msg.role === "assistant" ? (
                       <AllDocsIcon size={28} />
@@ -625,6 +669,7 @@ export default function App() {
                   </div>
                 </article>
               ))}
+              <div ref={spacerRef} className="message-scroll-spacer" aria-hidden="true" />
             </section>
           )}
         </div>
@@ -685,6 +730,7 @@ export default function App() {
       {viewerTarget && (
         <div className={`doc-viewer-slot ${viewerOpen ? "is-open" : ""}`}>
           <DocumentViewer
+            key={`${viewerTarget.documentId}-${viewerTarget.page ?? 1}`}
             target={viewerTarget}
             onClose={closeViewer}
           />

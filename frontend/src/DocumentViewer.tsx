@@ -27,12 +27,6 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
   const pageCount = target.pageCount ?? null;
 
   useEffect(() => {
-    const page = target.page ?? 1;
-    setCurrentPage(page);
-    setPageInput(String(page));
-  }, [target.documentId, target.page]);
-
-  useEffect(() => {
     let active = true;
     const cached = pdfUrlCache.get(target.documentId);
 
@@ -104,7 +98,7 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
             {error && <p className="doc-viewer-status error-text">{error}</p>}
             {iframeSrc && !error && (
               <iframe
-                key={target.documentId}
+                key={`${target.documentId}-${currentPage}`}
                 title={target.documentName}
                 src={iframeSrc}
                 className="doc-viewer-frame"

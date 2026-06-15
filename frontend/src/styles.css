@@ -28,9 +28,7 @@
   --glass-blur: 20px;
   --glass-saturate: 120%;
   --glass-border: rgba(236, 236, 241, 0.95);
-  --glass-shadow: 0 0 0 1px rgba(0, 0, 0, 0.05), 0 4px 16px rgba(0, 0, 0, 0.06);
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
-  --shadow-md: 0 0 0 1px rgba(0, 0, 0, 0.05), 0 4px 16px rgba(0, 0, 0, 0.08);
+  --panel-shadow: 0 0 0 1px rgba(0, 0, 0, 0.05), 0 4px 16px rgba(0, 0, 0, 0.06);
   --radius-sm: 8px;
   --radius-md: 12px;
   --radius-lg: 26px;
@@ -38,6 +36,7 @@
   --radius-full: 999px;
   --app-padding: 12px;
   --layout-header: 56px;
+  --chat-content-top: 32px;
   --sidebar-width: 260px;
   --content-max: 768px;
   --viewer-duration: 0.32s;
@@ -100,7 +99,7 @@ button {
   backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
   border: 1px solid var(--glass-border);
-  box-shadow: var(--glass-shadow);
+  box-shadow: var(--panel-shadow);
 }
 
 .glass-strong {
@@ -108,7 +107,7 @@ button {
   backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
   border: 1px solid var(--glass-border);
-  box-shadow: var(--glass-shadow);
+  box-shadow: var(--panel-shadow);
 }
 
 /* ── Sidebar ── */
@@ -124,7 +123,7 @@ button {
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
   border: 1px solid var(--line);
   border-radius: var(--radius-panel);
-  box-shadow: var(--glass-shadow);
+  box-shadow: var(--panel-shadow);
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -446,7 +445,7 @@ button {
   backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
   border: 1px solid var(--line);
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--panel-shadow);
 }
 
 .top-bar-menu.hidden {
@@ -467,6 +466,10 @@ button {
   font-size: 0.8rem;
   color: var(--muted);
   margin-left: auto;
+}
+
+.top-bar-hint {
+  color: var(--warning);
 }
 
 .chat-area {
@@ -527,29 +530,35 @@ button {
   -webkit-backdrop-filter: blur(12px) saturate(var(--glass-saturate));
   color: var(--text-secondary);
   font-size: 0.875rem;
-  box-shadow: var(--glass-shadow);
+  box-shadow: var(--panel-shadow);
   transition: background 0.15s, box-shadow 0.15s;
 }
 
 .suggestion-chip:hover {
   background: var(--surface-hover);
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--panel-shadow);
 }
 
 /* ── Messages ── */
 
 .messages {
-  flex: 1;
-  padding: 8px 24px 24px;
+  padding: 16px 24px 24px;
   max-width: calc(var(--content-max) + 48px);
   margin: 0 auto;
   width: 100%;
+}
+
+.message-scroll-spacer {
+  flex-shrink: 0;
+  width: 100%;
+  pointer-events: none;
 }
 
 .message {
   display: flex;
   gap: 16px;
   margin-bottom: 28px;
+  scroll-margin-top: var(--chat-content-top);
   animation: fadeIn 0.3s ease;
 }
 
@@ -614,7 +623,7 @@ button {
   backdrop-filter: blur(12px) saturate(var(--glass-saturate));
   -webkit-backdrop-filter: blur(12px) saturate(var(--glass-saturate));
   border: 1px solid var(--glass-border);
-  box-shadow: var(--glass-shadow);
+  box-shadow: var(--panel-shadow);
   padding: 12px 18px;
   border-radius: 18px;
   max-width: 85%;
@@ -735,14 +744,14 @@ button {
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
   border-radius: var(--radius-lg);
   padding: 6px 6px 6px 20px;
-  box-shadow: var(--shadow-md);
+  box-shadow: var(--panel-shadow);
   border: 1px solid var(--glass-border);
   transition: border-color 0.15s, box-shadow 0.15s;
 }
 
 .input-pill:focus-within {
   border-color: #d9d9e3;
-  box-shadow: var(--shadow-md);
+  box-shadow: var(--panel-shadow);
 }
 
 .input-pill textarea {
@@ -841,7 +850,7 @@ button {
   border: 1px solid var(--glass-border);
   font-size: 0.8rem;
   color: var(--muted);
-  box-shadow: var(--glass-shadow);
+  box-shadow: var(--panel-shadow);
 }
 
 .status-pill .dot {
@@ -909,7 +918,7 @@ button {
   background: rgba(255, 255, 255, 0.96);
   border: 1px solid var(--line);
   border-radius: var(--radius-panel);
-  box-shadow: var(--glass-shadow);
+  box-shadow: var(--panel-shadow);
   padding: 0 12px 12px;
   box-sizing: border-box;
   transform: translate3d(100%, 0, 0);
@@ -968,7 +977,7 @@ button {
   -webkit-backdrop-filter: blur(12px) saturate(var(--glass-saturate));
   color: var(--text-secondary);
   flex-shrink: 0;
-  box-shadow: var(--glass-shadow);
+  box-shadow: var(--panel-shadow);
   transition: background 0.15s;
 }
 
@@ -990,7 +999,7 @@ button {
   background: var(--viewer-bg);
   border-radius: var(--radius-md);
   overflow: hidden;
-  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.08);
+  border: 1px solid var(--line);
 }
 
 .doc-viewer-canvas {
@@ -1038,7 +1047,7 @@ button {
   backdrop-filter: blur(16px) saturate(180%);
   -webkit-backdrop-filter: blur(16px) saturate(180%);
   border: 1px solid rgba(255, 255, 255, 0.12);
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.35);
+  box-shadow: var(--panel-shadow);
   z-index: 2;
 }
 
@@ -1104,7 +1113,7 @@ button {
   backdrop-filter: blur(12px) saturate(var(--glass-saturate));
   -webkit-backdrop-filter: blur(12px) saturate(var(--glass-saturate));
   border: 1px solid var(--glass-border);
-  box-shadow: var(--glass-shadow);
+  box-shadow: var(--panel-shadow);
 }
 
 .doc-viewer-snippet p {
@@ -1137,7 +1146,7 @@ button {
     transition:
       transform var(--panel-duration) var(--panel-ease),
       opacity var(--panel-duration) var(--panel-ease);
-    box-shadow: var(--shadow-md);
+    box-shadow: var(--panel-shadow);
   }
 
   .sidebar.open {
