@@ -5,7 +5,6 @@ import { CloseIcon, ZoomInIcon, ZoomOutIcon } from "./icons";
 
 interface DocumentViewerProps {
   target: ViewerTarget;
-  isOpen: boolean;
   onClose: () => void;
 }
 
@@ -13,9 +12,13 @@ const ZOOM_MIN = 50;
 const ZOOM_MAX = 200;
 const ZOOM_STEP = 25;
 
-export default function DocumentViewer({ target, isOpen, onClose }: DocumentViewerProps) {
-  const [pdfUrl, setPdfUrl] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+const pdfUrlCache = new Map<string, string>();
+
+export default function DocumentViewer({ target, onClose }: DocumentViewerProps) {
+  const [pdfUrl, setPdfUrl] = useState<string | null>(
+    () => pdfUrlCache.get(target.documentId) ?? null,
+  );
+  const [loading, setLoading] = useState(() => !pdfUrlCache.has(target.documentId));
   const [error, setError] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState(target.page ?? 1);
   const [pageInput, setPageInput] = useState(String(target.page ?? 1));
@@ -31,19 +34,22 @@ export default function DocumentViewer({ target, isOpen, onClose }: DocumentView
 
   useEffect(() => {
     let active = true;
-    let objectUrl: string | null = null;
+    const cached = pdfUrlCache.get(target.documentId);
+
+    if (cached) {
+      setPdfUrl(cached);
+      setLoading(false);
+      setError(null);
+      return;
+    }
 
     setLoading(true);
     setError(null);
-    setPdfUrl(null);
 
     getDocumentFileUrl(target.documentId)
       .then((url) => {
-        if (!active) {
-          URL.revokeObjectURL(url);
-          return;
-        }
-        objectUrl = url;
+        if (!active) return;
+        pdfUrlCache.set(target.documentId, url);
         setPdfUrl(url);
       })
       .catch((err) => {
@@ -55,7 +61,6 @@ export default function DocumentViewer({ target, isOpen, onClose }: DocumentView
 
     return () => {
       active = false;
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
   }, [target.documentId]);
 
@@ -81,7 +86,7 @@ export default function DocumentViewer({ target, isOpen, onClose }: DocumentView
   };
 
   return (
-    <aside className={`doc-viewer ${isOpen ? "is-open" : ""}`}>
+    <aside className="doc-viewer">
       <div className="doc-viewer-top">
         <div className="doc-viewer-meta">
           <span className="doc-viewer-name">{target.documentName}</span>
@@ -95,11 +100,11 @@ export default function DocumentViewer({ target, isOpen, onClose }: DocumentView
       <div className="doc-viewer-shell">
         <div className="doc-viewer-stage">
           <div className="doc-viewer-canvas" style={{ transform: `scale(${zoom / 100})` }}>
-            {loading && <p className="doc-viewer-status">加载文档中...</p>}
+            {loading && !pdfUrl && <p className="doc-viewer-status">加载文档中...</p>}
             {error && <p className="doc-viewer-status error-text">{error}</p>}
-            {!loading && !error && iframeSrc && (
+            {iframeSrc && !error && (
               <iframe
-                key={`${target.documentId}-${currentPage}`}
+                key={target.documentId}
                 title={target.documentName}
                 src={iframeSrc}
                 className="doc-viewer-frame"

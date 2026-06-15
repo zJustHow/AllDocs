@@ -102,19 +102,6 @@ export default function App() {
     container.scrollTop = container.scrollHeight;
   }, [messages, loading]);
 
-  useEffect(() => {
-    if (!viewerTarget) {
-      setViewerOpen(false);
-      return;
-    }
-
-    const frame = requestAnimationFrame(() => {
-      requestAnimationFrame(() => setViewerOpen(true));
-    });
-
-    return () => cancelAnimationFrame(frame);
-  }, [viewerTarget]);
-
   useEffect(
     () => () => {
       if (viewerCloseTimerRef.current) clearTimeout(viewerCloseTimerRef.current);
@@ -447,12 +434,22 @@ export default function App() {
     if (viewerCloseTimerRef.current) {
       clearTimeout(viewerCloseTimerRef.current);
       viewerCloseTimerRef.current = null;
-      setViewerOpen(true);
     }
-    setViewerTarget({
+
+    const nextTarget = {
       ...target,
       pageCount: doc?.page_count ?? target.pageCount ?? null,
-    });
+    };
+    const alreadyOpen = viewerTarget !== null && viewerOpen;
+
+    setViewerTarget(nextTarget);
+
+    if (alreadyOpen) {
+      setViewerOpen(true);
+      return;
+    }
+
+    requestAnimationFrame(() => setViewerOpen(true));
   };
 
   const toggleSidebar = () => setSidebarOpen((prev) => !prev);
@@ -686,11 +683,12 @@ export default function App() {
       </div>
 
       {viewerTarget && (
-        <DocumentViewer
-          target={viewerTarget}
-          isOpen={viewerOpen}
-          onClose={closeViewer}
-        />
+        <div className={`doc-viewer-slot ${viewerOpen ? "is-open" : ""}`}>
+          <DocumentViewer
+            target={viewerTarget}
+            onClose={closeViewer}
+          />
+        </div>
       )}
     </div>
   );

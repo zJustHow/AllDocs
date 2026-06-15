@@ -37,10 +37,13 @@
   --radius-panel: 20px;
   --radius-full: 999px;
   --app-padding: 12px;
+  --layout-header: 56px;
   --sidebar-width: 260px;
   --content-max: 768px;
   --viewer-duration: 0.32s;
   --viewer-ease: cubic-bezier(0.32, 0.72, 0, 1);
+  --panel-duration: 0.32s;
+  --panel-ease: cubic-bezier(0.32, 0.72, 0, 1);
   font-family: ui-sans-serif, -apple-system, "Segoe UI", "Roboto", "PingFang SC",
     "Helvetica Neue", sans-serif;
 }
@@ -86,6 +89,7 @@ button {
   height: 100%;
   max-height: 100dvh;
   overflow: hidden;
+  align-items: stretch;
   gap: var(--app-padding);
   padding: var(--app-padding);
   background: var(--bg-base);
@@ -113,6 +117,8 @@ button {
   width: var(--sidebar-width);
   flex-shrink: 0;
   align-self: stretch;
+  height: 100%;
+  min-height: 0;
   background: var(--sidebar-bg);
   backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
@@ -123,7 +129,12 @@ button {
   flex-direction: column;
   min-height: 0;
   overflow: hidden;
-  transition: width 0.25s ease, opacity 0.25s ease, margin 0.25s ease;
+  transition:
+    width var(--panel-duration) var(--panel-ease),
+    margin var(--panel-duration) var(--panel-ease),
+    opacity var(--panel-duration) var(--panel-ease),
+    border-color var(--panel-duration) var(--panel-ease),
+    box-shadow var(--panel-duration) var(--panel-ease);
   z-index: 20;
 }
 
@@ -131,7 +142,7 @@ button {
   width: 0;
   opacity: 0;
   margin-right: calc(var(--app-padding) * -1);
-  border: none;
+  border-color: transparent;
   box-shadow: none;
   overflow: hidden;
   pointer-events: none;
@@ -142,16 +153,25 @@ button {
   height: 100%;
   display: flex;
   flex-direction: column;
-  padding: 12px 12px 16px;
+  padding: 0 12px 16px;
   gap: 8px;
   min-height: 0;
+  transform: translateX(0);
+  transition: transform var(--panel-duration) var(--panel-ease);
+}
+
+.sidebar.collapsed .sidebar-inner {
+  transform: translateX(-100%);
 }
 
 .sidebar-top {
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 4px 0 8px;
+  flex-shrink: 0;
+  min-height: var(--layout-header);
+  height: var(--layout-header);
+  box-sizing: border-box;
 }
 
 .icon-btn {
@@ -396,6 +416,7 @@ button {
   flex: 1;
   min-width: 0;
   min-height: 0;
+  height: 100%;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -415,9 +436,10 @@ button {
     calc(100vw - 2 * var(--app-padding) - var(--app-padding) - var(--sidebar-width))
   );
   max-width: 100%;
-  margin: 8px auto 0;
-  padding: 8px 16px;
-  min-height: 56px;
+  margin: 0 auto;
+  padding: 0 16px;
+  min-height: var(--layout-header);
+  height: var(--layout-header);
   box-sizing: border-box;
   border-radius: var(--radius-md);
   background: var(--sidebar-bg);
@@ -654,6 +676,7 @@ button {
 .app.with-viewer.viewer-open .top-bar {
   width: 100%;
   max-width: none;
+  margin: 0;
   transition: width var(--viewer-duration) var(--viewer-ease);
 }
 
@@ -852,44 +875,51 @@ button {
 
 /* ── Document viewer (split-pane source panel) ── */
 
-.doc-viewer {
+.doc-viewer-slot {
   flex: 0 0 0;
   max-width: 0;
   min-width: 0;
+  height: 100%;
   align-self: stretch;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
   overflow: hidden;
-  background: var(--surface-elevated);
-  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
-  border: 1px solid transparent;
-  border-radius: var(--radius-panel);
-  box-shadow: none;
-  padding: 0;
-  opacity: 0;
-  transform: translateX(20px) scale(0.985);
-  pointer-events: none;
+  visibility: hidden;
   transition:
     flex var(--viewer-duration) var(--viewer-ease),
     max-width var(--viewer-duration) var(--viewer-ease),
-    opacity var(--viewer-duration) var(--viewer-ease),
-    transform var(--viewer-duration) var(--viewer-ease),
-    padding var(--viewer-duration) var(--viewer-ease),
-    border-color var(--viewer-duration) var(--viewer-ease),
-    box-shadow var(--viewer-duration) var(--viewer-ease);
+    visibility 0s linear var(--viewer-duration);
 }
 
-.doc-viewer.is-open {
+.doc-viewer-slot.is-open {
   flex: 1;
   max-width: none;
-  padding: 12px;
-  border-color: var(--line);
+  visibility: visible;
+  transition:
+    flex var(--viewer-duration) var(--viewer-ease),
+    max-width var(--viewer-duration) var(--viewer-ease),
+    visibility 0s;
+}
+
+.doc-viewer {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.96);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
   box-shadow: var(--glass-shadow);
-  opacity: 1;
-  transform: translateX(0) scale(1);
-  pointer-events: auto;
+  padding: 0 12px 12px;
+  box-sizing: border-box;
+  transform: translate3d(100%, 0, 0);
+  will-change: transform;
+  backface-visibility: hidden;
+  transition: transform var(--viewer-duration) var(--viewer-ease);
+}
+
+.doc-viewer-slot.is-open .doc-viewer {
+  transform: translate3d(0, 0, 0);
 }
 
 .doc-viewer-top {
@@ -897,8 +927,11 @@ button {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 4px 8px 12px;
   flex-shrink: 0;
+  min-height: var(--layout-header);
+  height: var(--layout-header);
+  padding: 0 8px;
+  box-sizing: border-box;
 }
 
 .doc-viewer-meta {
@@ -1099,14 +1132,17 @@ button {
     left: var(--app-padding);
     bottom: var(--app-padding);
     width: var(--sidebar-width);
+    margin-right: 0;
     transform: translateX(calc(-100% - var(--app-padding)));
+    transition:
+      transform var(--panel-duration) var(--panel-ease),
+      opacity var(--panel-duration) var(--panel-ease);
     box-shadow: var(--shadow-md);
   }
 
   .sidebar.open {
     transform: translateX(0);
     opacity: 1;
-    margin-right: 0;
     pointer-events: auto;
   }
 
@@ -1116,6 +1152,11 @@ button {
     opacity: 0;
     margin-right: 0;
     pointer-events: none;
+  }
+
+  .sidebar.collapsed .sidebar-inner,
+  .sidebar.open .sidebar-inner {
+    transform: translateX(0);
   }
 
   .sidebar-overlay {
@@ -1128,7 +1169,7 @@ button {
     z-index: 15;
     opacity: 0;
     pointer-events: none;
-    transition: opacity 0.25s;
+    transition: opacity var(--panel-duration) var(--panel-ease);
   }
 
   .sidebar-overlay.visible {
@@ -1136,22 +1177,29 @@ button {
     pointer-events: auto;
   }
 
-  .doc-viewer {
+  .doc-viewer-slot {
     position: fixed;
     top: var(--app-padding);
     right: var(--app-padding);
     bottom: var(--app-padding);
     left: var(--app-padding);
-    width: auto;
-    max-width: none;
     flex: none;
+    max-width: none;
+    width: auto;
     z-index: 30;
-    transform: translateY(24px) scale(0.98);
+    transform: translate3d(100%, 0, 0);
+    visibility: visible;
+    will-change: transform;
+    transition: transform var(--viewer-duration) var(--viewer-ease);
   }
 
-  .doc-viewer.is-open {
-    flex: none;
-    transform: translateY(0) scale(1);
+  .doc-viewer-slot.is-open {
+    transform: translate3d(0, 0, 0);
+  }
+
+  .doc-viewer {
+    transform: none;
+    transition: none;
   }
 
   .app.with-viewer .main {
