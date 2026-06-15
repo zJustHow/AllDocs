@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session as OrmSession, sessionmaker
 
 from app.config import get_settings
 from app.db.models import Chunk, Document, DocumentStatus
-from app.services.embedding import EmbeddingService
+from app.services.embedding import EmbeddingService, chunk_embedding_text
 from app.services.fulltext_store import FulltextStore
 from app.services.ingestion import IngestionService
 from app.services.storage import StorageService
@@ -77,7 +77,9 @@ def process_document(document_id: str) -> None:
             db.flush()
 
             _set_progress(db, document, 65, "生成向量")
-            vectors = EmbeddingService().embed_documents([chunk.text for chunk in chunk_rows])
+            vectors = EmbeddingService().embed_documents(
+                [chunk_embedding_text(chunk.text, chunk.section) for chunk in chunk_rows]
+            )
             payloads = [
                 {
                     "document_id": str(doc_uuid),

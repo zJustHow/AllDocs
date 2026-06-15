@@ -27,6 +27,12 @@ def _query_instruction() -> str:
     return ""
 
 
+def chunk_embedding_text(text: str, section: str | None) -> str:
+    if section:
+        return f"{section}\n{text}"
+    return text
+
+
 class EmbeddingService:
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()

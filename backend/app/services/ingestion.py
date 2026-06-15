@@ -7,7 +7,9 @@ import fitz
 from app.config import Settings, get_settings
 from app.services.ocr import OCRService
 
-_HEADING_RE = re.compile(r"^第[一二三四五六七八九十百千\d]+[章节部分]|^\d+(\.\d+)*\s+\S")
+_SECTION_PATH_MAX_LEN = 512
+_SECTION_PATH_SEPARATOR = " > "
+_PAGE_SEPARATOR = "\n\n"
 _PROCEDURE_RE = re.compile(r"^(\d+[\.\)、．]|步骤\s*\d+|[①②③④⑤])")
 
 
@@ -27,6 +29,15 @@ class ParseResult:
     ocr_pages: int
 
 
+@dataclass(frozen=True)
+class TocEntry:
+    level: int
+    title: str
+    start_page: int
+    end_page: int
+    path: str
+
+
 def _detect_chunk_type(text: str) -> str:
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     if not lines:
@@ -41,14 +52,16 @@ def _detect_chunk_type(text: str) -> str:
     return "text"
 
 
-def _split_text(text: str, chunk_size: int, overlap: int) -> list[str]:
+def _split_text_with_offsets(
+    text: str, chunk_size: int, overlap: int
+) -> list[tuple[int, str]]:
     text = re.sub(r"\n{3,}", "\n\n", text).strip()
     if not text:
         return []
     if len(text) <= chunk_size:
-        return [text]
+        return [(0, text)]
 
-    chunks: list[str] = []
+    chunks: list[tuple[int, str]] = []
     start = 0
     while start < len(text):
         end = min(start + chunk_size, len(text))
@@ -60,11 +73,58 @@ def _split_text(text: str, chunk_size: int, overlap: int) -> list[str]:
                 split_at = text.rfind(". ", start + chunk_size // 2, end)
             if split_at != -1:
                 end = split_at + 1
-        chunks.append(text[start:end].strip())
+        piece = text[start:end].strip()
+        if piece:
+            chunks.append((start, piece))
         if end >= len(text):
             break
         start = max(end - overlap, start + 1)
-    return [chunk for chunk in chunks if chunk]
+    return chunks
+
+
+def _group_contiguous_sections(
+    pages: list[tuple[str | None, str, int]],
+) -> list[tuple[str | None, list[tuple[int, str]]]]:
+    if not pages:
+        return []
+
+    groups: list[tuple[str | None, list[tuple[int, str]]]] = []
+    current_section = pages[0][0]
+    current_pages: list[tuple[int, str]] = [(pages[0][2], pages[0][1])]
+
+    for section, text, page in pages[1:]:
+        if section != current_section:
+            groups.append((current_section, current_pages))
+            current_section = section
+            current_pages = []
+        current_pages.append((page, text))
+    groups.append((current_section, current_pages))
+    return groups
+
+
+def _concat_pages(
+    pages: list[tuple[int, str]], separator: str = _PAGE_SEPARATOR
+) -> tuple[str, list[tuple[int, int]]]:
+    spans: list[tuple[int, int]] = []
+    parts: list[str] = []
+    offset = 0
+    for index, (page, text) in enumerate(pages):
+        if index > 0:
+            offset += len(separator)
+        spans.append((page, offset))
+        parts.append(text)
+        offset += len(text)
+    return separator.join(parts), spans
+
+
+def _page_for_offset(spans: list[tuple[int, int]], offset: int) -> int:
+    page = spans[0][0]
+    for span_page, start in spans:
+        if start <= offset:
+            page = span_page
+        else:
+            break
+    return page
 
 
 def _extract_native_page_text(page: fitz.Page) -> str:
@@ -89,30 +149,56 @@ def _page_needs_ocr(native_text: str, settings: Settings) -> bool:
     return len(native_text.strip()) < settings.ocr_min_chars_per_page
 
 
-def _split_page_into_sections(page_text: str, page_number: int) -> list[tuple[str | None, str, int]]:
-    lines = [line.strip() for line in page_text.splitlines() if line.strip()]
-    if not lines:
+def _truncate_section_path(path: str) -> str:
+    if len(path) <= _SECTION_PATH_MAX_LEN:
+        return path
+    return path[: _SECTION_PATH_MAX_LEN - 1] + "…"
+
+
+def build_toc_entries(doc: fitz.Document) -> list[TocEntry]:
+    raw_toc = doc.get_toc()
+    if not raw_toc:
         return []
 
-    sections: list[tuple[str | None, str, int]] = []
-    current_section: str | None = None
-    buffer: list[str] = []
+    page_count = doc.page_count
+    normalized: list[tuple[int, str, int, int]] = []
+    for index, (level, title, page) in enumerate(raw_toc):
+        start_page = max(1, int(page))
+        end_page = page_count
+        for next_index in range(index + 1, len(raw_toc)):
+            next_level, _, next_page = raw_toc[next_index]
+            if next_level <= level:
+                end_page = max(start_page, int(next_page) - 1)
+                break
+        normalized.append((int(level), str(title).strip(), start_page, end_page))
 
-    def flush_buffer() -> None:
-        if buffer:
-            sections.append((current_section, "\n".join(buffer).strip(), page_number))
-            buffer.clear()
+    path_titles: list[str] = []
+    path_levels: list[int] = []
+    entries: list[TocEntry] = []
+    for level, title, start_page, end_page in normalized:
+        while path_levels and path_levels[-1] >= level:
+            path_levels.pop()
+            path_titles.pop()
+        path_titles.append(title)
+        path_levels.append(level)
+        path = _SECTION_PATH_SEPARATOR.join(path_titles)
+        entries.append(
+            TocEntry(
+                level=level,
+                title=title,
+                start_page=start_page,
+                end_page=end_page,
+                path=_truncate_section_path(path),
+            )
+        )
+    return entries
 
-    for line in lines:
-        if _HEADING_RE.match(line):
-            flush_buffer()
-            current_section = line
-        buffer.append(line)
-    flush_buffer()
 
-    if not sections:
-        return [(None, page_text.strip(), page_number)]
-    return sections
+def section_for_page(entries: list[TocEntry], page: int) -> str | None:
+    matches = [entry for entry in entries if entry.start_page <= page <= entry.end_page]
+    if not matches:
+        return None
+    return max(matches, key=lambda entry: entry.level).path
 
 
 class IngestionService:
@@ -140,7 +226,8 @@ class IngestionService:
     ) -> ParseResult:
         doc = fitz.open(stream=file_bytes, filetype="pdf")
         page_count = doc.page_count
-        sections: list[tuple[str | None, str, int | None]] = []
+        toc_entries = build_toc_entries(doc)
+        pages: list[tuple[str | None, str, int]] = []
         ocr_pages = 0
 
         for page_index in range(page_count):
@@ -151,17 +238,19 @@ class IngestionService:
                 ocr_pages += 1
             if not page_text.strip():
                 continue
-            sections.extend(_split_page_into_sections(page_text, page_number))
+            section = section_for_page(toc_entries, page_number)
+            pages.append((section, page_text.strip(), page_number))
             if on_page_progress is not None:
                 on_page_progress(page_number, page_count)
 
-        if not sections:
+        if not pages:
             raise ValueError("No text extracted from PDF")
 
         parsed_chunks: list[ParsedChunk] = []
         chunk_index = 0
-        for section, section_text, page in sections:
-            for piece in _split_text(
+        for section, page_group in _group_contiguous_sections(pages):
+            section_text, page_spans = _concat_pages(page_group)
+            for offset, piece in _split_text_with_offsets(
                 section_text,
                 self.settings.rag_chunk_size,
                 self.settings.rag_chunk_overlap,
@@ -169,7 +258,7 @@ class IngestionService:
                 parsed_chunks.append(
                     ParsedChunk(
                         text=piece,
-                        page=page,
+                        page=_page_for_offset(page_spans, offset),
                         section=section,
                         chunk_index=chunk_index,
                         chunk_type=_detect_chunk_type(piece),
