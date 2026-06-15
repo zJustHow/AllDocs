@@ -1,9 +1,10 @@
 # Production stack for AllDocs.
 #
 # Usage:
-#   cp .env.example .env   # set LLM_API_KEY, POSTGRES_PASSWORD, MINIO_* secrets
-#   bash scripts/download_piper_models.sh models/piper
-#   docker compose -f docker-compose.prod.yml up -d --build
+#   bash scripts/server-bootstrap.sh --generate-secrets
+#   vim .env   # set LLM_API_KEY
+#   bash scripts/server-bootstrap.sh --start
+# (bootstrap downloads Piper + BGE models via ModelScope and patches .env paths)
 #
 # Required .env (in addition to .env.example defaults):
 #   POSTGRES_PASSWORD=<strong password>   # must match POSTGRES_URL / POSTGRES_URL_SYNC

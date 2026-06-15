@@ -21,7 +21,7 @@ usage() {
 AllDocs 生产服务器首次初始化
 
 用法:
-  bash scripts/server-bootstrap.sh                    安装 Docker、创建 .env、下载 Piper 模型
+  bash scripts/server-bootstrap.sh                    安装 Docker、创建 .env、下载 Piper / Embedding 模型
   bash scripts/server-bootstrap.sh --generate-secrets 自动生成数据库 / MinIO 密码
   bash scripts/server-bootstrap.sh --start            初始化完成后启动 docker-compose.prod.yml
   bash scripts/server-bootstrap.sh --help             显示此帮助
@@ -140,6 +140,18 @@ ensure_piper_models() {
   bash "$ROOT/scripts/download_piper_models.sh" "$ROOT/models/piper"
 }
 
+ensure_embedding_models() {
+  info "检查 Embedding / Rerank 模型（ModelScope，避免 HuggingFace 不可达）..."
+  bash "$ROOT/scripts/download_embedding_models.sh" "$ROOT/models/modelscope"
+
+  if [[ -f "$ROOT/models/modelscope/BAAI/bge-m3/config.json" ]]; then
+    patch_env_var "EMBEDDING_MODEL" "/app/models/modelscope/BAAI/bge-m3"
+  fi
+  if [[ -f "$ROOT/models/modelscope/BAAI/bge-reranker-v2-m3/config.json" ]]; then
+    patch_env_var "RERANK_MODEL" "/app/models/modelscope/BAAI/bge-reranker-v2-m3"
+  fi
+}
+
 validate_env() {
   local missing=0
 
@@ -226,6 +238,7 @@ if [[ "$GENERATE_SECRETS" == "1" ]]; then
 fi
 
 ensure_piper_models
+ensure_embedding_models
 
 if [[ "$START_STACK" == "1" ]]; then
   start_stack
