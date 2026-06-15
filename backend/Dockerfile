@@ -7,7 +7,7 @@ ARG TARGETARCH
 
 RUN sed -i 's|http://deb.debian.org|https://mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/debian.sources \
     && apt-get update \
-    && apt-get install -y --no-install-recommends build-essential curl xz-utils libgomp1 \
+    && apt-get install -y --no-install-recommends build-essential curl xz-utils libgomp1 libgl1 libglib2.0-0 \
     && case "${TARGETARCH}" in \
         arm64) ffmpeg_arch=arm64 ;; \
         amd64) ffmpeg_arch=amd64 ;; \

@@ -5,7 +5,6 @@ from sqlalchemy.orm import Session as OrmSession, sessionmaker
 
 from app.config import get_settings
 from app.db.models import Chunk, Document, DocumentStatus
-from app.config import get_settings
 from app.services.embedding import EmbeddingService
 from app.services.fulltext_store import FulltextStore
 from app.services.ingestion import IngestionService

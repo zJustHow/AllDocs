@@ -90,9 +90,15 @@ class RAGService:
         vector_ids = [str(hit.id) for hit in vector_hits]
         vector_score_map = {str(hit.id): float(hit.score) for hit in vector_hits}
 
+        bm25_ids: list[str] = []
         if self.fulltext_store:
-            bm25_hits = self.fulltext_store.search(question, retrieve_k, doc_ids)
-            bm25_ids = [chunk_id for chunk_id, _ in bm25_hits]
+            try:
+                bm25_hits = self.fulltext_store.search(question, retrieve_k, doc_ids)
+                bm25_ids = [chunk_id for chunk_id, _ in bm25_hits]
+            except Exception:
+                bm25_ids = []
+
+        if bm25_ids:
             fused = reciprocal_rank_fusion(
                 [vector_ids, bm25_ids],
                 top_k=retrieve_k,

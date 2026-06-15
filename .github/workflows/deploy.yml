@@ -1,0 +1,101 @@
+# Deploy AllDocs to Alibaba Cloud ECS (or any Linux host with Docker).
+#
+# First-time server setup:
+#   git clone <repo> /opt/alldocs && cd /opt/alldocs
+#   bash scripts/server-bootstrap.sh --generate-secrets
+#   vim .env   # set LLM_API_KEY
+#   bash scripts/server-bootstrap.sh --start
+#
+# GitHub repository secrets (Settings → Secrets and variables → Actions):
+#   ECS_HOST        Public IP or domain of the server
+#   ECS_USER        SSH user, e.g. root or ubuntu
+#   ECS_SSH_KEY     Private key (full PEM content)
+#
+# Optional repository variables:
+#   ECS_DEPLOY_PATH   Default: /opt/alldocs
+#   ECS_SSH_PORT      Default: 22
+
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure SSH
+        env:
+          ECS_HOST: ${{ secrets.ECS_HOST }}
+          ECS_SSH_KEY: ${{ secrets.ECS_SSH_KEY }}
+          ECS_SSH_PORT: ${{ vars.ECS_SSH_PORT || '22' }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "$ECS_SSH_KEY" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H -p "$ECS_SSH_PORT" "$ECS_HOST" >> ~/.ssh/known_hosts
+
+      - name: Sync project files
+        env:
+          ECS_HOST: ${{ secrets.ECS_HOST }}
+          ECS_USER: ${{ secrets.ECS_USER }}
+          ECS_SSH_PORT: ${{ vars.ECS_SSH_PORT || '22' }}
+          ECS_DEPLOY_PATH: ${{ vars.ECS_DEPLOY_PATH || '/opt/alldocs' }}
+        run: |
+          set -euo pipefail
+          rsync -avz --delete \
+            --exclude '.git/' \
+            --exclude '.env' \
+            --exclude 'node_modules/' \
+            --exclude 'frontend/node_modules/' \
+            --exclude 'models/' \
+            -e "ssh -p ${ECS_SSH_PORT}" \
+            ./ "${ECS_USER}@${ECS_HOST}:${ECS_DEPLOY_PATH}/"
+
+      - name: Build and start containers
+        env:
+          ECS_HOST: ${{ secrets.ECS_HOST }}
+          ECS_USER: ${{ secrets.ECS_USER }}
+          ECS_SSH_PORT: ${{ vars.ECS_SSH_PORT || '22' }}
+          ECS_DEPLOY_PATH: ${{ vars.ECS_DEPLOY_PATH || '/opt/alldocs' }}
+        run: |
+          set -euo pipefail
+          ssh -p "$ECS_SSH_PORT" "${ECS_USER}@${ECS_HOST}" \
+            "set -euo pipefail && cd '${ECS_DEPLOY_PATH}' && docker compose -f docker-compose.prod.yml up -d --build"
+
+      - name: Verify API health
+        env:
+          ECS_HOST: ${{ secrets.ECS_HOST }}
+          ECS_USER: ${{ secrets.ECS_USER }}
+          ECS_SSH_PORT: ${{ vars.ECS_SSH_PORT || '22' }}
+          ECS_DEPLOY_PATH: ${{ vars.ECS_DEPLOY_PATH || '/opt/alldocs' }}
+        run: |
+          set -euo pipefail
+          ssh -p "$ECS_SSH_PORT" "${ECS_USER}@${ECS_HOST}" bash -s <<EOF
+          set -euo pipefail
+          cd '${ECS_DEPLOY_PATH}'
+          for i in \$(seq 1 60); do
+            if docker compose -f docker-compose.prod.yml exec -T api \
+              python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5)" >/dev/null 2>&1; then
+              echo "API health check passed"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "API health check timed out"
+          docker compose -f docker-compose.prod.yml ps
+          docker compose -f docker-compose.prod.yml logs --tail=80 api worker
+          exit 1
+          EOF
