@@ -77,21 +77,28 @@ export async function streamChat(
 
     for (const line of lines) {
       if (!line.startsWith("data: ")) continue;
-      const payload = JSON.parse(line.slice(6));
-      if (payload.type === "status") handlers.onStatus?.(payload.stage);
-      if (payload.type === "citations") handlers.onCitations?.(payload.citations ?? []);
-      if (payload.type === "delta") handlers.onDelta(payload.content);
+      let payload: { type: string; [key: string]: unknown };
+      try {
+        payload = JSON.parse(line.slice(6));
+      } catch {
+        continue;
+      }
+      if (payload.type === "status") handlers.onStatus?.(payload.stage as string);
+      if (payload.type === "citations") {
+        handlers.onCitations?.((payload.citations as Citation[]) ?? []);
+      }
+      if (payload.type === "delta") handlers.onDelta(payload.content as string);
       if (payload.type === "done") {
         finished = true;
         handlers.onDone({
-          sessionId: payload.session_id,
-          citations: payload.citations ?? [],
-          language: payload.language,
+          sessionId: payload.session_id as string,
+          citations: (payload.citations as Citation[]) ?? [],
+          language: payload.language as string,
         });
       }
       if (payload.type === "error") {
         finished = true;
-        handlers.onError(payload.message ?? "Chat failed");
+        handlers.onError((payload.message as string) ?? "Chat failed");
       }
     }
   }

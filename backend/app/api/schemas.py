@@ -39,17 +39,3 @@ class ChatResponse(BaseModel):
     citations: list[Citation]
     language: str
 
-
-class VoiceQueryResponse(BaseModel):
-    session_id: UUID
-    transcript: str
-    answer: str
-    citations: list[Citation]
-    language: str
-    audio_base64: str | None = None
-
-
-class TranscribeResponse(BaseModel):
-    text: str
-    language: str
-    duration: float | None = None

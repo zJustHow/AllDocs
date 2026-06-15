@@ -19,7 +19,10 @@ const STATUS_LABEL: Record<DocumentItem["status"], string> = {
 };
 
 function newId() {
-  return crypto.randomUUID();
+  if (typeof crypto?.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
 }
 
 export default function App() {
@@ -141,15 +144,16 @@ export default function App() {
     setLoading(true);
     setChatStage("思考中...");
 
-    const userMessage: ChatMessage = { id: newId(), role: "user", content: text };
-    const assistantId = newId();
-    setMessages((prev) => [
-      ...prev,
-      userMessage,
-      { id: assistantId, role: "assistant", content: "", streaming: true },
-    ]);
-
+    let assistantId: string | null = null;
     try {
+      const userMessage: ChatMessage = { id: newId(), role: "user", content: text };
+      assistantId = newId();
+      setMessages((prev) => [
+        ...prev,
+        userMessage,
+        { id: assistantId!, role: "assistant", content: "", streaming: true },
+      ]);
+
       await streamChat(text, sessionId, selectedDocIds, {
         onStatus: (stage) => {
           if (stage === "retrieving") setChatStage("检索文档...");
@@ -192,7 +196,9 @@ export default function App() {
       });
     } catch (err) {
       setError(String(err));
-      setMessages((prev) => prev.filter((msg) => msg.id !== assistantId));
+      if (assistantId) {
+        setMessages((prev) => prev.filter((msg) => msg.id !== assistantId));
+      }
     } finally {
       setChatStage(null);
       setLoading(false);
