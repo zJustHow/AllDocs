@@ -8,8 +8,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings, get_settings
 from app.db.models import Chunk, Document
-from app.services.citations_util import normalize_answer_citations
+from app.services.chunk_filter import ChunkFilter, filter_citations
+from app.services.citations_util import finalize_answer_citations
 from app.services.embedding import EmbeddingService
+from app.services.filter_extractor import FilterExtractionService, extract_filters_heuristic
 from app.services.fulltext_store import FulltextStore
 from app.services.hybrid import reciprocal_rank_fusion
 from app.services.llm import LLMService
@@ -43,6 +45,7 @@ class RAGService:
             FulltextStore(self.settings) if self.settings.hybrid_enabled else None
         )
         self.llm = LLMService(self.settings)
+        self.filter_extractor = FilterExtractionService(self.settings, self.llm)
         self.reranker = None
         if self.settings.rerank_enabled:
             if model_path_ready(self.settings.rerank_model):
@@ -90,11 +93,11 @@ class RAGService:
             )
         return citations
 
-    async def retrieve(
+    async def _retrieve_once(
         self,
         db: AsyncSession,
         question: str,
-        doc_ids: list[UUID] | None = None,
+        chunk_filter: ChunkFilter,
     ) -> list[dict]:
         use_extended_retrieval = self.reranker or self.settings.hybrid_enabled
         retrieve_k = self.settings.rag_retrieve_k if use_extended_retrieval else self.settings.rag_top_k
@@ -103,7 +106,7 @@ class RAGService:
         vector_hits = self.vector_store.search(
             query_vector=query_vector,
             top_k=retrieve_k,
-            doc_ids=doc_ids,
+            chunk_filter=chunk_filter,
         )
         vector_ids = [str(hit.id) for hit in vector_hits]
         vector_score_map = {str(hit.id): float(hit.score) for hit in vector_hits}
@@ -111,7 +114,7 @@ class RAGService:
         bm25_ids: list[str] = []
         if self.fulltext_store:
             try:
-                bm25_hits = self.fulltext_store.search(question, retrieve_k, doc_ids)
+                bm25_hits = self.fulltext_store.search(question, retrieve_k, chunk_filter)
                 bm25_ids = [chunk_id for chunk_id, _ in bm25_hits]
             except Exception:
                 bm25_ids = []
@@ -129,6 +132,7 @@ class RAGService:
             score_map = vector_score_map
 
         citations = await self._load_citations(db, ranked_chunk_ids, score_map)
+        citations = filter_citations(citations, chunk_filter)
         if not citations:
             return []
 
@@ -138,6 +142,47 @@ class RAGService:
             citations = citations[: self.settings.rag_top_k]
 
         return citations
+
+    async def _resolve_chunk_filter(
+        self,
+        question: str,
+        doc_ids: list[UUID] | None,
+        explicit: ChunkFilter | None,
+    ) -> ChunkFilter:
+        inferred = None
+        if self.settings.rag_auto_filter_enabled:
+            if explicit and explicit.has_constraints():
+                inferred = extract_filters_heuristic(question)
+            else:
+                inferred = await self.filter_extractor.extract(question)
+            if inferred:
+                logger.info(
+                    "Inferred metadata filters from question: %s",
+                    inferred.model_dump(exclude_none=True),
+                )
+        return ChunkFilter.merge_sources(doc_ids, explicit, inferred)
+
+    async def retrieve(
+        self,
+        db: AsyncSession,
+        question: str,
+        doc_ids: list[UUID] | None = None,
+        filters: ChunkFilter | None = None,
+    ) -> list[dict]:
+        chunk_filter = await self._resolve_chunk_filter(question, doc_ids, filters)
+
+        for attempt_filter in chunk_filter.relaxation_steps():
+            citations = await self._retrieve_once(db, question, attempt_filter)
+            if citations:
+                if attempt_filter.model_dump_json() != chunk_filter.model_dump_json():
+                    logger.info(
+                        "Metadata filter relaxed for query; original=%s relaxed=%s",
+                        chunk_filter.model_dump(exclude_none=True),
+                        attempt_filter.model_dump(exclude_none=True),
+                    )
+                return citations
+
+        return []
 
     def build_context(self, citations: list[dict]) -> str:
         parts: list[str] = []
@@ -156,8 +201,9 @@ class RAGService:
         question: str,
         doc_ids: list[UUID] | None = None,
         chat_history: list[dict[str, str]] | None = None,
+        filters: ChunkFilter | None = None,
     ) -> tuple[str, list[dict], str]:
-        citations = await self.retrieve(db, question, doc_ids)
+        citations = await self.retrieve(db, question, doc_ids, filters)
         lang = detect_language(question)
         if not citations:
             if lang == "en":
@@ -166,16 +212,5 @@ class RAGService:
 
         context = self.build_context(citations)
         answer = await self.llm.chat(question, context, chat_history)
-        answer = normalize_answer_citations(answer)
-        public_citations = [
-            {
-                "document_id": item["document_id"],
-                "document_name": item["document_name"],
-                "page": item["page"],
-                "section": item["section"],
-                "snippet": item["snippet"],
-                "score": item["score"],
-            }
-            for item in citations
-        ]
+        answer, public_citations = finalize_answer_citations(answer, citations)
         return answer, public_citations, lang

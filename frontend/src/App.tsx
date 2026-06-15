@@ -6,8 +6,18 @@ import {
   streamChat,
   uploadDocument,
 } from "./api";
-import { citationToViewerTarget, type ViewerTarget } from "./citations";
+import { type ViewerTarget } from "./citations";
 import DocumentViewer from "./DocumentViewer";
+import {
+  AllDocsIcon,
+  DocIcon,
+  MenuIcon,
+  MicIcon,
+  NewChatIcon,
+  PlusIcon,
+  SendIcon,
+  TrashIcon,
+} from "./icons";
 import MessageContent from "./MessageContent";
 import type { ChatMessage, DocumentItem } from "./types";
 
@@ -17,6 +27,13 @@ const STATUS_LABEL: Record<DocumentItem["status"], string> = {
   ready: "可用",
   failed: "失败",
 };
+
+const SUGGESTIONS = [
+  "报警 E-204 怎么处理？",
+  "How do I power on the device?",
+  "设备日常维护需要注意什么？",
+  "What are the safety warnings?",
+];
 
 function newId() {
   if (typeof crypto?.randomUUID === "function") {
@@ -38,8 +55,12 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [viewerTarget, setViewerTarget] = useState<ViewerTarget | null>(null);
+  const [viewerOpen, setViewerOpen] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
 
   const messagesRef = useRef<HTMLElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const viewerCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const audioQueueRef = useRef<HTMLAudioElement[]>([]);
@@ -68,7 +89,7 @@ export default function App() {
 
   useEffect(() => {
     refreshDocuments().catch((err) => setError(String(err)));
-    const intervalMs = indexingDocs.length > 0 ? 1500 : 5000;
+    const intervalMs = indexingDocs.length > 0 ? 500 : 5000;
     const timer = setInterval(() => {
       refreshDocuments().catch(() => undefined);
     }, intervalMs);
@@ -80,6 +101,42 @@ export default function App() {
     if (!container) return;
     container.scrollTop = container.scrollHeight;
   }, [messages, loading]);
+
+  useEffect(() => {
+    if (!viewerTarget) {
+      setViewerOpen(false);
+      return;
+    }
+
+    const frame = requestAnimationFrame(() => {
+      requestAnimationFrame(() => setViewerOpen(true));
+    });
+
+    return () => cancelAnimationFrame(frame);
+  }, [viewerTarget]);
+
+  useEffect(
+    () => () => {
+      if (viewerCloseTimerRef.current) clearTimeout(viewerCloseTimerRef.current);
+    },
+    [],
+  );
+
+  const closeViewer = useCallback(() => {
+    setViewerOpen(false);
+    if (viewerCloseTimerRef.current) clearTimeout(viewerCloseTimerRef.current);
+    viewerCloseTimerRef.current = setTimeout(() => {
+      setViewerTarget(null);
+      viewerCloseTimerRef.current = null;
+    }, 320);
+  }, []);
+
+  useEffect(() => {
+    const ta = textareaRef.current;
+    if (!ta) return;
+    ta.style.height = "auto";
+    ta.style.height = `${Math.min(ta.scrollHeight, 160)}px`;
+  }, [input]);
 
   const playNextAudio = useCallback(() => {
     if (playingRef.current) return;
@@ -131,8 +188,15 @@ export default function App() {
     await refreshDocuments();
   };
 
-  const sendText = async () => {
-    const text = input.trim();
+  const clearChat = () => {
+    setMessages([]);
+    setSessionId(null);
+    setError(null);
+    setInput("");
+  };
+
+  const sendText = async (textOverride?: string) => {
+    const text = (textOverride ?? input).trim();
     if (!text || loading) return;
     if (selectedDocIds.length === 0) {
       setError("请至少选择一份已就绪的说明书");
@@ -171,14 +235,19 @@ export default function App() {
             ),
           );
         },
-        onDone: ({ sessionId: sid, citations }) => {
+        onDone: ({ sessionId: sid, content, citations }) => {
           setSessionId(sid);
           setChatStage(null);
           setLoading(false);
           setMessages((prev) =>
             prev.map((msg) =>
               msg.id === assistantId
-                ? { ...msg, streaming: false, citations }
+                ? {
+                    ...msg,
+                    streaming: false,
+                    content: content ?? msg.content,
+                    citations,
+                  }
                 : msg,
             ),
           );
@@ -319,6 +388,7 @@ export default function App() {
                 ? {
                     ...msg,
                     streaming: false,
+                    content: (payload.content as string | undefined) ?? msg.content,
                     citations: (payload.citations as ChatMessage["citations"]) ?? [],
                   }
                 : msg,
@@ -371,139 +441,256 @@ export default function App() {
     setRecording(false);
   };
 
-  const openDocument = (target: ViewerTarget) => setViewerTarget(target);
+  const openDocument = (target: ViewerTarget) => {
+    const doc = documents.find((d) => d.id === target.documentId);
+    setSidebarOpen(false);
+    if (viewerCloseTimerRef.current) {
+      clearTimeout(viewerCloseTimerRef.current);
+      viewerCloseTimerRef.current = null;
+      setViewerOpen(true);
+    }
+    setViewerTarget({
+      ...target,
+      pageCount: doc?.page_count ?? target.pageCount ?? null,
+    });
+  };
+
+  const toggleSidebar = () => setSidebarOpen((prev) => !prev);
+
+  const closeSidebarOnMobile = () => {
+    if (window.innerWidth <= 900) setSidebarOpen(false);
+  };
+
+  const activeStage = voiceStage ?? chatStage;
+  const hasMessages = messages.length > 0;
 
   return (
-    <div className={`app ${viewerTarget ? "with-viewer" : ""}`}>
-      <aside className="sidebar">
-        <div className="brand">
-          <h1>AllDocs</h1>
-          <p>说明书 RAG 问答 · 本地语音</p>
-        </div>
+    <div className={`app ${viewerTarget ? "with-viewer" : ""} ${viewerOpen ? "viewer-open" : ""}`}>
+      <div
+        className={`sidebar-overlay ${sidebarOpen ? "visible" : ""}`}
+        onClick={() => setSidebarOpen(false)}
+        aria-hidden="true"
+      />
 
-        <label className="upload-box">
-          <input
-            type="file"
-            accept="application/pdf"
-            hidden
-            onChange={(e) => handleUpload(e.target.files?.[0] ?? null)}
-          />
-          <span>{uploading ? "上传中..." : "上传 PDF 说明书"}</span>
-        </label>
+      <aside className={`sidebar ${sidebarOpen ? "open" : "collapsed"}`}>
+        <div className="sidebar-inner">
+          <div className="sidebar-top">
+            <button className="icon-btn" onClick={toggleSidebar} aria-label="收起侧边栏">
+              <MenuIcon />
+            </button>
+          </div>
 
-        <div className="doc-list">
-          <h2>文档库</h2>
-          {documents.length === 0 && <p className="muted">暂无文档</p>}
-          {documents.map((doc) => (
-            <div key={doc.id} className={`doc-item ${doc.status}`}>
-              <label className="doc-select">
-                <input
-                  type="checkbox"
-                  checked={selectedDocIds.includes(doc.id)}
-                  disabled={doc.status !== "ready"}
-                  onChange={() => toggleDoc(doc.id)}
-                />
-                <div>
-                  <strong>{doc.name}</strong>
-                  <span className={`status ${doc.status}`}>{STATUS_LABEL[doc.status]}</span>
-                  {(doc.status === "pending" || doc.status === "processing") && (
-                    <div className="index-progress">
-                      <div className="index-progress-bar">
-                        <div
-                          className="index-progress-fill"
-                          style={{ width: `${doc.status === "pending" ? 0 : doc.progress}%` }}
-                        />
-                      </div>
-                      <span className="index-progress-label">
-                        {doc.progress_message ??
-                          (doc.status === "pending" ? "等待处理" : "索引中...")}
-                        {doc.status === "processing" ? ` ${doc.progress}%` : ""}
-                      </span>
+          <button className="new-chat-btn" onClick={clearChat}>
+            <NewChatIcon />
+            新对话
+          </button>
+
+          <label className="upload-btn">
+            <input
+              type="file"
+              accept="application/pdf"
+              hidden
+              disabled={uploading}
+              onChange={(e) => handleUpload(e.target.files?.[0] ?? null)}
+            />
+            <PlusIcon />
+            <span>{uploading ? "上传中..." : "上传 PDF 说明书"}</span>
+          </label>
+
+          <div className="sidebar-section-label">文档库 · {readyDocs.length} 份可用</div>
+
+          <div className="doc-list">
+            {documents.length === 0 && (
+              <p className="doc-list-empty">暂无文档，上传 PDF 开始</p>
+            )}
+            {documents.map((doc) => (
+              <div key={doc.id} className={`doc-item ${doc.status}`}>
+                <label className="doc-select">
+                  <input
+                    type="checkbox"
+                    checked={selectedDocIds.includes(doc.id)}
+                    disabled={doc.status !== "ready"}
+                    onChange={() => toggleDoc(doc.id)}
+                  />
+                  <div className="doc-info">
+                    <strong>{doc.name}</strong>
+                    <div className="doc-meta">
+                      <span className={`status ${doc.status}`}>{STATUS_LABEL[doc.status]}</span>
+                      {doc.page_count ? <span className="muted">{doc.page_count} 页</span> : null}
+                      {doc.ocr_pages ? (
+                        <span className="muted">OCR {doc.ocr_pages}</span>
+                      ) : null}
                     </div>
-                  )}
-                  {doc.page_count ? <span className="muted">{doc.page_count} 页</span> : null}
-                  {doc.ocr_pages ? <span className="muted">OCR {doc.ocr_pages} 页</span> : null}
-                  {doc.error_message ? <span className="error-text">{doc.error_message}</span> : null}
-                </div>
-              </label>
-              <button className="ghost" onClick={() => handleDelete(doc.id)}>
-                删除
-              </button>
-            </div>
-          ))}
-        </div>
+                    {(doc.status === "pending" || doc.status === "processing") && (
+                      <div className="index-progress">
+                        <div className="index-progress-bar">
+                          <div
+                            className="index-progress-fill"
+                            style={{ width: `${doc.status === "pending" ? 0 : doc.progress}%` }}
+                          />
+                        </div>
+                        <span className="index-progress-label">
+                          {doc.progress_message ??
+                            (doc.status === "pending" ? "等待处理" : "索引中...")}
+                          {doc.status === "processing" ? ` ${doc.progress}%` : ""}
+                        </span>
+                      </div>
+                    )}
+                    {doc.error_message ? (
+                      <span className="error-text">{doc.error_message}</span>
+                    ) : null}
+                  </div>
+                </label>
+                <button
+                  className="doc-delete"
+                  onClick={() => handleDelete(doc.id)}
+                  aria-label="删除文档"
+                >
+                  <TrashIcon />
+                </button>
+              </div>
+            ))}
+          </div>
 
-        <div className="sidebar-foot">
-          <span>{readyDocs.length} 份可用</span>
-          <span>LLM: DeepSeek API</span>
+          <div className="sidebar-foot">
+            <span>AllDocs · 说明书 RAG 问答</span>
+          </div>
         </div>
       </aside>
 
-      <main className="chat">
-        <header className="chat-header">
-          <h2>问答</h2>
-          <p>支持中文 / 英文提问</p>
+      <div className="main">
+        <header className="top-bar">
+          <button
+            className={`icon-btn top-bar-menu ${sidebarOpen ? "hidden" : ""}`}
+            onClick={toggleSidebar}
+            aria-label={sidebarOpen ? undefined : "打开侧边栏"}
+            aria-hidden={sidebarOpen}
+            tabIndex={sidebarOpen ? -1 : 0}
+          >
+            <MenuIcon />
+          </button>
+          <span className="top-bar-title">AllDocs</span>
+          {selectedDocIds.length > 0 && (
+            <span className="top-bar-sub">
+              <DocIcon /> {selectedDocIds.length} 份文档已选
+            </span>
+          )}
         </header>
 
-        <section className="messages" ref={messagesRef}>
-          {messages.length === 0 && (
-            <div className="empty">
-              <h3>开始提问</h3>
-              <p>例如：「报警 E-204 怎么处理？」或 “How do I power on the device?”</p>
-            </div>
-          )}
-          {messages.map((msg) => (
-            <article key={msg.id} className={`bubble ${msg.role}`}>
-              <div className="bubble-meta">{msg.role === "user" ? "你" : "助手"}</div>
-              <div className="bubble-content">
-                {msg.role === "assistant" ? (
-                  <MessageContent
-                    content={msg.content}
-                    citations={msg.citations ?? []}
-                    onOpenDocument={openDocument}
-                  />
-                ) : (
-                  msg.content
-                )}
-                {msg.streaming ? <span className="cursor">▍</span> : null}
+        <div className="chat-area">
+          {!hasMessages ? (
+            <div className="welcome">
+              <div className="welcome-logo">
+                <AllDocsIcon size={48} />
               </div>
-            </article>
-          ))}
-        </section>
+              <h1>有什么可以帮你的？</h1>
+              <p className="welcome-sub">基于说明书智能问答 · 支持中英文 · 语音输入</p>
+              <div className="suggestions">
+                {SUGGESTIONS.map((s) => (
+                  <button
+                    key={s}
+                    className="suggestion-chip"
+                    onClick={() => {
+                      setInput(s);
+                      closeSidebarOnMobile();
+                      sendText(s);
+                    }}
+                  >
+                    {s}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <section className="messages" ref={messagesRef}>
+              {messages.map((msg) => (
+                <article key={msg.id} className={`message ${msg.role}`}>
+                  <div className="message-avatar">
+                    {msg.role === "assistant" ? (
+                      <AllDocsIcon size={28} />
+                    ) : (
+                      "你"
+                    )}
+                  </div>
+                  <div className="message-body">
+                    <div className="message-content">
+                      {msg.role === "assistant" ? (
+                        <MessageContent
+                          content={msg.content}
+                          citations={msg.citations ?? []}
+                          onOpenDocument={openDocument}
+                        />
+                      ) : (
+                        msg.content
+                      )}
+                      {msg.streaming ? <span className="cursor">▍</span> : null}
+                    </div>
+                  </div>
+                </article>
+              ))}
+            </section>
+          )}
+        </div>
 
-        {error && <div className="banner error">{error}</div>}
-
-        <footer className="composer">
-          <textarea
-            value={input}
-            placeholder="输入问题，或按住麦克风语音提问..."
-            rows={2}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                sendText();
-              }
-            }}
-          />
-          <div className="composer-actions">
-            <button
-              className={`mic ${recording ? "active" : ""}`}
-              onClick={recording ? stopRecording : startRecording}
-              disabled={loading && !recording}
-              title="语音提问"
-            >
-              {recording ? "停止" : "语音"}
-            </button>
-            <button className="primary" onClick={sendText} disabled={loading || !input.trim()}>
-              {voiceStage ?? chatStage ?? (loading ? "处理中..." : "发送")}
-            </button>
+        {(error || activeStage) && (
+          <div className="status-bar">
+            {error ? (
+              <div className="banner error">{error}</div>
+            ) : activeStage ? (
+              <div className="status-pill">
+                <span className="dot" />
+                {activeStage}
+              </div>
+            ) : null}
           </div>
+        )}
+
+        <footer className="composer-wrap">
+          <div className="input-pill">
+            <textarea
+              ref={textareaRef}
+              value={input}
+              placeholder="询问说明书相关问题..."
+              rows={1}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  sendText();
+                }
+              }}
+            />
+            <div className="input-actions">
+              <button
+                className={`action-btn mic ${recording ? "active" : ""}`}
+                onClick={recording ? stopRecording : startRecording}
+                disabled={loading && !recording}
+                title="语音提问"
+                aria-label={recording ? "停止录音" : "语音提问"}
+              >
+                <MicIcon />
+              </button>
+              <button
+                className="action-btn send"
+                onClick={() => sendText()}
+                disabled={loading || !input.trim()}
+                title="发送"
+                aria-label="发送"
+              >
+                <SendIcon />
+              </button>
+            </div>
+          </div>
+          <p className="composer-disclaimer">AllDocs 可能出错，重要信息请以原始说明书为准</p>
         </footer>
-      </main>
+      </div>
 
       {viewerTarget && (
-        <DocumentViewer target={viewerTarget} onClose={() => setViewerTarget(null)} />
+        <DocumentViewer
+          target={viewerTarget}
+          isOpen={viewerOpen}
+          onClose={closeViewer}
+        />
       )}
     </div>
   );

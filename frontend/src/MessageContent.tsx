@@ -5,6 +5,7 @@ import {
   splitMessageWithCitations,
 } from "./citations";
 import type { ViewerTarget } from "./citations";
+import { PdfBadgeIcon } from "./icons";
 import type { Citation } from "./types";
 
 interface MessageContentProps {
@@ -27,25 +28,26 @@ export default function MessageContent({
           return <span key={index}>{segment.value}</span>;
         }
 
+        const pageHint = segment.citation.page ? ` · 第 ${segment.citation.page} 页` : "";
+
         const citationIndex = getCitationIndex(segment.citation, citations);
         const label =
           citationIndex >= 0
             ? formatCitationLabel(citationIndex)
-            : (segment.value.match(/\[\d+\]/)?.[0] ?? segment.value);
+            : (segment.value.match(/\[\d+\]/)?.[0] ?? "[?]");
 
         return (
           <button
             key={index}
             type="button"
-            className="inline-citation"
-            title={`${segment.citation.document_name}${
-              segment.citation.page ? ` · 第 ${segment.citation.page} 页` : ""
-            }${segment.citation.section ? ` · ${segment.citation.section}` : ""}\n${
-              segment.citation.snippet
-            }`}
+            className="citation-badge"
+            title={`${segment.citation.document_name}${pageHint}${
+              segment.citation.section ? ` · ${segment.citation.section}` : ""
+            }\n${segment.citation.snippet}`}
             onClick={() => onOpenDocument(citationToViewerTarget(segment.citation))}
           >
-            {label}
+            <PdfBadgeIcon />
+            PDF {label}
           </button>
         );
       })}

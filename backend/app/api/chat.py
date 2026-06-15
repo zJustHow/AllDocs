@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.schemas import ChatRequest, ChatResponse
 from app.db.models import Message, Session
 from app.db.session import get_db
-from app.services.citations_util import normalize_answer_citations, public_citations
+from app.services.citations_util import finalize_answer_citations, public_citations
 from app.services.rag import RAGService, detect_language
 
 router = APIRouter(prefix="/chat", tags=["chat"])
@@ -56,6 +56,7 @@ async def chat(
 
     rag = RAGService()
     doc_ids = payload.doc_ids or [uuid.UUID(doc_id) for doc_id in session.doc_ids]
+    chunk_filters = payload.filters
 
     if payload.stream:
         lang = detect_language(payload.message)
@@ -63,7 +64,9 @@ async def chat(
         async def event_stream():
             try:
                 yield f"data: {json.dumps({'type': 'status', 'stage': 'retrieving'}, ensure_ascii=False)}\n\n"
-                citations = await rag.retrieve(db, payload.message, doc_ids or None)
+                citations = await rag.retrieve(
+                    db, payload.message, doc_ids or None, chunk_filters
+                )
 
                 if not citations:
                     fallback = (
@@ -94,8 +97,8 @@ async def chat(
                     answer_parts.append(delta)
                     yield f"data: {json.dumps({'type': 'delta', 'content': delta}, ensure_ascii=False)}\n\n"
 
-                answer = normalize_answer_citations("".join(answer_parts))
-                yield f"data: {json.dumps({'type': 'done', 'session_id': str(session.id), 'citations': refs, 'language': lang}, ensure_ascii=False)}\n\n"
+                answer, refs = finalize_answer_citations("".join(answer_parts), citations)
+                yield f"data: {json.dumps({'type': 'done', 'session_id': str(session.id), 'content': answer, 'citations': refs, 'language': lang}, ensure_ascii=False)}\n\n"
                 db.add(Message(session_id=session.id, role="user", content=payload.message))
                 db.add(
                     Message(
@@ -116,7 +119,9 @@ async def chat(
             headers=STREAM_HEADERS,
         )
 
-    answer, citations, lang = await rag.answer(db, payload.message, doc_ids or None, history)
+    answer, citations, lang = await rag.answer(
+        db, payload.message, doc_ids or None, history, chunk_filters
+    )
     db.add(Message(session_id=session.id, role="user", content=payload.message))
     db.add(
         Message(

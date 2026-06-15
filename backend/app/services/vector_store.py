@@ -5,6 +5,7 @@ from qdrant_client import QdrantClient
 from qdrant_client.http import models as qmodels
 
 from app.config import Settings, get_settings
+from app.services.chunk_filter import ChunkFilter, build_qdrant_filter
 
 VECTOR_SIZE = 1024
 
@@ -49,18 +50,9 @@ class VectorStore:
         self,
         query_vector: list[float],
         top_k: int,
-        doc_ids: list[UUID] | None = None,
+        chunk_filter: ChunkFilter | None = None,
     ) -> list[qmodels.ScoredPoint]:
-        query_filter = None
-        if doc_ids:
-            query_filter = qmodels.Filter(
-                must=[
-                    qmodels.FieldCondition(
-                        key="document_id",
-                        match=qmodels.MatchAny(any=[str(doc_id) for doc_id in doc_ids]),
-                    )
-                ]
-            )
+        query_filter = build_qdrant_filter(chunk_filter)
         return self.client.search(
             collection_name=self.settings.qdrant_collection,
             query_vector=query_vector,

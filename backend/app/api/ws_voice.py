@@ -7,9 +7,10 @@ import uuid
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from sqlalchemy import select
 
+from app.api.schemas import ChunkFilter
 from app.db.models import Message, Session
 from app.db.session import async_session_factory
-from app.services.citations_util import normalize_answer_citations, public_citations
+from app.services.citations_util import finalize_answer_citations, public_citations
 from app.services.rag import RAGService, detect_language
 from app.services.speech import SpeechService
 
@@ -64,6 +65,7 @@ async def voice_websocket(websocket: WebSocket) -> None:
 
             session_id_raw = payload.get("session_id")
             doc_ids_raw = payload.get("doc_ids", [])
+            filters_raw = payload.get("filters")
             with_audio = payload.get("with_audio", True)
 
             await _send_json(websocket, {"type": "status", "stage": "transcribing"})
@@ -82,6 +84,7 @@ async def voice_websocket(websocket: WebSocket) -> None:
             )
 
             parsed_doc_ids = [uuid.UUID(str(item)) for item in doc_ids_raw]
+            chunk_filters = ChunkFilter.model_validate(filters_raw) if filters_raw else None
 
             async with async_session_factory() as db:
                 if session_id_raw:
@@ -104,7 +107,9 @@ async def voice_websocket(websocket: WebSocket) -> None:
                 ]
 
                 effective_doc_ids = parsed_doc_ids or [uuid.UUID(doc_id) for doc_id in session.doc_ids]
-                citations = await rag.retrieve(db, question, effective_doc_ids or None)
+                citations = await rag.retrieve(
+                    db, question, effective_doc_ids or None, chunk_filters
+                )
 
                 if not citations:
                     fallback = "Not found in the manual." if lang == "en" else "说明书中未找到相关信息。"
@@ -172,7 +177,7 @@ async def voice_websocket(websocket: WebSocket) -> None:
                             {"type": "audio", "data": base64.b64encode(audio_wav).decode("ascii")},
                         )
 
-                answer = normalize_answer_citations("".join(answer_parts))
+                answer, refs = finalize_answer_citations("".join(answer_parts), citations)
 
                 db.add(Message(session_id=session.id, role="user", content=question))
                 db.add(
@@ -190,6 +195,7 @@ async def voice_websocket(websocket: WebSocket) -> None:
                     {
                         "type": "done",
                         "session_id": str(session.id),
+                        "content": answer,
                         "citations": refs,
                         "language": lang,
                     },

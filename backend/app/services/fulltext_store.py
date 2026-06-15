@@ -5,6 +5,7 @@ from elasticsearch import Elasticsearch
 from elasticsearch.helpers import bulk
 
 from app.config import Settings, get_settings
+from app.services.chunk_filter import ChunkFilter, build_es_filters
 
 INDEX_BODY = {
     "settings": {
@@ -82,7 +83,7 @@ class FulltextStore:
         self,
         query: str,
         top_k: int,
-        doc_ids: list[UUID] | None = None,
+        chunk_filter: ChunkFilter | None = None,
     ) -> list[tuple[str, float]]:
         must: list[dict] = [
             {
@@ -93,18 +94,14 @@ class FulltextStore:
                 }
             }
         ]
-        if doc_ids:
-            must.append(
-                {
-                    "terms": {
-                        "document_id": [str(doc_id) for doc_id in doc_ids],
-                    }
-                }
-            )
+        es_filters = build_es_filters(chunk_filter)
+        bool_query: dict = {"must": must}
+        if es_filters:
+            bool_query["filter"] = es_filters
 
         response = self.client.search(
             index=self.index,
-            query={"bool": {"must": must}},
+            query={"bool": bool_query},
             size=top_k,
         )
         hits: list[tuple[str, float]] = []

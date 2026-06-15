@@ -18,6 +18,8 @@ class Settings(BaseSettings):
     rag_top_k: int = 5
     rag_chunk_size: int = 500
     rag_chunk_overlap: int = 80
+    rag_auto_filter_enabled: bool = True
+    rag_auto_filter_llm: bool = True
 
     rerank_enabled: bool = True
     rerank_model: str = "BAAI/bge-reranker-v2-m3"

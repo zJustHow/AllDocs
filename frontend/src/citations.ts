@@ -6,6 +6,7 @@ export interface ViewerTarget {
   page: number | null;
   section: string | null;
   snippet?: string;
+  pageCount?: number | null;
 }
 
 export function getCitationIndex(citation: Citation, citations: Citation[]): number {

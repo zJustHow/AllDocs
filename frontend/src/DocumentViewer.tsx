@@ -1,16 +1,33 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { getDocumentFileUrl } from "./api";
 import type { ViewerTarget } from "./citations";
+import { CloseIcon, ZoomInIcon, ZoomOutIcon } from "./icons";
 
 interface DocumentViewerProps {
   target: ViewerTarget;
+  isOpen: boolean;
   onClose: () => void;
 }
 
-export default function DocumentViewer({ target, onClose }: DocumentViewerProps) {
+const ZOOM_MIN = 50;
+const ZOOM_MAX = 200;
+const ZOOM_STEP = 25;
+
+export default function DocumentViewer({ target, isOpen, onClose }: DocumentViewerProps) {
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [currentPage, setCurrentPage] = useState(target.page ?? 1);
+  const [pageInput, setPageInput] = useState(String(target.page ?? 1));
+  const [zoom, setZoom] = useState(100);
+
+  const pageCount = target.pageCount ?? null;
+
+  useEffect(() => {
+    const page = target.page ?? 1;
+    setCurrentPage(page);
+    setPageInput(String(page));
+  }, [target.documentId, target.page]);
 
   useEffect(() => {
     let active = true;
@@ -42,43 +59,104 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
     };
   }, [target.documentId]);
 
-  const pageLabel = target.page ? `第 ${target.page} 页` : "文档";
-  const sectionLabel = target.section ? ` · ${target.section}` : "";
-  const iframeSrc = pdfUrl
-    ? target.page
-      ? `${pdfUrl}#page=${target.page}`
-      : pdfUrl
-    : undefined;
+  const iframeSrc = useMemo(() => {
+    if (!pdfUrl) return undefined;
+    return `${pdfUrl}#page=${currentPage}`;
+  }, [pdfUrl, currentPage]);
+
+  const commitPage = (raw: string) => {
+    const parsed = Number.parseInt(raw, 10);
+    if (Number.isNaN(parsed)) {
+      setPageInput(String(currentPage));
+      return;
+    }
+    const max = pageCount ?? parsed;
+    const next = Math.min(Math.max(1, parsed), max);
+    setCurrentPage(next);
+    setPageInput(String(next));
+  };
+
+  const adjustZoom = (delta: number) => {
+    setZoom((prev) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, prev + delta)));
+  };
 
   return (
-    <aside className="doc-viewer">
-      <header className="doc-viewer-header">
-        <div>
-          <h2>{target.documentName}</h2>
-          <p>
-            {pageLabel}
-            {sectionLabel}
-          </p>
+    <aside className={`doc-viewer ${isOpen ? "is-open" : ""}`}>
+      <div className="doc-viewer-top">
+        <div className="doc-viewer-meta">
+          <span className="doc-viewer-name">{target.documentName}</span>
+          {target.section ? <span className="doc-viewer-section">{target.section}</span> : null}
         </div>
-        <button className="ghost" onClick={onClose} aria-label="关闭文档预览">
-          关闭
+        <button className="doc-viewer-close" onClick={onClose} aria-label="关闭文档预览">
+          <CloseIcon />
         </button>
-      </header>
+      </div>
+
+      <div className="doc-viewer-shell">
+        <div className="doc-viewer-stage">
+          <div className="doc-viewer-canvas" style={{ transform: `scale(${zoom / 100})` }}>
+            {loading && <p className="doc-viewer-status">加载文档中...</p>}
+            {error && <p className="doc-viewer-status error-text">{error}</p>}
+            {!loading && !error && iframeSrc && (
+              <iframe
+                key={`${target.documentId}-${currentPage}`}
+                title={target.documentName}
+                src={iframeSrc}
+                className="doc-viewer-frame"
+              />
+            )}
+          </div>
+
+          {!loading && !error && pdfUrl && (
+            <div className="doc-viewer-toolbar">
+              <span className="doc-viewer-toolbar-label">Page</span>
+              <input
+                className="doc-viewer-page-input"
+                type="text"
+                inputMode="numeric"
+                value={pageInput}
+                onChange={(e) => setPageInput(e.target.value)}
+                onBlur={() => commitPage(pageInput)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    commitPage(pageInput);
+                    (e.target as HTMLInputElement).blur();
+                  }
+                }}
+                aria-label="页码"
+              />
+              <span className="doc-viewer-page-total">/ {pageCount ?? "—"}</span>
+              <span className="doc-viewer-toolbar-divider" aria-hidden="true" />
+              <button
+                type="button"
+                className="doc-viewer-toolbar-btn"
+                onClick={() => adjustZoom(-ZOOM_STEP)}
+                disabled={zoom <= ZOOM_MIN}
+                aria-label="缩小"
+              >
+                <ZoomOutIcon />
+              </button>
+              <span className="doc-viewer-zoom-label">{zoom}%</span>
+              <button
+                type="button"
+                className="doc-viewer-toolbar-btn"
+                onClick={() => adjustZoom(ZOOM_STEP)}
+                disabled={zoom >= ZOOM_MAX}
+                aria-label="放大"
+              >
+                <ZoomInIcon />
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
 
       {target.snippet && (
         <div className="doc-viewer-snippet">
-          <span>引用片段</span>
           <p>{target.snippet}</p>
         </div>
       )}
-
-      <div className="doc-viewer-body">
-        {loading && <p className="muted doc-viewer-status">加载文档中...</p>}
-        {error && <p className="doc-viewer-status error-text">{error}</p>}
-        {!loading && !error && iframeSrc && (
-          <iframe title={target.documentName} src={iframeSrc} className="doc-viewer-frame" />
-        )}
-      </div>
     </aside>
   );
 }

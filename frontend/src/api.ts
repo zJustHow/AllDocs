@@ -38,7 +38,12 @@ export interface StreamHandlers {
   onStatus?: (stage: string) => void;
   onCitations?: (citations: Citation[]) => void;
   onDelta: (text: string) => void;
-  onDone: (payload: { sessionId: string; citations: Citation[]; language: string }) => void;
+  onDone: (payload: {
+    sessionId: string;
+    content?: string;
+    citations: Citation[];
+    language: string;
+  }) => void;
   onError: (message: string) => void;
 }
 
@@ -92,6 +97,7 @@ export async function streamChat(
         finished = true;
         handlers.onDone({
           sessionId: payload.session_id as string,
+          content: payload.content as string | undefined,
           citations: (payload.citations as Citation[]) ?? [],
           language: payload.language as string,
         });

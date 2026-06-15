@@ -3,6 +3,16 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.services.chunk_filter import ChunkFilter
+
+__all__ = [
+    "ChatRequest",
+    "ChatResponse",
+    "ChunkFilter",
+    "Citation",
+    "DocumentResponse",
+]
+
 
 class DocumentResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -21,6 +31,7 @@ class ChatRequest(BaseModel):
     message: str
     session_id: UUID | None = None
     doc_ids: list[UUID] = Field(default_factory=list)
+    filters: ChunkFilter | None = None
     stream: bool = False
 
 
