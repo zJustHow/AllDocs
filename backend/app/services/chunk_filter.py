@@ -4,9 +4,18 @@ from pydantic import BaseModel, Field
 from qdrant_client.http import models as qmodels
 
 
+def chunk_asset_types(chunk: dict) -> list[str]:
+    types = {
+        str(asset.get("type"))
+        for asset in chunk.get("assets") or []
+        if asset.get("type")
+    }
+    return sorted(types)
+
+
 class ChunkFilter(BaseModel):
     document_ids: list[UUID] | None = None
-    chunk_types: list[str] | None = None
+    asset_types: list[str] | None = None
     page_gte: int | None = Field(default=None, ge=1)
     page_lte: int | None = Field(default=None, ge=1)
     section_prefix: str | None = None
@@ -45,7 +54,7 @@ class ChunkFilter(BaseModel):
         return any(
             [
                 self.document_ids,
-                self.chunk_types,
+                self.asset_types,
                 self.page_gte is not None,
                 self.page_lte is not None,
                 self.section_prefix,
@@ -56,7 +65,7 @@ class ChunkFilter(BaseModel):
     def has_metadata_constraints(self) -> bool:
         return any(
             [
-                self.chunk_types,
+                self.asset_types,
                 self.page_gte is not None,
                 self.page_lte is not None,
                 self.section_prefix,
@@ -68,7 +77,7 @@ class ChunkFilter(BaseModel):
         """Keep document scope only; drop narrow metadata constraints."""
         return self.model_copy(
             update={
-                "chunk_types": None,
+                "asset_types": None,
                 "page_gte": None,
                 "page_lte": None,
                 "section_prefix": None,
@@ -89,11 +98,11 @@ def build_qdrant_filter(chunk_filter: ChunkFilter | None) -> qmodels.Filter | No
                 match=qmodels.MatchAny(any=[str(doc_id) for doc_id in chunk_filter.document_ids]),
             )
         )
-    if chunk_filter.chunk_types:
+    if chunk_filter.asset_types:
         must.append(
             qmodels.FieldCondition(
-                key="chunk_type",
-                match=qmodels.MatchAny(any=chunk_filter.chunk_types),
+                key="asset_types",
+                match=qmodels.MatchAny(any=chunk_filter.asset_types),
             )
         )
     if chunk_filter.page_gte is not None or chunk_filter.page_lte is not None:
@@ -118,8 +127,8 @@ def build_es_filters(chunk_filter: ChunkFilter | None) -> list[dict]:
         filters.append(
             {"terms": {"document_id": [str(doc_id) for doc_id in chunk_filter.document_ids]}}
         )
-    if chunk_filter.chunk_types:
-        filters.append({"terms": {"chunk_type": chunk_filter.chunk_types}})
+    if chunk_filter.asset_types:
+        filters.append({"terms": {"asset_types": chunk_filter.asset_types}})
     if chunk_filter.page_gte is not None or chunk_filter.page_lte is not None:
         page_range: dict[str, int] = {}
         if chunk_filter.page_gte is not None:
@@ -139,8 +148,10 @@ def chunk_matches(chunk: dict, chunk_filter: ChunkFilter) -> bool:
         if chunk.get("document_id") not in {str(doc_id) for doc_id in chunk_filter.document_ids}:
             return False
 
-    if chunk_filter.chunk_types and chunk.get("chunk_type") not in chunk_filter.chunk_types:
-        return False
+    if chunk_filter.asset_types:
+        types = set(chunk_asset_types(chunk))
+        if not types.intersection(chunk_filter.asset_types):
+            return False
 
     page = chunk.get("page")
     if chunk_filter.page_gte is not None and (page is None or page < chunk_filter.page_gte):

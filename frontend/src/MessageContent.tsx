@@ -132,6 +132,66 @@ interface MessageContentProps {
   onOpenDocument: (target: ViewerTarget) => void;
 }
 
+interface AnswerEmbedFigureProps {
+  embed: MessageEmbed;
+  onOpenDocument: (target: ViewerTarget) => void;
+}
+
+function looksLikeImageDescription(text: string): boolean {
+  const trimmed = text.trim();
+  if (trimmed.length > 120) return true;
+  return /^(这是|图中|该图|本图|如图所示|照片展示)/.test(trimmed);
+}
+
+function embedDisplayCaption(
+  embed: MessageEmbed,
+  t: (key: string, vars?: Record<string, unknown>) => string,
+): string | undefined {
+  if (embed.caption && !looksLikeImageDescription(embed.caption)) {
+    return embed.caption;
+  }
+  if (embed.document_name) {
+    return `${embed.document_name} ${t("viewer.pageHint", { page: embed.page })}`;
+  }
+  return undefined;
+}
+
+function AnswerEmbedFigure({ embed, onOpenDocument }: AnswerEmbedFigureProps) {
+  const { t } = useI18n();
+  const caption = embedDisplayCaption(embed, t);
+  const isTable = embed.type === "table";
+
+  return (
+    <figure
+      className={`answer-embed${
+        isTable ? " answer-embed--table" : " answer-embed--figure"
+      }`}
+    >
+      <img
+        src={embed.url}
+        alt={caption ?? t("viewer.pageHint", { page: embed.page })}
+        loading="lazy"
+        className="answer-embed-image"
+      />
+      {caption ? <figcaption>{caption}</figcaption> : null}
+      <button
+        type="button"
+        className="answer-embed-link"
+        onClick={() =>
+          onOpenDocument({
+            documentId: embed.document_id,
+            documentName: embed.document_name ?? "",
+            page: embed.page,
+            section: embed.caption ?? null,
+          })
+        }
+      >
+        {t("viewer.openSource")}
+      </button>
+    </figure>
+  );
+}
+
 function MessageContent({
   content,
   citations = [],
@@ -157,10 +217,9 @@ function MessageContent({
           hideUnmatched: true,
           embeds,
         });
-        const hasEmbeds = segments.some((segment) => segment.type === "embed");
-
         return (
           <div key={sectionIndex} className="message-section">
+            <div className="message-section-body">
             {segments.map((segment, index) => {
               if (segment.type === "text") {
                 return (
@@ -170,10 +229,7 @@ function MessageContent({
                       <div className="streaming-text">{segment.value}</div>
                     }
                   >
-                    <MarkdownText
-                      content={segment.value}
-                      inline={hasEmbeds}
-                    />
+                    <MarkdownText content={segment.value} />
                   </Suspense>
                 );
               }
@@ -188,40 +244,15 @@ function MessageContent({
               }
               seenEmbedKeys.add(embedKey);
 
-              const caption =
-                segment.embed.caption ??
-                (segment.embed.document_name
-                  ? `${segment.embed.document_name} p.${segment.embed.page}`
-                  : undefined);
               return (
-                <figure key={index} className="answer-embed">
-                  <img
-                    src={segment.embed.url}
-                    alt={
-                      caption ??
-                      t("viewer.pageHint", { page: segment.embed.page })
-                    }
-                    loading="lazy"
-                    className="answer-embed-image"
-                  />
-                  {caption ? <figcaption>{caption}</figcaption> : null}
-                  <button
-                    type="button"
-                    className="answer-embed-link"
-                    onClick={() =>
-                      onOpenDocument({
-                        documentId: segment.embed.document_id,
-                        documentName: segment.embed.document_name ?? "",
-                        page: segment.embed.page,
-                        section: segment.embed.caption ?? null,
-                      })
-                    }
-                  >
-                    {t("viewer.openSource")}
-                  </button>
-                </figure>
+                <AnswerEmbedFigure
+                  key={index}
+                  embed={segment.embed}
+                  onOpenDocument={onOpenDocument}
+                />
               );
             })}
+            </div>
 
             <SectionCitations
               sectionCitations={section.citations}

@@ -32,7 +32,7 @@ class Settings(BaseSettings):
     rerank_model: str = "BAAI/bge-reranker-v2-m3"
     rerank_device: str = "cpu"
     rerank_batch_size: int = 8
-    rag_min_rerank_score: float = 0.0
+    rag_min_rerank_score: float = -1.5
     rag_min_retrieval_score: float = 0.015
 
     postgres_url: str = "postgresql+asyncpg://alldocs:alldocs@localhost:5432/alldocs"

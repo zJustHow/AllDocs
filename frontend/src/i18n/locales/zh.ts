@@ -98,6 +98,8 @@ const zh = {
     page: "页码",
     pageLabel: "Page",
     pageHint: " · 第 {page} 页",
+    prevPage: "上一页",
+    nextPage: "下一页",
     zoomOut: "缩小",
     zoomIn: "放大",
     unsupported: "此格式暂不支持在线预览",
@@ -109,6 +111,11 @@ const zh = {
     more: "{count} 条引用",
     showAll: "查看 {count} 条引用",
     collapse: "收起引用",
+  },
+  dialog: {
+    cancel: "取消",
+    confirm: "确定",
+    close: "关闭对话框",
   },
   errors: {
     loadDocumentsFailed: "加载文档列表失败",

@@ -15,12 +15,6 @@ from app.services.pdf_embedded_images import (
     attach_figures_to_chunks,
     extract_pdf_embedded_figures,
 )
-from app.services.type_annotations import (
-    HighlightTypeRegion,
-    extract_page_text_excluding_rects,
-    extract_pdf_highlight_regions,
-    highlight_rects_on_page,
-)
 
 _SECTION_PATH_MAX_LEN = 512
 _SECTION_PATH_SEPARATOR = " > "
@@ -40,7 +34,6 @@ _CHAPTER_TITLE_RE = re.compile(
     re.IGNORECASE,
 )
 _MD_HEADING_RE = re.compile(r"^(#{1,6})\s+(.+)$")
-_ASSET_CHUNK_TYPES = frozenset({"table"})
 
 
 @dataclass
@@ -49,7 +42,6 @@ class ParsedChunk:
     page: int | None
     section: str | None
     chunk_index: int
-    chunk_type: str = "text"
     asset_bbox: tuple[float, float, float, float] | None = None
     asset_png: bytes | None = None
     asset_width: int | None = None
@@ -216,18 +208,13 @@ def _extract_native_page_text(page: fitz.Page) -> str:
     return page.get_text().strip()
 
 
-def _extract_page_text_blocks(
-    page: fitz.Page,
-    exclude_rects: list[fitz.Rect] | None = None,
-) -> list[tuple[float, float, str]]:
+def _extract_page_text_blocks(page: fitz.Page) -> list[tuple[float, float, str]]:
     blocks = page.get_text("blocks")
     extracted: list[tuple[float, float, str]] = []
     for block in blocks:
         if len(block) < 5:
             continue
         bbox = fitz.Rect(block[:4])
-        if exclude_rects and any(bbox.intersects(rect) for rect in exclude_rects):
-            continue
         text = str(block[4]).strip()
         if text:
             extracted.append((float(bbox.y0), float(bbox.y1), text))
@@ -543,12 +530,12 @@ def _merge_pdf_layout_chunks(
 
 
 def _orphan_figure_chunk(figure: EmbeddedFigure) -> ParsedChunk:
+    """Standalone image chunk; VLM caption becomes body text after ingest."""
     return ParsedChunk(
-        text=figure.text,
+        text=figure.text.strip(),
         page=figure.page,
         section=figure.section,
         chunk_index=0,
-        chunk_type="figure",
         asset_bbox=figure.bbox,
         asset_png=figure.png_bytes,
         asset_width=figure.width,
@@ -579,12 +566,6 @@ def _build_chunks_from_pages(
             )
             chunk_index += 1
     return parsed_chunks
-
-
-def _render_region_png(page: fitz.Page, bbox: tuple[float, float, float, float], scale: float) -> bytes:
-    matrix = fitz.Matrix(scale, scale)
-    pixmap = page.get_pixmap(matrix=matrix, clip=fitz.Rect(bbox), alpha=False)
-    return pixmap.tobytes("png")
 
 
 class IngestionService:
@@ -623,11 +604,6 @@ class IngestionService:
                     return resolved
             return section_for_page(toc_entries, page_number)
 
-        highlight_regions = extract_pdf_highlight_regions(
-            doc,
-            section_resolver=section_resolver,
-        )
-        has_highlights = bool(highlight_regions)
         pages: list[tuple[str | None, str, int]] = []
         ocr_pages = 0
 
@@ -638,13 +614,7 @@ class IngestionService:
                 continue
 
             fallback_section = section_for_page(toc_entries, page_number)
-            highlight_rects = highlight_rects_on_page(page) if has_highlights else []
-
-            if has_highlights and highlight_rects:
-                page_text = extract_page_text_excluding_rects(page, highlight_rects)
-                used_ocr = False
-            else:
-                page_text, used_ocr = self._extract_page_text(page)
+            page_text, used_ocr = self._extract_page_text(page)
 
             if used_ocr:
                 ocr_pages += 1
@@ -654,10 +624,7 @@ class IngestionService:
                 continue
 
             if use_y_split and not used_ocr:
-                blocks = _extract_page_text_blocks(
-                    page,
-                    exclude_rects=highlight_rects or None,
-                )
+                blocks = _extract_page_text_blocks(page)
                 if blocks:
                     for section, segment_text in _segment_page_by_anchors(
                         toc_anchors,
@@ -683,52 +650,22 @@ class IngestionService:
             ),
         )
 
-        if not pages and not highlight_regions and not embedded_figures:
+        if not pages and not embedded_figures:
             doc.close()
             raise ValueError("No text extracted from PDF")
 
         page_chunks = _build_chunks_from_pages(pages, self.settings)
 
-        region_pngs: list[bytes | None] = []
-        for region in highlight_regions:
-            png: bytes | None = None
-            if (
-                region.chunk_type in _ASSET_CHUNK_TYPES
-                and region.bbox is not None
-            ):
-                png = _render_region_png(
-                    doc[region.page - 1],
-                    region.bbox,
-                    self.settings.ocr_render_scale,
-                )
-            region_pngs.append(png)
-
-        highlight_chunks: list[ParsedChunk] = []
-        pngs = region_pngs or [None] * len(highlight_regions)
-        for region, png in zip(highlight_regions, pngs, strict=True):
-            highlight_chunks.append(
-                ParsedChunk(
-                    text=region.text,
-                    page=region.page,
-                    section=region.section,
-                    chunk_index=0,
-                    chunk_type=region.chunk_type,
-                    asset_bbox=region.bbox,
-                    asset_png=png,
-                )
-            )
-
         orphan_figures = attach_figures_to_chunks(
             embedded_figures,
-            page_chunks + highlight_chunks,
+            page_chunks,
         )
 
         inline_chunks: list[tuple[int, float, ParsedChunk]] = []
         for figure in orphan_figures:
-            inline_chunks.append((figure.page, figure.sort_key, _orphan_figure_chunk(figure)))
-
-        for region, chunk in zip(highlight_regions, highlight_chunks, strict=True):
-            inline_chunks.append((region.page, region.sort_key, chunk))
+            inline_chunks.append(
+                (figure.page, figure.sort_key, _orphan_figure_chunk(figure))
+            )
 
         parsed_chunks = (
             _merge_pdf_layout_chunks(inline_chunks, page_chunks)

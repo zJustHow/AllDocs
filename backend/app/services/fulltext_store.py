@@ -45,7 +45,7 @@ INDEX_BODY = {
             },
             "page": {"type": "integer"},
             "section": {"type": "keyword"},
-            "chunk_type": {"type": "keyword"},
+            "asset_types": {"type": "keyword"},
         }
     },
 }
@@ -60,20 +60,18 @@ def get_elasticsearch_client() -> Elasticsearch:
 def _ensure_caption_mapping(client: Elasticsearch, index: str) -> None:
     mapping = client.indices.get_mapping(index=index)
     props = mapping.get(index, {}).get("mappings", {}).get("properties", {})
-    if "caption" in props:
+    updates: dict = {}
+    if "caption" not in props:
+        updates["caption"] = {
+            "type": "text",
+            "analyzer": "manual_index_analyzer",
+            "search_analyzer": "manual_search_analyzer",
+        }
+    if "asset_types" not in props:
+        updates["asset_types"] = {"type": "keyword"}
+    if not updates:
         return
-    client.indices.put_mapping(
-        index=index,
-        body={
-            "properties": {
-                "caption": {
-                    "type": "text",
-                    "analyzer": "manual_index_analyzer",
-                    "search_analyzer": "manual_search_analyzer",
-                }
-            }
-        },
-    )
+    client.indices.put_mapping(index=index, body={"properties": updates})
 
 
 def ensure_index(settings: Settings | None = None) -> None:

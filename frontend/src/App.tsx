@@ -27,6 +27,7 @@ import {
 import MessageList from "./MessageList";
 import Sidebar from "./Sidebar";
 import type { ChatMessage, DocumentItem } from "./types";
+import { useConfirmDialog } from "./useConfirmDialog";
 
 const DocumentViewer = lazy(() => import("./DocumentViewer"));
 
@@ -39,6 +40,7 @@ function newId() {
 
 export default function App() {
   const { t, locale, setLocale, suggestions } = useI18n();
+  const { confirm, dialog: confirmDialog } = useConfirmDialog();
 
   const [documents, setDocuments] = useState<DocumentItem[]>([]);
   const [selectedDocIds, setSelectedDocIds] = useState<string[]>([]);
@@ -261,14 +263,25 @@ export default function App() {
   }, [refreshDocuments]);
 
   const handleDelete = useCallback(async (docId: string) => {
-    if (!confirm(t("sidebar.deleteConfirm"))) return;
+    const confirmed = await confirm({
+      title: t("sidebar.deleteDoc"),
+      message: t("sidebar.deleteConfirm"),
+      confirmLabel: t("sidebar.deleteDoc"),
+      variant: "danger",
+    });
+    if (!confirmed) return;
     setSelectedDocIds((prev) => prev.filter((id) => id !== docId));
     await deleteDocument(docId);
     await refreshDocuments();
-  }, [refreshDocuments, t]);
+  }, [confirm, refreshDocuments, t]);
 
   const handleReindex = useCallback(async (docId: string) => {
-    if (!confirm(t("sidebar.reindexConfirm"))) return;
+    const confirmed = await confirm({
+      title: t("sidebar.reindexDoc"),
+      message: t("sidebar.reindexConfirm"),
+      confirmLabel: t("sidebar.reindexDoc"),
+    });
+    if (!confirmed) return;
     setError(null);
     try {
       await reindexDocument(docId);
@@ -276,7 +289,7 @@ export default function App() {
     } catch (err) {
       setError(String(err));
     }
-  }, [refreshDocuments, t]);
+  }, [confirm, refreshDocuments, t]);
 
   const clearChat = () => {
     setMessages([]);
@@ -667,6 +680,8 @@ export default function App() {
           </Suspense>
         </div>
       )}
+
+      {confirmDialog}
     </div>
   );
 }

@@ -98,6 +98,8 @@ const en = {
     page: "Page number",
     pageLabel: "Page",
     pageHint: " · p. {page}",
+    prevPage: "Previous page",
+    nextPage: "Next page",
     zoomOut: "Zoom out",
     zoomIn: "Zoom in",
     unsupported: "Preview is not available for this format",
@@ -109,6 +111,11 @@ const en = {
     more: "{count} citations",
     showAll: "View {count} citations",
     collapse: "Collapse citations",
+  },
+  dialog: {
+    cancel: "Cancel",
+    confirm: "Confirm",
+    close: "Close dialog",
   },
   errors: {
     loadDocumentsFailed: "Failed to load documents",

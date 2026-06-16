@@ -9,13 +9,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings, get_settings
 from app.db.models import Chunk, ChunkAsset, Document
+from app.db.session import async_session_factory
 from app.services.asset_urls import asset_url
 from app.services.chunk_index import (
+    captions_merged_into_text,
     chunk_display_snippet,
     chunk_rerank_text,
     format_context_body,
 )
-from app.services.chunk_filter import ChunkFilter, filter_chunks
+from app.services.chunk_filter import ChunkFilter, filter_chunks, chunk_asset_types
 from app.services.embedding import EmbeddingService
 from app.services.fulltext_store import FulltextStore
 from app.services.hybrid import reciprocal_rank_fusion
@@ -69,8 +71,8 @@ def low_relevance_message(lang: str) -> str:
     )
 
 
-def _min_relevance_score(settings: Settings) -> float:
-    if settings.rerank_enabled:
+def _min_relevance_score(settings: Settings, *, reranker_active: bool = False) -> float:
+    if reranker_active:
         return settings.rag_min_rerank_score
     return settings.rag_min_retrieval_score
 
@@ -91,12 +93,14 @@ def resolve_retrieval_fallback(
     *,
     evidence: list[dict],
     settings: Settings,
+    reranker_active: bool = False,
 ) -> str | None:
     """Return a user-facing fallback when synthesis should be skipped, else None."""
     semantic_evidence = [chunk for chunk in evidence if chunk.get("from_semantic_search")]
     if semantic_evidence:
         scores = _semantic_primary_scores(evidence)
-        if scores and max(scores) < _min_relevance_score(settings):
+        threshold = _min_relevance_score(settings, reranker_active=reranker_active)
+        if scores and max(scores) < threshold:
             return low_relevance_message(lang)
         return None
 
@@ -159,15 +163,37 @@ class RAGService:
             chunk, document = rows[chunk_id]
             chunk_assets = assets_by_chunk.get(chunk_id, [])
             asset_captions = [asset.caption for asset in chunk_assets if asset.caption]
-            body_text = format_context_body(
+            merged_into_text = captions_merged_into_text(
                 chunk.text,
-                caption=chunk.caption,
+                chunk_caption=chunk.caption,
                 asset_captions=asset_captions,
             )
-            index_text = chunk_rerank_text(
-                chunk.text,
-                caption=chunk.caption,
-                asset_captions=asset_captions,
+            body_text = (
+                chunk.text
+                if merged_into_text
+                else format_context_body(
+                    chunk.text,
+                    caption=chunk.caption,
+                    asset_captions=asset_captions,
+                )
+            )
+            index_text = (
+                chunk.text
+                if merged_into_text
+                else chunk_rerank_text(
+                    chunk.text,
+                    caption=chunk.caption,
+                    asset_captions=asset_captions,
+                )
+            )
+            snippet = (
+                chunk.text[:300]
+                if merged_into_text
+                else chunk_display_snippet(
+                    chunk.text,
+                    caption=chunk.caption,
+                    asset_captions=asset_captions,
+                )
             )
             chunks.append(
                 {
@@ -176,14 +202,9 @@ class RAGService:
                     "document_name": document.name,
                     "page": chunk.page,
                     "section": chunk.section,
-                    "chunk_type": chunk.chunk_type,
                     "caption": chunk.caption,
                     "score": score_map.get(chunk_id, 0.0),
-                    "snippet": chunk_display_snippet(
-                        chunk.text,
-                        caption=chunk.caption,
-                        asset_captions=asset_captions,
-                    ),
+                    "snippet": snippet,
                     "text": body_text,
                     "index_text": index_text,
                     "assets": [
@@ -293,9 +314,22 @@ class RAGService:
         if query_vector is None:
             query_vector = await asyncio.to_thread(self.embedding.embed_query, question)
         broad_filter = chunk_filter.broad_filter()
+
+        async def retrieve_broad() -> list[dict]:
+            async with async_session_factory() as task_db:
+                return await self._retrieve_once(
+                    task_db, question, broad_filter, query_vector=query_vector
+                )
+
+        async def retrieve_strict() -> list[dict]:
+            async with async_session_factory() as task_db:
+                return await self._retrieve_once(
+                    task_db, question, chunk_filter, query_vector=query_vector
+                )
+
         broad_chunks, strict_chunks = await asyncio.gather(
-            self._retrieve_once(db, question, broad_filter, query_vector=query_vector),
-            self._retrieve_once(db, question, chunk_filter, query_vector=query_vector),
+            retrieve_broad(),
+            retrieve_strict(),
         )
 
         if strict_chunks:
@@ -342,13 +376,13 @@ class RAGService:
         parts: list[str] = []
         for index, item in enumerate(chunks, start=1):
             header = f"[{index}] {item['document_name']}"
-            chunk_type = item.get("chunk_type")
-            if chunk_type and chunk_type != "text":
-                header += f" type={chunk_type}"
             if item.get("page"):
                 header += f" p.{item['page']}"
             if item.get("section"):
                 header += f" §{item['section']}"
+            asset_types = chunk_asset_types(item)
+            if asset_types:
+                header += f" assets={','.join(asset_types)}"
             if item.get("assets"):
                 header += " (visual)"
             parts.append(f"{header}\n{item['text']}")

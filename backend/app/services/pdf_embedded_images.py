@@ -9,9 +9,7 @@ import fitz
 
 from app.config import Settings
 
-_ATTACHABLE_CHUNK_TYPES = frozenset({"text"})
 _OVERLAP_SKIP_RATIO = 0.35
-
 
 @dataclass(frozen=True)
 class EmbeddedFigure:
@@ -176,9 +174,15 @@ def _rect_intersection_area(
     return (x1 - x0) * (y1 - y0)
 
 
-def _figure_overlaps_table(figure: EmbeddedFigure, chunk) -> bool:
-    if getattr(chunk, "chunk_type", "") != "table":
-        return False
+def _figure_overlaps_table_asset(figure: EmbeddedFigure, chunk) -> bool:
+    for attached in getattr(chunk, "attached_assets", []) or []:
+        if attached.asset_type != "table":
+            continue
+        overlap = _rect_intersection_area(figure.bbox, attached.bbox)
+        if overlap <= 0:
+            continue
+        if overlap / max(_rect_area(figure.bbox), 1.0) >= _OVERLAP_SKIP_RATIO:
+            return True
     chunk_bbox = getattr(chunk, "asset_bbox", None)
     if not chunk_bbox:
         return False
@@ -207,8 +211,7 @@ def _vertical_distance(
 
 def _is_attach_candidate(chunk) -> bool:
     page = getattr(chunk, "page", None)
-    chunk_type = getattr(chunk, "chunk_type", "text")
-    if page is None or chunk_type not in _ATTACHABLE_CHUNK_TYPES:
+    if page is None:
         return False
     if getattr(chunk, "asset_png", None):
         return False
@@ -250,12 +253,6 @@ def attach_figures_to_chunks(
     if not figures:
         return []
 
-    table_chunks = [
-        chunk
-        for chunk in chunks
-        if getattr(chunk, "chunk_type", "") == "table"
-    ]
-
     by_page: dict[int, list] = {}
     for chunk in chunks:
         page = getattr(chunk, "page", None)
@@ -265,7 +262,8 @@ def attach_figures_to_chunks(
 
     figures_by_page: dict[int, list[EmbeddedFigure]] = {}
     for figure in figures:
-        if any(_figure_overlaps_table(figure, table_chunk) for table_chunk in table_chunks):
+        page_chunks = by_page.get(figure.page, [])
+        if any(_figure_overlaps_table_asset(figure, chunk) for chunk in page_chunks):
             continue
         figures_by_page.setdefault(figure.page, []).append(figure)
     for page_figures in figures_by_page.values():

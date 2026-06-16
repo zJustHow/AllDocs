@@ -65,3 +65,6 @@ async def init_db() -> None:
         await conn.execute(
             text("ALTER TABLE chunk_assets ADD COLUMN IF NOT EXISTS caption TEXT")
         )
+        await conn.execute(
+            text("ALTER TABLE chunks DROP COLUMN IF EXISTS chunk_type")
+        )

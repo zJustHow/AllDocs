@@ -7,7 +7,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Document
-from app.services.chunk_filter import ChunkFilter
+from app.db.session import async_session_factory
+from app.services.chunk_filter import ChunkFilter, chunk_asset_types
 from app.services.rag import RAGService, parse_chunk_uuids
 from app.services.toc_lookup import format_documents_outline, lookup_toc, outline_to_chunks
 
@@ -38,9 +39,9 @@ def _format_chunks(chunks: list[dict], *, source_tool: str) -> str:
             header += f" p.{item['page']}"
         if item.get("section"):
             header += f" §{item.get('section')}"
-        chunk_type = item.get("chunk_type")
-        if chunk_type and chunk_type != "text":
-            header += f" type={chunk_type}"
+        asset_types = chunk_asset_types(item)
+        if asset_types:
+            header += f" assets={','.join(asset_types)}"
         if item.get("assets"):
             header += " visual=1"
         if item.get("caption") or any(
@@ -70,9 +71,9 @@ def _format_batch_observation(results: list[tuple[str, list[dict]]]) -> str:
             header = f"  [{hit}] {item.get('document_name', '')}"
             if item.get("page"):
                 header += f" p.{item['page']}"
-            chunk_type = item.get("chunk_type")
-            if chunk_type and chunk_type != "text":
-                header += f" type={chunk_type}"
+            asset_types = chunk_asset_types(item)
+            if asset_types:
+                header += f" assets={','.join(asset_types)}"
             chunk_id = item.get("chunk_id")
             if chunk_id:
                 header += f" id={chunk_id}"
@@ -233,15 +234,16 @@ class AgentToolRegistry:
                 search_item: dict, query_vector: list[float]
             ) -> tuple[str, list[dict]]:
                 query = str(search_item.get("query") or question).strip()
-                chunks = await self._search_chunks(
-                    db,
-                    query=query,
-                    question=question,
-                    doc_ids=doc_ids,
-                    explicit_filters=explicit_filters,
-                    search_input=search_item,
-                    query_vector=query_vector,
-                )
+                async with async_session_factory() as task_db:
+                    chunks = await self._search_chunks(
+                        task_db,
+                        query=query,
+                        question=question,
+                        doc_ids=doc_ids,
+                        explicit_filters=explicit_filters,
+                        search_input=search_item,
+                        query_vector=query_vector,
+                    )
                 return query, chunks
 
             results = await asyncio.gather(

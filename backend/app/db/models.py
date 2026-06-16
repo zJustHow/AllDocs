@@ -52,7 +52,6 @@ class Chunk(Base):
     page: Mapped[int | None] = mapped_column(Integer, nullable=True)
     section: Mapped[str | None] = mapped_column(String(512), nullable=True)
     chunk_index: Mapped[int] = mapped_column(Integer)
-    chunk_type: Mapped[str] = mapped_column(String(64), default="text")
     caption: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     document: Mapped["Document"] = relationship(back_populates="chunks")

@@ -14,8 +14,7 @@ from app.services.document_delete import (
 )
 from app.services.embedding import EmbeddingService, chunk_embedding_text
 from app.services.fulltext_store import FulltextStore
-from app.services.chunk_index import chunk_fulltext_caption
-from app.services.ingest_caption import apply_ingest_captions
+from app.services.ingest_caption import apply_ingest_captions, merge_captions_into_chunk_text
 from app.services.ingestion import IngestionService, toc_entry_to_dict
 from app.services.infra_init import ensure_external_stores
 from app.services.storage import StorageService
@@ -63,7 +62,7 @@ def _collect_pending_asset_uploads(
                     chunk_id=chunk.id,
                     object_key=f"{doc_uuid}/assets/{asset_id}.png",
                     png_bytes=parsed.asset_png,
-                    asset_type=parsed.chunk_type,
+                    asset_type="figure",
                     page=parsed.page,
                     bbox=list(parsed.asset_bbox),
                     width=parsed.asset_width,
@@ -193,7 +192,6 @@ def process_document(document_id: str) -> None:
                     page=parsed.page,
                     section=parsed.section,
                     chunk_index=parsed.chunk_index,
-                    chunk_type=parsed.chunk_type,
                 )
                 db.add(chunk)
                 chunk_rows.append(chunk)
@@ -241,12 +239,12 @@ def process_document(document_id: str) -> None:
             for asset in asset_rows:
                 assets_by_chunk.setdefault(str(asset.chunk_id), []).append(asset)
 
-            def _asset_captions(chunk_id: uuid.UUID) -> list[str]:
-                return [
-                    asset.caption
-                    for asset in assets_by_chunk.get(str(chunk_id), [])
-                    if asset.caption
-                ]
+            merge_captions_into_chunk_text(
+                db,
+                chunk_rows=chunk_rows,
+                assets_by_chunk=assets_by_chunk,
+                settings=settings,
+            )
 
             _set_progress(db, document, 65, "生成向量")
             if _abort_if_deleting(db, document):
@@ -254,12 +252,7 @@ def process_document(document_id: str) -> None:
                 return
             vectors = EmbeddingService().embed_documents(
                 [
-                    chunk_embedding_text(
-                        chunk.text,
-                        chunk.section,
-                        caption=chunk.caption,
-                        asset_captions=_asset_captions(chunk.id),
-                    )
+                    chunk_embedding_text(chunk.text, chunk.section)
                     for chunk in chunk_rows
                 ]
             )
@@ -269,7 +262,12 @@ def process_document(document_id: str) -> None:
                     "document_name": document.name,
                     "page": chunk.page,
                     "section": chunk.section,
-                    "chunk_type": chunk.chunk_type,
+                    "asset_types": sorted(
+                        {
+                            asset.asset_type
+                            for asset in assets_by_chunk.get(str(chunk.id), [])
+                        }
+                    ),
                 }
                 for chunk in chunk_rows
             ]
@@ -287,13 +285,7 @@ def process_document(document_id: str) -> None:
                 fulltext_store.upsert_chunks(
                     chunk_ids=[chunk.id for chunk in chunk_rows],
                     texts=[chunk.text for chunk in chunk_rows],
-                    captions=[
-                        chunk_fulltext_caption(
-                            chunk.caption,
-                            _asset_captions(chunk.id),
-                        )
-                        for chunk in chunk_rows
-                    ],
+                    captions=["" for _ in chunk_rows],
                     payloads=payloads,
                 )
                 fulltext_store.refresh_index()

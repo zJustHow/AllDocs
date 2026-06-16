@@ -11,13 +11,14 @@ from dataclasses import dataclass
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings, get_settings
+from app.db.session import async_session_factory
 from app.db.models import Document
 from app.services.page_render import render_page_png
 from app.services.storage import StorageService
 
 logger = logging.getLogger(__name__)
 
-_TYPE_PRIORITY = {"table": 0, "figure": 1, "text": 2, "page": 3}
+_TYPE_PRIORITY = {"table": 0, "figure": 1}
 
 
 @dataclass(frozen=True)
@@ -31,14 +32,19 @@ class VisionImage:
     media_type: str
 
 
-def _asset_type(chunk_type: str | None, asset_type: str | None = None) -> str:
-    if asset_type:
+def _resolve_asset_type(asset_type: str | None) -> str:
+    if asset_type in {"table", "figure"}:
         return asset_type
-    if chunk_type == "table":
-        return "table"
-    if chunk_type == "figure":
-        return chunk_type
-    return "page"
+    return "figure"
+
+
+def _chunk_qualifies_for_vision(chunk: dict) -> bool:
+    """Cropped table/figure assets."""
+    assets = chunk.get("assets") or []
+    if not assets or not assets[0].get("asset_id"):
+        return False
+    asset_type = assets[0].get("type") or "figure"
+    return asset_type in {"table", "figure"}
 
 
 def select_evidence_for_vision(
@@ -50,22 +56,16 @@ def select_evidence_for_vision(
     seen_keys: set[str] = set()
 
     for index, chunk in enumerate(evidence, start=1):
-        assets = chunk.get("assets") or []
-        document_id = chunk.get("document_id")
-        page = chunk.get("page")
-        if assets:
-            dedupe_key = f"asset:{assets[0]['asset_id']}"
-        elif page and document_id:
-            dedupe_key = f"page:{document_id}:{page}"
-        else:
+        if not _chunk_qualifies_for_vision(chunk):
             continue
+        assets = chunk.get("assets") or []
+        dedupe_key = f"asset:{assets[0]['asset_id']}"
         if dedupe_key in seen_keys:
             continue
         seen_keys.add(dedupe_key)
 
-        chunk_type = chunk.get("chunk_type") or "text"
-        has_asset = bool(assets)
-        priority = _TYPE_PRIORITY.get(chunk_type, 99) - (1 if has_asset else 0)
+        asset_type = assets[0].get("type") or "figure"
+        priority = _TYPE_PRIORITY.get(asset_type, 99)
         candidates.append((priority, index, dedupe_key, chunk))
 
     candidates.sort(key=lambda item: (item[0], item[1]))
@@ -124,8 +124,7 @@ async def _render_vision_image(
             document_id=document_id,
             document_name=str(chunk.get("document_name") or ""),
             page=page,
-            asset_type=_asset_type(
-                chunk.get("chunk_type"),
+            asset_type=_resolve_asset_type(
                 assets[0].get("type") if assets else None,
             ),
             base64=base64.b64encode(png_bytes).decode("ascii"),
@@ -164,7 +163,8 @@ async def prepare_vision_images(
             doc_ids_to_load.add(str(chunk["document_id"]))
 
     async def _download_document(doc_id: str) -> tuple[str, tuple[bytes, str]] | None:
-        document = await db.get(Document, uuid.UUID(doc_id))
+        async with async_session_factory() as task_db:
+            document = await task_db.get(Document, uuid.UUID(doc_id))
         if not document:
             return None
         file_bytes = await asyncio.to_thread(storage.download, document.object_key)

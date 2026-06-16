@@ -11,6 +11,7 @@ class AgentStep:
     action: str
     action_input: dict
     observation: str
+    reasoning_content: str = ""
 
 
 @dataclass
