@@ -1,7 +1,20 @@
 import type { AgentStepEvent, Citation, DocumentItem, MessageEmbed } from "./types";
+import { parseAgentStepPayload } from "./agentStepUtils";
 import { t } from "./i18n";
 
 const API_BASE = "";
+
+export function documentFileUrl(documentId: string): string {
+  return `${API_BASE}/api/v1/documents/${documentId}/file`;
+}
+
+export function documentPageRenderUrl(
+  documentId: string,
+  page: number,
+  scale = 2,
+): string {
+  return `${API_BASE}/api/v1/documents/${documentId}/pages/${page}/render?scale=${scale}`;
+}
 
 export async function listDocuments(): Promise<DocumentItem[]> {
   const res = await fetch(`${API_BASE}/api/v1/documents`);
@@ -35,13 +48,6 @@ export async function reindexDocument(id: string): Promise<DocumentItem> {
     throw new Error(detail || t("errors.reindexFailed"));
   }
   return res.json();
-}
-
-export async function getDocumentFileUrl(documentId: string): Promise<string> {
-  const res = await fetch(`${API_BASE}/api/v1/documents/${documentId}/file`);
-  if (!res.ok) throw new Error(t("errors.loadDocumentFailed"));
-  const blob = await res.blob();
-  return URL.createObjectURL(blob);
 }
 
 export interface StreamHandlers {
@@ -102,16 +108,8 @@ export async function streamChat(
         continue;
       }
       if (payload.type === "status") handlers.onStatus?.(payload.stage as string);
-      if (payload.type === "agent_step") {
-        handlers.onAgentStep?.({
-          step: payload.step as number,
-          thought: (payload.thought as string) ?? "",
-          action: (payload.action as string) ?? "",
-          action_input: (payload.action_input as Record<string, unknown>) ?? {},
-          observation: (payload.observation as string) ?? "",
-          evidence_count: payload.evidence_count as number | undefined,
-        });
-      }
+      const agentStep = parseAgentStepPayload(payload);
+      if (agentStep) handlers.onAgentStep?.(agentStep);
       if (payload.type === "citations") {
         handlers.onCitations?.((payload.citations as Citation[]) ?? []);
       }

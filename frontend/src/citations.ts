@@ -41,6 +41,88 @@ export function formatDocumentNameLabel(name: string, maxLength = 16): string {
   return `${trimmed.slice(0, maxLength - 1)}…`;
 }
 
+export function formatCitationBadgeName(
+  citation: Citation,
+  citations: Citation[],
+  maxLength = 16,
+): string {
+  const index = getCitationIndex(citation, citations);
+  if (index < 0) {
+    return formatDocumentNameLabel(citation.document_name, maxLength);
+  }
+  const suffix = ` ${formatCitationLabel(index)}`;
+  const nameMax = Math.max(4, maxLength - suffix.length);
+  return formatDocumentNameLabel(citation.document_name, nameMax);
+}
+
+export function formatCitationBadgeIndex(
+  citation: Citation,
+  citations: Citation[],
+): string {
+  const index = getCitationIndex(citation, citations);
+  return index >= 0 ? formatCitationLabel(index) : "";
+}
+
+export interface MessageContentSection {
+  content: string;
+  citations: Citation[];
+}
+
+export function citationKey(citation: Citation): string {
+  return `${citation.document_id}:${citation.page}:${citation.section}`;
+}
+
+export function splitContentIntoSections(content: string): string[] {
+  const trimmed = content.trim();
+  if (!trimmed) return [];
+
+  if (/^#{1,6}\s/m.test(trimmed)) {
+    return trimmed.split(/(?=^#{1,6}\s)/m).filter((part) => part.trim());
+  }
+
+  const paragraphs = trimmed.split(/\n{2,}/).filter((part) => part.trim());
+  return paragraphs.length > 0 ? paragraphs : [trimmed];
+}
+
+export function extractSectionCitations(
+  content: string,
+  citations: Citation[],
+  embeds: MessageEmbed[] = [],
+): MessageContentSection {
+  const segments = splitMessageWithCitations(content, citations, { embeds });
+  const sectionCitations: Citation[] = [];
+  const seen = new Set<string>();
+  const textParts: string[] = [];
+
+  for (const segment of segments) {
+    if (segment.type === "text" || segment.type === "embed") {
+      textParts.push(segment.value);
+      continue;
+    }
+
+    const key = citationKey(segment.citation);
+    if (!seen.has(key)) {
+      seen.add(key);
+      sectionCitations.push(segment.citation);
+    }
+  }
+
+  return {
+    content: textParts.join(""),
+    citations: sectionCitations,
+  };
+}
+
+export function groupContentIntoSections(
+  content: string,
+  citations: Citation[],
+  embeds: MessageEmbed[] = [],
+): MessageContentSection[] {
+  return splitContentIntoSections(content).map((part) =>
+    extractSectionCitations(part, citations, embeds),
+  );
+}
+
 export function citationToViewerTarget(citation: Citation): ViewerTarget {
   return {
     documentId: citation.document_id,

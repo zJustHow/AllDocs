@@ -38,6 +38,7 @@ export interface AgentStepEvent {
   action_input: Record<string, unknown>;
   observation: string;
   evidence_count?: number;
+  status?: "running" | "done";
 }
 
 export interface ChatMessage {

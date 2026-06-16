@@ -15,7 +15,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="AllDocs",
-    description="RAG-based manual Q&A: local embedding, LLM API, local speech",
+    description="RAG-based operation guide Q&A: local embedding, LLM API, local speech",
     version="0.1.0",
     lifespan=lifespan,
 )

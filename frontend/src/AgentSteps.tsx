@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { memo, useEffect, useState } from "react";
 import { useI18n } from "./i18n";
 import type { AgentStepEvent } from "./types";
 
@@ -7,17 +7,30 @@ interface AgentStepsProps {
   running?: boolean;
 }
 
-function summarizeActionInput(action: string, input: Record<string, unknown>): string | null {
-  if (action === "search_chunks" && typeof input.query === "string") return input.query;
+function summarizeActionInput(action: string, input: Record<string, unknown>): string[] {
+  if (action === "search_chunks" && typeof input.query === "string") {
+    return [input.query];
+  }
   if (action === "search_chunks_batch" && Array.isArray(input.searches)) {
-    return `${input.searches.length} parallel search(es)`;
+    return input.searches
+      .map((search) => {
+        if (typeof search === "object" && search && "query" in search) {
+          return String((search as { query: unknown }).query ?? "");
+        }
+        return "";
+      })
+      .filter(Boolean);
   }
-  if (action === "lookup_toc" && typeof input.question === "string") return input.question;
+  if (action === "lookup_toc" && typeof input.question === "string") {
+    return [input.question];
+  }
   if (action === "read_chunks" && Array.isArray(input.chunk_ids)) {
-    return `${input.chunk_ids.length} chunk(s)`;
+    return [`${input.chunk_ids.length} chunk(s)`];
   }
-  if (action === "finish" && typeof input.reason === "string") return input.reason;
-  return null;
+  if (action === "finish" && typeof input.reason === "string") {
+    return [input.reason];
+  }
+  return [];
 }
 
 function truncate(text: string, max = 160): string {
@@ -26,7 +39,7 @@ function truncate(text: string, max = 160): string {
   return `${trimmed.slice(0, max)}…`;
 }
 
-export default function AgentSteps({ steps, running = false }: AgentStepsProps) {
+function AgentSteps({ steps, running = false }: AgentStepsProps) {
   const { t } = useI18n();
   const [expanded, setExpanded] = useState(running);
 
@@ -44,13 +57,21 @@ export default function AgentSteps({ steps, running = false }: AgentStepsProps) 
     return label === key ? action : label;
   };
 
+  const visibleSteps = steps.filter((step) => step.action !== "planning" || step.status === "running");
+  const latestRunning = [...steps].reverse().find((step) => step.status === "running");
+
   const summary =
     steps.length === 0
       ? t("agent.planning")
-      : t("agent.summary", {
-          count: steps.length,
-          actions: steps.map((step) => toolLabel(step.action)).join(" → "),
-        });
+      : running && latestRunning
+        ? t("agent.executing", { action: toolLabel(latestRunning.action) })
+        : t("agent.summary", {
+            count: steps.filter((step) => step.status !== "running").length,
+            actions: steps
+              .filter((step) => step.action !== "planning" && step.status !== "running")
+              .map((step) => toolLabel(step.action))
+              .join(" → "),
+          });
 
   if (steps.length === 0 && !running) return null;
 
@@ -62,28 +83,43 @@ export default function AgentSteps({ steps, running = false }: AgentStepsProps) 
     >
       <summary className="agent-steps-summary">
         <span className="agent-steps-dot" aria-hidden="true" />
-        <span>{running ? t("agent.running") : summary}</span>
+        <span>{summary}</span>
       </summary>
 
       <div className="agent-steps-body">
-        {steps.map((step) => {
-          const inputSummary = summarizeActionInput(step.action, step.action_input);
+        {visibleSteps.map((step) => {
+          const inputLines = summarizeActionInput(step.action, step.action_input);
+          const isRunning = step.status === "running";
           return (
-            <article key={step.step} className="agent-step">
+            <article
+              key={step.step}
+              className={`agent-step ${isRunning ? "is-running" : ""}`}
+            >
               <div className="agent-step-head">
                 <span className="agent-step-num">{step.step}</span>
                 <span className={`agent-tool-badge tool-${step.action}`}>
                   {toolLabel(step.action)}
                 </span>
-                {step.evidence_count != null ? (
+                {isRunning ? (
+                  <span className="agent-step-status">{t("agent.inProgress")}</span>
+                ) : null}
+                {!isRunning && step.evidence_count != null ? (
                   <span className="agent-evidence-count">
                     {t("agent.evidenceCount", { count: step.evidence_count })}
                   </span>
                 ) : null}
               </div>
               {step.thought ? <p className="agent-thought">{step.thought}</p> : null}
-              {inputSummary ? <p className="agent-action-input">{inputSummary}</p> : null}
-              {step.observation ? (
+              {inputLines.length > 0 ? (
+                <ul className="agent-action-input-list">
+                  {inputLines.map((line, index) => (
+                    <li key={`${step.step}-${index}`} className="agent-action-input">
+                      {line}
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+              {!isRunning && step.observation ? (
                 <pre className="agent-observation" title={step.observation}>
                   {truncate(step.observation, 240)}
                 </pre>
@@ -99,3 +135,5 @@ export default function AgentSteps({ steps, running = false }: AgentStepsProps) 
     </details>
   );
 }
+
+export default memo(AgentSteps);

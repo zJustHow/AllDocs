@@ -1,7 +1,7 @@
 import html
 import re
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from io import BytesIO
 
 import fitz
@@ -9,6 +9,12 @@ import fitz
 from app.config import Settings, get_settings
 from app.services.file_types import detect_file_type
 from app.services.ocr import OCRService
+from app.services.pdf_embedded_images import (
+    EmbeddedFigure,
+    ParsedAttachedAsset,
+    attach_figures_to_chunks,
+    extract_pdf_embedded_figures,
+)
 from app.services.type_annotations import (
     HighlightTypeRegion,
     extract_page_text_excluding_rects,
@@ -46,6 +52,9 @@ class ParsedChunk:
     chunk_type: str = "text"
     asset_bbox: tuple[float, float, float, float] | None = None
     asset_png: bytes | None = None
+    asset_width: int | None = None
+    asset_height: int | None = None
+    attached_assets: list[ParsedAttachedAsset] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -513,32 +522,14 @@ def _parse_docx_pages(file_bytes: bytes) -> list[tuple[str | None, str, int]]:
     return pages
 
 
-def _merge_pdf_highlight_chunks(
-    highlight_regions: list[HighlightTypeRegion],
+def _merge_pdf_layout_chunks(
+    inline_chunks: list[tuple[int, float, ParsedChunk]],
     page_chunks: list[ParsedChunk],
-    *,
-    region_pngs: list[bytes | None] | None = None,
 ) -> list[ParsedChunk]:
     ordered: list[tuple[int, float, int, ParsedChunk]] = []
-    pngs = region_pngs or [None] * len(highlight_regions)
 
-    for region, png in zip(highlight_regions, pngs, strict=True):
-        ordered.append(
-            (
-                region.page,
-                region.sort_key,
-                0,
-                ParsedChunk(
-                    text=region.text,
-                    page=region.page,
-                    section=region.section,
-                    chunk_index=0,
-                    chunk_type=region.chunk_type,
-                    asset_bbox=region.bbox if png else None,
-                    asset_png=png,
-                ),
-            )
-        )
+    for page, sort_key, chunk in inline_chunks:
+        ordered.append((page, sort_key, 0, chunk))
 
     for chunk in page_chunks:
         ordered.append((chunk.page or 0, float("inf"), chunk.chunk_index + 1, chunk))
@@ -549,6 +540,20 @@ def _merge_pdf_highlight_chunks(
         chunk.chunk_index = index
         merged.append(chunk)
     return merged
+
+
+def _orphan_figure_chunk(figure: EmbeddedFigure) -> ParsedChunk:
+    return ParsedChunk(
+        text=figure.text,
+        page=figure.page,
+        section=figure.section,
+        chunk_index=0,
+        chunk_type="figure",
+        asset_bbox=figure.bbox,
+        asset_png=figure.png_bytes,
+        asset_width=figure.width,
+        asset_height=figure.height,
+    )
 
 
 def _build_chunks_from_pages(
@@ -669,11 +674,21 @@ class IngestionService:
             if on_page_progress is not None:
                 on_page_progress(page_number, page_count)
 
-        if not pages and not highlight_regions:
+        embedded_figures = extract_pdf_embedded_figures(
+            doc,
+            settings=self.settings,
+            section_resolver=section_resolver,
+            should_skip_page=lambda page_number: should_skip_front_matter(
+                page_number, toc_entries
+            ),
+        )
+
+        if not pages and not highlight_regions and not embedded_figures:
             doc.close()
             raise ValueError("No text extracted from PDF")
 
         page_chunks = _build_chunks_from_pages(pages, self.settings)
+
         region_pngs: list[bytes | None] = []
         for region in highlight_regions:
             png: bytes | None = None
@@ -688,13 +703,36 @@ class IngestionService:
                 )
             region_pngs.append(png)
 
-        parsed_chunks = (
-            _merge_pdf_highlight_chunks(
-                highlight_regions,
-                page_chunks,
-                region_pngs=region_pngs,
+        highlight_chunks: list[ParsedChunk] = []
+        pngs = region_pngs or [None] * len(highlight_regions)
+        for region, png in zip(highlight_regions, pngs, strict=True):
+            highlight_chunks.append(
+                ParsedChunk(
+                    text=region.text,
+                    page=region.page,
+                    section=region.section,
+                    chunk_index=0,
+                    chunk_type=region.chunk_type,
+                    asset_bbox=region.bbox,
+                    asset_png=png,
+                )
             )
-            if highlight_regions
+
+        orphan_figures = attach_figures_to_chunks(
+            embedded_figures,
+            page_chunks + highlight_chunks,
+        )
+
+        inline_chunks: list[tuple[int, float, ParsedChunk]] = []
+        for figure in orphan_figures:
+            inline_chunks.append((figure.page, figure.sort_key, _orphan_figure_chunk(figure)))
+
+        for region, chunk in zip(highlight_regions, highlight_chunks, strict=True):
+            inline_chunks.append((region.page, region.sort_key, chunk))
+
+        parsed_chunks = (
+            _merge_pdf_layout_chunks(inline_chunks, page_chunks)
+            if inline_chunks
             else page_chunks
         )
 

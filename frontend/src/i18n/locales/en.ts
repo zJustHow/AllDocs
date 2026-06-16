@@ -1,9 +1,9 @@
 const en = {
   app: {
-    title: "AllDocs · Manual Q&A",
+    title: "AllDocs · Operation Guide Q&A",
     brand: "AllDocs",
-    tagline: "AllDocs · Manual RAG Q&A",
-    disclaimer: "AllDocs may make mistakes. Verify important details in the original manual.",
+    tagline: "AllDocs · Operation Guide RAG Q&A",
+    disclaimer: "AllDocs may make mistakes. Verify important details in the original operation guide.",
   },
   language: {
     label: "Language",
@@ -42,7 +42,7 @@ const en = {
   },
   welcome: {
     title: "How can I help?",
-    subtitle: "Manual Q&A · Chinese & English · Voice input",
+    subtitle: "Operation Guide Q&A · Chinese & English · Voice input",
   },
   suggestions: [
     "How do I handle alarm E-204?",
@@ -52,18 +52,22 @@ const en = {
   ],
   chat: {
     userAvatar: "You",
-    placeholder: "Ask a question about the manual...",
-    selectDocError: "Select at least one ready manual",
+    placeholder: "Ask a question about the operation guide...",
+    selectDocError: "Select at least one ready operation guide",
     thinking: "Thinking...",
     agentRunning: "Agent retrieving...",
     generating: "Generating answer...",
+    showEarlier: "Show {count} earlier messages",
   },
   agent: {
     running: "Agent retrieving...",
-    planning: "Retrieving...",
+    planning: "Planning retrieval...",
+    executing: "{action} in progress...",
+    inProgress: "Running",
     summary: "{count} step(s) · {actions}",
     evidenceCount: "{count} source(s)",
     tools: {
+      planning: "Planning",
       list_outline: "Outline",
       lookup_toc: "TOC lookup",
       search_chunks: "Search",

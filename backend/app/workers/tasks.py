@@ -104,22 +104,40 @@ def process_document(document_id: str) -> None:
             db.flush()
 
             for parsed, chunk in zip(parsed_chunks, chunk_rows, strict=True):
-                if not parsed.asset_png or not parsed.asset_bbox or parsed.page is None:
-                    continue
-                asset_id = uuid.uuid4()
-                object_key = f"{doc_uuid}/assets/{asset_id}.png"
-                storage.upload(object_key, parsed.asset_png, "image/png")
-                db.add(
-                    ChunkAsset(
-                        id=asset_id,
-                        chunk_id=chunk.id,
-                        document_id=doc_uuid,
-                        asset_type=parsed.chunk_type,
-                        page=parsed.page,
-                        bbox=list(parsed.asset_bbox),
-                        object_key=object_key,
+                if parsed.asset_png and parsed.asset_bbox and parsed.page is not None:
+                    asset_id = uuid.uuid4()
+                    object_key = f"{doc_uuid}/assets/{asset_id}.png"
+                    storage.upload(object_key, parsed.asset_png, "image/png")
+                    db.add(
+                        ChunkAsset(
+                            id=asset_id,
+                            chunk_id=chunk.id,
+                            document_id=doc_uuid,
+                            asset_type=parsed.chunk_type,
+                            page=parsed.page,
+                            bbox=list(parsed.asset_bbox),
+                            object_key=object_key,
+                            width=parsed.asset_width,
+                            height=parsed.asset_height,
+                        )
                     )
-                )
+                for attached in parsed.attached_assets:
+                    asset_id = uuid.uuid4()
+                    object_key = f"{doc_uuid}/assets/{asset_id}.png"
+                    storage.upload(object_key, attached.png_bytes, "image/png")
+                    db.add(
+                        ChunkAsset(
+                            id=asset_id,
+                            chunk_id=chunk.id,
+                            document_id=doc_uuid,
+                            asset_type=attached.asset_type,
+                            page=attached.page,
+                            bbox=list(attached.bbox),
+                            object_key=object_key,
+                            width=attached.width,
+                            height=attached.height,
+                        )
+                    )
             db.flush()
 
             _set_progress(db, document, 62, "生成图像描述")

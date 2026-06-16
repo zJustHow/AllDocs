@@ -35,7 +35,7 @@ def _asset_type(chunk_type: str | None, asset_type: str | None = None) -> str:
         return asset_type
     if chunk_type == "table":
         return "table"
-    if chunk_type in {"procedure", "warning"}:
+    if chunk_type in {"procedure", "warning", "figure"}:
         return chunk_type
     return "page"
 

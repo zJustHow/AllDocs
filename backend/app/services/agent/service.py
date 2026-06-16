@@ -73,6 +73,18 @@ class AgentRAGService:
         state = AgentState()
 
         while len(state.steps) < self.settings.rag_agent_max_steps and not state.done:
+            step_num = len(state.steps) + 1
+            await self._emit_step(
+                on_step,
+                {
+                    "type": "agent_step_start",
+                    "step": step_num,
+                    "thought": "",
+                    "action": "planning",
+                    "action_input": {},
+                },
+            )
+
             action_payload = await self.llm.decide_agent_action(question, state.steps)
             thought = str(action_payload.get("thought") or "")
             action = str(action_payload.get("action") or "finish").strip()
@@ -80,10 +92,21 @@ class AgentRAGService:
             if not isinstance(action_input, dict):
                 action_input = {}
 
+            await self._emit_step(
+                on_step,
+                {
+                    "type": "agent_step_start",
+                    "step": step_num,
+                    "thought": thought,
+                    "action": action,
+                    "action_input": action_input,
+                },
+            )
+
             if action == "finish":
                 state.done = True
                 step = AgentStep(
-                    step=len(state.steps) + 1,
+                    step=step_num,
                     thought=thought,
                     action=action,
                     action_input=action_input,
@@ -168,7 +191,7 @@ class AgentRAGService:
             )
 
             step = AgentStep(
-                step=len(state.steps) + 1,
+                step=step_num,
                 thought=thought,
                 action=action,
                 action_input=action_input,

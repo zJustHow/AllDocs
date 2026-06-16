@@ -66,6 +66,12 @@ class Settings(BaseSettings):
     ocr_min_chars_per_page: int = 30
     ocr_render_scale: float = 2.0
 
+    pdf_extract_embedded_images: bool = True
+    pdf_embedded_image_min_width: int = 64
+    pdf_embedded_image_min_height: int = 64
+    pdf_embedded_image_max_page_coverage: float = 0.85
+    pdf_embedded_image_max_per_page: int = 20
+
     ingest_caption_enabled: bool = False
     ingest_caption_api_base_url: str = ""
     ingest_caption_api_key: str = ""

@@ -53,18 +53,18 @@ def detect_language(text: str) -> str:
 
 
 def not_found_message(lang: str) -> str:
-    return "Not found in the manual." if lang == "en" else "说明书中未找到相关信息。"
+    return "Not found in the operation guide." if lang == "en" else "操作指南中未找到相关信息。"
 
 
 def low_relevance_message(lang: str) -> str:
     if lang == "en":
         return (
-            "The manual was searched, but the retrieved passages are not relevant enough "
+            "The operation guide was searched, but the retrieved passages are not relevant enough "
             "to answer confidently. Try rephrasing with more specific keywords, model numbers, "
             "or fault symptoms."
         )
     return (
-        "说明书里检索到了片段，但与您的问题相关性不足，暂时无法据此给出可靠回答。"
+        "操作指南里检索到了片段，但与您的问题相关性不足，暂时无法据此给出可靠回答。"
         "建议补充更具体的关键词、型号或故障现象后重新提问。"
     )
 

@@ -13,7 +13,7 @@ from app.services.vision_api import caption_api_base_url, caption_api_key, capti
 logger = logging.getLogger(__name__)
 
 CAPTION_SYSTEM_PROMPT = (
-    "你是产品说明书图像描述助手。根据图片写出便于检索的简短描述。"
+    "你是产品操作指南图像描述助手。根据图片写出便于检索的简短描述。"
     "要求：1-3句中文；说明图表类型（如规格表、接线图、示意图、故障灯）；"
     "提取关键参数、标签、颜色与连接关系；不得编造图中没有的内容。"
     "只输出描述正文，不要标题或列表符号。"
@@ -42,7 +42,7 @@ class CaptionService:
                     "content": [
                         {
                             "type": "text",
-                            "text": "请描述这张说明书图片，便于用户检索「规格表」「接线图」「故障灯」等内容。",
+                            "text": "请描述这张操作指南图片，便于用户检索「规格表」「接线图」「故障灯」等内容。",
                         },
                         {
                             "type": "image_url",

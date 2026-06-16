@@ -1,3 +1,4 @@
+import asyncio
 import json
 import uuid
 
@@ -68,22 +69,33 @@ async def chat(
             try:
                 yield f"data: {json.dumps({'type': 'status', 'stage': 'agent'}, ensure_ascii=False)}\n\n"
                 agent = AgentRAGService(settings)
-                step_events: list[dict] = []
+                step_queue: asyncio.Queue[dict | None] = asyncio.Queue()
 
                 async def on_step(event: dict) -> None:
-                    step_events.append(event)
+                    await step_queue.put(event)
 
-                result = await agent.run(
-                    db,
-                    payload.message,
-                    doc_ids or None,
-                    chunk_filters,
-                    history,
-                    on_step=on_step,
-                    skip_synthesis=True,
-                )
-                for event in step_events:
+                async def run_agent():
+                    try:
+                        return await agent.run(
+                            db,
+                            payload.message,
+                            doc_ids or None,
+                            chunk_filters,
+                            history,
+                            on_step=on_step,
+                            skip_synthesis=True,
+                        )
+                    finally:
+                        await step_queue.put(None)
+
+                agent_task = asyncio.create_task(run_agent())
+                while True:
+                    event = await step_queue.get()
+                    if event is None:
+                        break
                     yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+
+                result = await agent_task
 
                 if result.fallback_message:
                     fallback = result.fallback_message

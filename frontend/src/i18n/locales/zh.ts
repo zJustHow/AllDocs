@@ -1,9 +1,9 @@
 const zh = {
   app: {
-    title: "AllDocs · 说明书问答",
+    title: "AllDocs · 操作指南问答",
     brand: "AllDocs",
-    tagline: "AllDocs · 说明书 RAG 问答",
-    disclaimer: "AllDocs 可能出错，重要信息请以原始说明书为准",
+    tagline: "AllDocs · 操作指南 RAG 问答",
+    disclaimer: "AllDocs 可能出错，重要信息请以原始操作指南为准",
   },
   language: {
     label: "语言",
@@ -42,7 +42,7 @@ const zh = {
   },
   welcome: {
     title: "有什么可以帮你的？",
-    subtitle: "基于说明书智能问答 · 支持中英文 · 语音输入",
+    subtitle: "基于操作指南智能问答 · 支持中英文 · 语音输入",
   },
   suggestions: [
     "报警 E-204 怎么处理？",
@@ -52,18 +52,22 @@ const zh = {
   ],
   chat: {
     userAvatar: "你",
-    placeholder: "询问说明书相关问题...",
-    selectDocError: "请至少选择一份已就绪的说明书",
+    placeholder: "询问操作指南相关问题...",
+    selectDocError: "请至少选择一份已就绪的操作指南",
     thinking: "思考中...",
     agentRunning: "Agent 检索中...",
     generating: "生成回答...",
+    showEarlier: "显示更早的 {count} 条消息",
   },
   agent: {
     running: "Agent 检索中...",
-    planning: "检索中...",
+    planning: "分析检索策略...",
+    executing: "正在{action}...",
+    inProgress: "执行中",
     summary: "{count} 步 · {actions}",
     evidenceCount: "证据 {count} 条",
     tools: {
+      planning: "规划",
       list_outline: "章节目录",
       lookup_toc: "页码查询",
       search_chunks: "语义检索",

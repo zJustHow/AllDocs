@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   createVoiceSocket,
   deleteDocument,
@@ -7,24 +15,20 @@ import {
   streamChat,
   uploadDocument,
 } from "./api";
+import { createAssistantStreamController } from "./chatStream";
+import Composer from "./Composer";
 import { type ViewerTarget } from "./citations";
-import DocumentViewer from "./DocumentViewer";
-import { UPLOAD_ACCEPT } from "./fileTypes";
 import { useI18n, type Locale } from "./i18n";
 import {
   AllDocsIcon,
   DocIcon,
   MenuIcon,
-  MicIcon,
-  NewChatIcon,
-  PlusIcon,
-  ReindexIcon,
-  SendIcon,
-  TrashIcon,
 } from "./icons";
-import AgentSteps from "./AgentSteps";
-import MessageContent from "./MessageContent";
-import type { AgentStepEvent, ChatMessage, DocumentItem } from "./types";
+import MessageList from "./MessageList";
+import Sidebar from "./Sidebar";
+import type { ChatMessage, DocumentItem } from "./types";
+
+const DocumentViewer = lazy(() => import("./DocumentViewer"));
 
 function newId() {
   if (typeof crypto?.randomUUID === "function") {
@@ -104,11 +108,43 @@ export default function App() {
 
   useEffect(() => {
     refreshDocuments().catch((err) => setError(String(err)));
+
     const intervalMs = indexingDocs.length > 0 ? 500 : 5000;
-    const timer = setInterval(() => {
-      refreshDocuments().catch(() => undefined);
-    }, intervalMs);
-    return () => clearInterval(timer);
+    let timer: ReturnType<typeof setInterval> | null = null;
+
+    const startPolling = () => {
+      if (timer) return;
+      timer = setInterval(() => {
+        if (document.visibilityState !== "visible") return;
+        refreshDocuments().catch(() => undefined);
+      }, intervalMs);
+    };
+
+    const stopPolling = () => {
+      if (timer) {
+        clearInterval(timer);
+        timer = null;
+      }
+    };
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        refreshDocuments().catch(() => undefined);
+        startPolling();
+      } else {
+        stopPolling();
+      }
+    };
+
+    if (document.visibilityState === "visible") {
+      startPolling();
+    }
+    document.addEventListener("visibilitychange", onVisibilityChange);
+
+    return () => {
+      stopPolling();
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
   }, [refreshDocuments, indexingDocs.length]);
 
   const scrollUserMessageToTop = useCallback((userMessageId: string) => {
@@ -195,15 +231,15 @@ export default function App() {
     [playNextAudio],
   );
 
-  const toggleDoc = (docId: string) => {
+  const toggleDoc = useCallback((docId: string) => {
     setSelectedDocIds((prev) =>
       prev.includes(docId)
         ? prev.filter((id) => id !== docId)
         : [...prev, docId],
     );
-  };
+  }, []);
 
-  const handleUpload = async (file: File | null) => {
+  const handleUpload = useCallback(async (file: File | null) => {
     if (!file) return;
     setUploading(true);
     setError(null);
@@ -215,16 +251,16 @@ export default function App() {
     } finally {
       setUploading(false);
     }
-  };
+  }, [refreshDocuments]);
 
-  const handleDelete = async (docId: string) => {
+  const handleDelete = useCallback(async (docId: string) => {
     if (!confirm(t("sidebar.deleteConfirm"))) return;
     setSelectedDocIds((prev) => prev.filter((id) => id !== docId));
     await deleteDocument(docId);
     await refreshDocuments();
-  };
+  }, [refreshDocuments, t]);
 
-  const handleReindex = async (docId: string) => {
+  const handleReindex = useCallback(async (docId: string) => {
     if (!confirm(t("sidebar.reindexConfirm"))) return;
     setError(null);
     try {
@@ -233,7 +269,7 @@ export default function App() {
     } catch (err) {
       setError(String(err));
     }
-  };
+  }, [refreshDocuments, t]);
 
   const clearChat = () => {
     setMessages([]);
@@ -257,6 +293,7 @@ export default function App() {
     setLoading(true);
 
     let assistantId: string | null = null;
+    let stream: ReturnType<typeof createAssistantStreamController> | null = null;
     try {
       const userMessage: ChatMessage = {
         id: newId(),
@@ -278,70 +315,17 @@ export default function App() {
         },
       ]);
 
-      await streamChat(text, sessionId, selectedDocIds, {
-        onAgentStep: (step) => {
-          setMessages((prev) =>
-            prev.map((msg) =>
-              msg.id === assistantId
-                ? { ...msg, agentSteps: [...(msg.agentSteps ?? []), step] }
-                : msg,
-            ),
-          );
-        },
-        onCitations: (citations) => {
-          setMessages((prev) =>
-            prev.map((msg) =>
-              msg.id === assistantId ? { ...msg, citations } : msg,
-            ),
-          );
-        },
-        onEmbeds: (embeds) => {
-          setMessages((prev) =>
-            prev.map((msg) =>
-              msg.id === assistantId ? { ...msg, embeds } : msg,
-            ),
-          );
-        },
-        onDelta: (delta) => {
-          setMessages((prev) =>
-            prev.map((msg) =>
-              msg.id === assistantId
-                ? { ...msg, content: msg.content + delta, agentRunning: false }
-                : msg,
-            ),
-          );
-        },
-        onDone: ({ sessionId: sid, content, citations, embeds }) => {
-          setSessionId(sid);
-          setLoading(false);
-          setMessages((prev) =>
-            prev.map((msg) =>
-              msg.id === assistantId
-                ? {
-                    ...msg,
-                    streaming: false,
-                    agentRunning: false,
-                    content: content ?? msg.content,
-                    citations,
-                    embeds,
-                  }
-                : msg,
-            ),
-          );
-        },
-        onError: (message) => {
-          setError(message);
-          setLoading(false);
-          setMessages((prev) =>
-            prev.map((msg) =>
-              msg.id === assistantId
-                ? { ...msg, streaming: false, agentRunning: false }
-                : msg,
-            ),
-          );
-        },
+      stream = createAssistantStreamController({
+        assistantId: assistantId!,
+        setMessages,
+        setSessionId,
+        setError,
+        setLoading,
       });
+
+      await streamChat(text, sessionId, selectedDocIds, stream.handlers);
     } catch (err) {
+      stream?.flush();
       setError(String(err));
       if (assistantId) {
         setMessages((prev) => prev.filter((msg) => msg.id !== assistantId));
@@ -371,8 +355,10 @@ export default function App() {
 
     let ws: WebSocket | null = null;
     let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    let stream: ReturnType<typeof createAssistantStreamController> | null = null;
 
     const cleanup = (message?: string) => {
+      stream?.flush();
       if (timeoutId) clearTimeout(timeoutId);
       if (ws && ws.readyState === WebSocket.OPEN) ws.close();
       finishVoice(message);
@@ -391,6 +377,14 @@ export default function App() {
 
       ws = createVoiceSocket();
       const assistantId = newId();
+      stream = createAssistantStreamController({
+        assistantId,
+        setMessages,
+        setSessionId,
+        setError,
+        setLoading,
+        onAudio: enqueueAudio,
+      });
 
       timeoutId = setTimeout(() => {
         cleanup(t("voice.timeout"));
@@ -417,25 +411,6 @@ export default function App() {
           return;
         }
 
-        if (payload.type === "agent_step") {
-          const step: AgentStepEvent = {
-            step: payload.step as number,
-            thought: (payload.thought as string) ?? "",
-            action: (payload.action as string) ?? "",
-            action_input:
-              (payload.action_input as Record<string, unknown>) ?? {},
-            observation: (payload.observation as string) ?? "",
-            evidence_count: payload.evidence_count as number | undefined,
-          };
-          setMessages((prev) =>
-            prev.map((msg) =>
-              msg.id === assistantId
-                ? { ...msg, agentSteps: [...(msg.agentSteps ?? []), step] }
-                : msg,
-            ),
-          );
-          return;
-        }
         if (payload.type === "transcript") {
           const userMessageId = newId();
           scrollUserMessageIdRef.current = userMessageId;
@@ -456,69 +431,15 @@ export default function App() {
               agentRunning: true,
             },
           ]);
+          return;
         }
-        if (payload.type === "citations") {
-          setMessages((prev) =>
-            prev.map((msg) =>
-              msg.id === assistantId
-                ? {
-                    ...msg,
-                    citations:
-                      (payload.citations as ChatMessage["citations"]) ?? [],
-                  }
-                : msg,
-            ),
-          );
-        }
-        if (payload.type === "embeds") {
-          setMessages((prev) =>
-            prev.map((msg) =>
-              msg.id === assistantId
-                ? {
-                    ...msg,
-                    embeds: (payload.embeds as ChatMessage["embeds"]) ?? [],
-                  }
-                : msg,
-            ),
-          );
-        }
-        if (payload.type === "answer_delta") {
-          setMessages((prev) =>
-            prev.map((msg) =>
-              msg.id === assistantId
-                ? {
-                    ...msg,
-                    content: msg.content + (payload.content as string),
-                    agentRunning: false,
-                  }
-                : msg,
-            ),
-          );
-        }
-        if (payload.type === "audio") {
-          enqueueAudio(payload.data as string);
-        }
-        if (payload.type === "done") {
-          setSessionId(payload.session_id as string);
-          setMessages((prev) =>
-            prev.map((msg) =>
-              msg.id === assistantId
-                ? {
-                    ...msg,
-                    streaming: false,
-                    agentRunning: false,
-                    content:
-                      (payload.content as string | undefined) ?? msg.content,
-                    citations:
-                      (payload.citations as ChatMessage["citations"]) ?? [],
-                    embeds: (payload.embeds as ChatMessage["embeds"]) ?? [],
-                  }
-                : msg,
-            ),
-          );
+
+        const result = stream?.dispatchPayload(payload) ?? "continue";
+        if (result === "done") {
           cleanup();
+          return;
         }
-        if (payload.type === "error") {
+        if (result === "error") {
           cleanup(payload.message as string);
         }
       };
@@ -563,7 +484,7 @@ export default function App() {
     setRecording(false);
   };
 
-  const openDocument = (target: ViewerTarget) => {
+  const openDocument = useCallback((target: ViewerTarget) => {
     const doc = documents.find((d) => d.id === target.documentId);
     setSidebarOpen(false);
     if (viewerCloseTimerRef.current) {
@@ -586,7 +507,12 @@ export default function App() {
     }
 
     requestAnimationFrame(() => setViewerOpen(true));
-  };
+  }, [documents, viewerTarget, viewerOpen]);
+
+  const registerMessageRef = useCallback((id: string, el: HTMLElement | null) => {
+    if (el) messageRefs.current.set(id, el);
+    else messageRefs.current.delete(id);
+  }, []);
 
   const toggleSidebar = () => setSidebarOpen((prev) => !prev);
 
@@ -610,125 +536,20 @@ export default function App() {
         aria-hidden="true"
       />
 
-      <aside className={`sidebar ${sidebarOpen ? "open" : "collapsed"}`}>
-        <div className="sidebar-inner">
-          <div className="sidebar-top">
-            <button
-              className="icon-btn"
-              onClick={toggleSidebar}
-              aria-label={t("sidebar.collapse")}
-            >
-              <MenuIcon />
-            </button>
-          </div>
-
-          <button className="new-chat-btn" onClick={clearChat}>
-            <NewChatIcon />
-            {t("sidebar.newChat")}
-          </button>
-
-          <label className="upload-btn">
-            <input
-              type="file"
-              accept={UPLOAD_ACCEPT}
-              hidden
-              disabled={uploading}
-              onChange={(e) => handleUpload(e.target.files?.[0] ?? null)}
-            />
-            <PlusIcon />
-            <span>
-              {uploading ? t("sidebar.uploading") : t("sidebar.uploadDoc")}
-            </span>
-          </label>
-          <p className="upload-hint">{t("sidebar.uploadHint")}</p>
-
-          <div className="sidebar-section-label">
-            {t("sidebar.docLibrary", { count: readyDocs.length })}
-          </div>
-
-          <div className="doc-list">
-            {documents.length === 0 && (
-              <p className="doc-list-empty">{t("sidebar.emptyList")}</p>
-            )}
-            {documents.map((doc) => (
-              <div key={doc.id} className={`doc-item ${doc.status}`}>
-                <label className="doc-select">
-                  <input
-                    type="checkbox"
-                    checked={selectedDocIds.includes(doc.id)}
-                    disabled={doc.status !== "ready"}
-                    onChange={() => toggleDoc(doc.id)}
-                  />
-                  <div className="doc-info">
-                    <strong>{doc.name}</strong>
-                    <div className="doc-meta">
-                      <span className={`status ${doc.status}`}>
-                        {statusLabel[doc.status]}
-                      </span>
-                      {doc.page_count ? (
-                        <span className="muted">
-                          {t("doc.pages", { count: doc.page_count })}
-                        </span>
-                      ) : null}
-                      {doc.ocr_pages ? (
-                        <span className="muted">OCR {doc.ocr_pages}</span>
-                      ) : null}
-                    </div>
-                    {(doc.status === "pending" ||
-                      doc.status === "processing") && (
-                      <div className="index-progress">
-                        <div className="index-progress-bar">
-                          <div
-                            className="index-progress-fill"
-                            style={{
-                              width: `${doc.status === "pending" ? 0 : doc.progress}%`,
-                            }}
-                          />
-                        </div>
-                        <span className="index-progress-label">
-                          {doc.progress_message ??
-                            (doc.status === "pending"
-                              ? t("doc.status.pending")
-                              : t("doc.indexing"))}
-                          {doc.status === "processing"
-                            ? ` ${doc.progress}%`
-                            : ""}
-                        </span>
-                      </div>
-                    )}
-                    {doc.error_message ? (
-                      <span className="error-text">{doc.error_message}</span>
-                    ) : null}
-                  </div>
-                </label>
-                <div className="doc-actions">
-                  {(doc.status === "ready" || doc.status === "failed") && (
-                    <button
-                      className="doc-reindex"
-                      onClick={() => handleReindex(doc.id)}
-                      aria-label={t("sidebar.reindexDoc")}
-                    >
-                      <ReindexIcon />
-                    </button>
-                  )}
-                  <button
-                    className="doc-delete"
-                    onClick={() => handleDelete(doc.id)}
-                    disabled={doc.status === "deleting"}
-                    aria-label={t("sidebar.deleteDoc")}
-                  >
-                    <TrashIcon />
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-
-          <div className="sidebar-foot">
-            <span>{t("app.tagline")}</span>
-          </div>
-        </div>
-      </aside>
+      <Sidebar
+        open={sidebarOpen}
+        documents={documents}
+        selectedDocIds={selectedDocIds}
+        readyCount={readyDocs.length}
+        uploading={uploading}
+        statusLabel={statusLabel}
+        onToggle={toggleSidebar}
+        onNewChat={clearChat}
+        onUpload={handleUpload}
+        onToggleDoc={toggleDoc}
+        onReindex={handleReindex}
+        onDelete={handleDelete}
+      />
 
       <div className="main">
         <header className="top-bar">
@@ -798,54 +619,13 @@ export default function App() {
               </div>
             </div>
           ) : (
-            <section className="messages">
-              {messages.map((msg) => (
-                <article
-                  key={msg.id}
-                  className={`message ${msg.role}`}
-                  ref={(el) => {
-                    if (el) messageRefs.current.set(msg.id, el);
-                    else messageRefs.current.delete(msg.id);
-                  }}
-                >
-                  <div className="message-avatar">
-                    {msg.role === "assistant" ? (
-                      <AllDocsIcon size={28} />
-                    ) : (
-                      t("chat.userAvatar")
-                    )}
-                  </div>
-                  <div className="message-body">
-                    {msg.role === "assistant" &&
-                    ((msg.agentSteps?.length ?? 0) > 0 || msg.agentRunning) ? (
-                      <AgentSteps
-                        steps={msg.agentSteps ?? []}
-                        running={msg.agentRunning}
-                      />
-                    ) : null}
-                    <div className="message-content">
-                      {msg.role === "assistant" ? (
-                        <MessageContent
-                          content={msg.content}
-                          citations={msg.citations ?? []}
-                          embeds={msg.embeds ?? []}
-                          streaming={msg.streaming}
-                          onOpenDocument={openDocument}
-                        />
-                      ) : (
-                        msg.content
-                      )}
-                      {msg.streaming ? <span className="cursor">▍</span> : null}
-                    </div>
-                  </div>
-                </article>
-              ))}
-              <div
-                ref={spacerRef}
-                className="message-scroll-spacer"
-                aria-hidden="true"
-              />
-            </section>
+            <MessageList
+              key={sessionId ?? "new"}
+              messages={messages}
+              onOpenDocument={openDocument}
+              registerRef={registerMessageRef}
+              spacerRef={spacerRef}
+            />
           )}
         </div>
 
@@ -855,55 +635,27 @@ export default function App() {
           </div>
         ) : null}
 
-        <footer className="composer-wrap">
-          <div className="input-pill">
-            <textarea
-              ref={textareaRef}
-              value={input}
-              placeholder={t("chat.placeholder")}
-              rows={1}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  sendText();
-                }
-              }}
-            />
-            <div className="input-actions">
-              <button
-                className={`action-btn mic ${recording ? "active" : ""}`}
-                onClick={recording ? stopRecording : startRecording}
-                disabled={loading && !recording}
-                title={t("voice.ask")}
-                aria-label={
-                  recording ? t("voice.stopRecording") : t("voice.ask")
-                }
-              >
-                <MicIcon />
-              </button>
-              <button
-                className="action-btn send"
-                onClick={() => sendText()}
-                disabled={loading || !input.trim()}
-                title={t("composer.send")}
-                aria-label={t("composer.send")}
-              >
-                <SendIcon />
-              </button>
-            </div>
-          </div>
-          <p className="composer-disclaimer">{t("app.disclaimer")}</p>
-        </footer>
+        <Composer
+          input={input}
+          loading={loading}
+          recording={recording}
+          textareaRef={textareaRef}
+          onInputChange={setInput}
+          onSend={() => sendText()}
+          onStartRecording={startRecording}
+          onStopRecording={stopRecording}
+        />
       </div>
 
       {viewerTarget && (
         <div className={`doc-viewer-slot ${viewerOpen ? "is-open" : ""}`}>
-          <DocumentViewer
-            key={`${viewerTarget.documentId}-${viewerTarget.page ?? 1}`}
-            target={viewerTarget}
-            onClose={closeViewer}
-          />
+          <Suspense fallback={null}>
+            <DocumentViewer
+              key={`${viewerTarget.documentId}-${viewerTarget.page ?? 1}`}
+              target={viewerTarget}
+              onClose={closeViewer}
+            />
+          </Suspense>
         </div>
       )}
     </div>

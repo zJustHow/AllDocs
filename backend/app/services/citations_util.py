@@ -12,7 +12,7 @@ def normalize_answer_citations(answer: str) -> str:
     return TRAILING_SOURCES_SECTION.sub("", answer).strip()
 
 
-def renumber_answer_citations(answer: str, context_chunks: list[dict]) -> tuple[str, list[dict]]:
+def renumber_answer_citations(answer: str, context_chunks: list[dict]) -> tuple[str, list[dict], dict[int, int]]:
     """Renumber inline [n] markers from 1 by first appearance; keep only cited sources."""
     seen_old_indices: list[int] = []
     seen_set: set[int] = set()
@@ -26,7 +26,7 @@ def renumber_answer_citations(answer: str, context_chunks: list[dict]) -> tuple[
         seen_old_indices.append(old_index)
 
     if not seen_old_indices:
-        return answer, []
+        return answer, [], {}
 
     old_to_new = {old_index + 1: new_num for new_num, old_index in enumerate(seen_old_indices, start=1)}
     new_chunks = [context_chunks[old_index] for old_index in seen_old_indices]
@@ -40,21 +40,43 @@ def renumber_answer_citations(answer: str, context_chunks: list[dict]) -> tuple[
             return f"【{new_num}】"
         return f"[{new_num}]"
 
-    return INLINE_CITATION_REF.sub(replace_ref, answer), new_chunks
+    return INLINE_CITATION_REF.sub(replace_ref, answer), new_chunks, old_to_new
 
 
 def finalize_answer_citations(answer: str, context_chunks: list[dict]) -> tuple[str, list[dict]]:
     answer = normalize_answer_citations(answer)
-    answer, cited_chunks = renumber_answer_citations(answer, context_chunks)
+    answer, cited_chunks, _ = renumber_answer_citations(answer, context_chunks)
     return answer, public_citations(cited_chunks)
 
 
 def finalize_answer(answer: str, context_chunks: list[dict]) -> tuple[str, list[dict], list[dict]]:
-    from app.services.embeds_util import public_embeds, resolve_answer_embeds
+    from app.services.embeds_util import (
+        public_embeds,
+        renumber_embed_markers,
+        resolve_answer_embeds,
+        resolve_citation_embeds,
+    )
 
-    answer, embeds = resolve_answer_embeds(answer, context_chunks)
-    answer, citations = finalize_answer_citations(answer, context_chunks)
-    return answer, citations, public_embeds(embeds)
+    answer = normalize_answer_citations(answer)
+    answer, manual_embeds = resolve_answer_embeds(answer, context_chunks)
+    answer, cited_chunks, citation_renumber = renumber_answer_citations(answer, context_chunks)
+
+    remapped_embeds: list[dict] = []
+    seen_embed_refs: set[int] = set()
+    for item in manual_embeds:
+        new_ref = citation_renumber.get(item["ref"], item["ref"])
+        if new_ref in seen_embed_refs:
+            continue
+        seen_embed_refs.add(new_ref)
+        remapped_embeds.append({**item, "ref": new_ref})
+    answer = renumber_embed_markers(answer, citation_renumber)
+
+    answer, embeds = resolve_citation_embeds(
+        answer,
+        cited_chunks,
+        existing_embeds=remapped_embeds,
+    )
+    return answer, public_citations(cited_chunks), public_embeds(embeds)
 
 
 def public_citations(chunks: list[dict]) -> list[dict]:

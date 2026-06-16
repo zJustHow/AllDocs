@@ -113,10 +113,9 @@ async def voice_websocket(websocket: WebSocket) -> None:
                 effective_doc_ids = parsed_doc_ids or [uuid.UUID(doc_id) for doc_id in session.doc_ids]
 
                 await _send_json(websocket, {"type": "status", "stage": "agent"})
-                step_events: list[dict] = []
 
                 async def on_step(event: dict) -> None:
-                    step_events.append(event)
+                    await _send_json(websocket, event)
 
                 result = await agent.run(
                     db,
@@ -127,8 +126,6 @@ async def voice_websocket(websocket: WebSocket) -> None:
                     on_step=on_step,
                     skip_synthesis=True,
                 )
-                for event in step_events:
-                    await _send_json(websocket, event)
 
                 if result.fallback_message:
                     fallback = result.fallback_message
