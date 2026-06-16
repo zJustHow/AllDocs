@@ -4,15 +4,22 @@ WORKDIR /app
 
 ENV DEBIAN_FRONTEND=noninteractive
 
+ARG PYTORCH_INDEX=https://download.pytorch.org/whl/cpu
+ARG PYTORCH_FALLBACK_INDEX=https://mirrors.tuna.tsinghua.edu.cn/pytorch-wheels/cpu/
+
 RUN sed -i 's|http://deb.debian.org|https://mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/debian.sources \
     && apt-get update \
     && apt-get install -y --no-install-recommends build-essential libgomp1 libgl1 libglib2.0-0 ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
-# torch CPU wheels live on pytorch.org; install once before the PyPI mirror pass.
+# torch CPU wheels live on pytorch.org; fall back to Tsinghua mirror for China ECS builds.
 RUN pip install --no-cache-dir --default-timeout=600 --retries 5 \
-        --index-url https://download.pytorch.org/whl/cpu \
+        --index-url "${PYTORCH_INDEX}" \
+        "torch==2.12.0+cpu" \
+    || pip install --no-cache-dir --default-timeout=600 --retries 5 \
+        --index-url "${PYTORCH_FALLBACK_INDEX}" \
+        --trusted-host mirrors.tuna.tsinghua.edu.cn \
         "torch==2.12.0+cpu" \
     && grep -v '^torch' requirements.txt > /tmp/requirements.docker.txt \
     && pip install --no-cache-dir --default-timeout=600 --retries 5 \

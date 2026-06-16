@@ -28,6 +28,7 @@ IMAGES=(
   "library/redis:7-alpine|redis:7-alpine"
   "qdrant/qdrant:v1.12.1|qdrant/qdrant:v1.12.1"
   "minio/minio:latest|minio/minio:latest"
+  "elasticsearch/elasticsearch:8.15.0|elasticsearch/elasticsearch:8.15.0"
 )
 
 PULL_RETRIES="${PULL_RETRIES:-3}"

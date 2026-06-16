@@ -109,10 +109,10 @@ jobs:
                 "bash '${DEPLOY_SCRIPT}' status" 2>/dev/null || true)"
               case "$status" in
                 running)
-                  if (( poll % 4 == 0 )); then
+                  if (( poll % 2 == 0 )); then
                     echo "--- deploy log (tail) ---"
                     ssh -p "$ECS_SSH_PORT" $SSH_OPTS "$SSH_TARGET" \
-                      "bash '${DEPLOY_SCRIPT}' log 25" || true
+                      "bash '${DEPLOY_SCRIPT}' log 40" || true
                   fi
                   sleep 30
                   ;;
@@ -122,14 +122,21 @@ jobs:
                   ;;
                 failed)
                   echo "docker compose build failed (attempt ${attempt}/3)"
+                  sleep 3
                   ssh -p "$ECS_SSH_PORT" $SSH_OPTS "$SSH_TARGET" \
-                    "bash '${DEPLOY_SCRIPT}' log 80" || true
+                    "bash '${DEPLOY_SCRIPT}' diagnostics" || true
+                  echo "--- deploy log (last 200 lines) ---"
+                  ssh -p "$ECS_SSH_PORT" $SSH_OPTS "$SSH_TARGET" \
+                    "bash '${DEPLOY_SCRIPT}' log 200" || true
                   break
                   ;;
                 *)
                   echo "unexpected deploy status: ${status:-<empty>}"
+                  sleep 3
                   ssh -p "$ECS_SSH_PORT" $SSH_OPTS "$SSH_TARGET" \
-                    "bash '${DEPLOY_SCRIPT}' log 80" || true
+                    "bash '${DEPLOY_SCRIPT}' diagnostics" || true
+                  ssh -p "$ECS_SSH_PORT" $SSH_OPTS "$SSH_TARGET" \
+                    "bash '${DEPLOY_SCRIPT}' log 200" || true
                   break
                   ;;
               esac

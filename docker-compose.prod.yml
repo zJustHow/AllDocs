@@ -75,6 +75,9 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+      args:
+        PYTORCH_INDEX: https://mirrors.tuna.tsinghua.edu.cn/pytorch-wheels/cpu/
+        PYTORCH_FALLBACK_INDEX: https://download.pytorch.org/whl/cpu
       tags:
         - alldocs-backend
     restart: unless-stopped
