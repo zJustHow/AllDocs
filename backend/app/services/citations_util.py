@@ -51,31 +51,15 @@ def finalize_answer_citations(answer: str, context_chunks: list[dict]) -> tuple[
 
 def finalize_answer(answer: str, context_chunks: list[dict]) -> tuple[str, list[dict], list[dict]]:
     from app.services.embeds_util import (
+        dedupe_answer_embed_markers,
         public_embeds,
         renumber_embed_markers,
-        resolve_answer_embeds,
-        resolve_citation_embeds,
     )
 
     answer = normalize_answer_citations(answer)
-    answer, manual_embeds = resolve_answer_embeds(answer, context_chunks)
     answer, cited_chunks, citation_renumber = renumber_answer_citations(answer, context_chunks)
-
-    remapped_embeds: list[dict] = []
-    seen_embed_refs: set[int] = set()
-    for item in manual_embeds:
-        new_ref = citation_renumber.get(item["ref"], item["ref"])
-        if new_ref in seen_embed_refs:
-            continue
-        seen_embed_refs.add(new_ref)
-        remapped_embeds.append({**item, "ref": new_ref})
     answer = renumber_embed_markers(answer, citation_renumber)
-
-    answer, embeds = resolve_citation_embeds(
-        answer,
-        cited_chunks,
-        existing_embeds=remapped_embeds,
-    )
+    answer, embeds = dedupe_answer_embed_markers(answer, cited_chunks)
     return answer, public_citations(cited_chunks), public_embeds(embeds)
 
 

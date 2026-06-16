@@ -106,6 +106,9 @@ const zh = {
   },
   citation: {
     pdf: "文档",
+    more: "{count} 条引用",
+    showAll: "查看 {count} 条引用",
+    collapse: "收起引用",
   },
   errors: {
     loadDocumentsFailed: "加载文档列表失败",

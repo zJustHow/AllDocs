@@ -189,6 +189,13 @@ function findEmbed(ref: number, embeds: MessageEmbed[]): MessageEmbed | null {
   return embeds.find((item) => item.ref === ref) ?? null;
 }
 
+export function embedDedupeKey(embed: MessageEmbed): string {
+  if (embed.asset_id) {
+    return `asset:${embed.asset_id}`;
+  }
+  return `page:${embed.document_id}:${embed.page}`;
+}
+
 export function splitMessageWithCitations(
   content: string,
   citations: Citation[],

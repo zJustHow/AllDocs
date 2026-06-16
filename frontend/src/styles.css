@@ -1024,6 +1024,15 @@ button {
   }
 }
 
+@keyframes agent-shimmer {
+  0% {
+    background-position: 100% 0;
+  }
+  100% {
+    background-position: -100% 0;
+  }
+}
+
 .agent-steps-body {
   padding: 0 14px 12px;
   display: grid;
@@ -1046,8 +1055,18 @@ button {
 
 .agent-step-status {
   font-size: 0.72rem;
-  color: var(--accent);
-  animation: agent-pulse 1.2s ease-in-out infinite;
+  background: linear-gradient(
+    90deg,
+    var(--accent) 0%,
+    color-mix(in srgb, var(--accent) 55%, var(--color-white)) 45%,
+    color-mix(in srgb, var(--accent) 55%, var(--color-white)) 55%,
+    var(--accent) 100%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: agent-shimmer 1.4s ease-in-out infinite;
 }
 
 .agent-step-head {
@@ -1243,6 +1262,10 @@ button {
 .citation-badge-index {
   flex-shrink: 0;
   color: var(--text-secondary);
+}
+
+.citation-badge-more {
+  letter-spacing: 0.08em;
 }
 
 .citation-badge:hover {

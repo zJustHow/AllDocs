@@ -106,6 +106,9 @@ const en = {
   },
   citation: {
     pdf: "Doc",
+    more: "{count} citations",
+    showAll: "View {count} citations",
+    collapse: "Collapse citations",
   },
   errors: {
     loadDocumentsFailed: "Failed to load documents",
