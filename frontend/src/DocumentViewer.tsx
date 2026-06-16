@@ -4,6 +4,7 @@ import type { ViewerTarget } from "./citations";
 import { getPreviewMode } from "./fileTypes";
 import { useI18n } from "./i18n";
 import { CloseIcon, ZoomInIcon, ZoomOutIcon } from "./icons";
+import { warmPageImage } from "./pageImageCache";
 
 interface DocumentViewerProps {
   target: ViewerTarget;
@@ -14,6 +15,7 @@ const ZOOM_MIN = 50;
 const ZOOM_MAX = 200;
 const ZOOM_STEP = 25;
 const BASE_RENDER_SCALE = 2;
+const ZOOM_DEBOUNCE_MS = 250;
 
 export default function DocumentViewer({ target, onClose }: DocumentViewerProps) {
   const { t } = useI18n();
@@ -25,14 +27,20 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
   const [currentPage, setCurrentPage] = useState(target.page ?? 1);
   const [pageInput, setPageInput] = useState(String(target.page ?? 1));
   const [zoom, setZoom] = useState(100);
+  const [renderZoom, setRenderZoom] = useState(100);
 
   const pageCount = target.pageCount ?? null;
   const showPageToolbar = previewMode === "pdf" && pageCount !== null;
   const fileUrl = documentFileUrl(target.documentId);
 
+  useEffect(() => {
+    const timer = setTimeout(() => setRenderZoom(zoom), ZOOM_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [zoom]);
+
   const renderScale = useMemo(
-    () => Math.min(4, Math.max(0.5, (zoom / 100) * BASE_RENDER_SCALE)),
-    [zoom],
+    () => Math.min(4, Math.max(0.5, (renderZoom / 100) * BASE_RENDER_SCALE)),
+    [renderZoom],
   );
 
   const pageImageUrl = useMemo(() => {
@@ -76,6 +84,26 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
       active = false;
     };
   }, [fileUrl, previewMode, t]);
+
+  useEffect(() => {
+    if (previewMode !== "pdf" || pageCount === null || !pageImageUrl) return;
+
+    warmPageImage(pageImageUrl);
+    for (const offset of [-1, 1]) {
+      const page = currentPage + offset;
+      if (page < 1 || page > pageCount) continue;
+      warmPageImage(
+        documentPageRenderUrl(target.documentId, page, renderScale),
+      );
+    }
+  }, [
+    previewMode,
+    pageCount,
+    pageImageUrl,
+    currentPage,
+    renderScale,
+    target.documentId,
+  ]);
 
   useEffect(() => {
     if (previewMode === "pdf") setPageLoading(true);

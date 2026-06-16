@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 from urllib.parse import quote
 
@@ -57,7 +58,7 @@ async def upload_document(
     storage = StorageService()
     existing = await find_reindexable_by_name(db, file.filename)
     if existing:
-        storage.upload(existing.object_key, data, content_type)
+        await asyncio.to_thread(storage.upload, existing.object_key, data, content_type)
         existing.content_type = content_type
         reset_document_for_reindex(existing)
         await db.commit()
@@ -67,7 +68,7 @@ async def upload_document(
 
     document_id = uuid.uuid4()
     object_key = f"{document_id}/{file.filename}"
-    storage.upload(object_key, data, content_type)
+    await asyncio.to_thread(storage.upload, object_key, data, content_type)
 
     document = Document(
         id=document_id,
@@ -100,7 +101,7 @@ async def get_document_file(
         raise HTTPException(status_code=404, detail="Document not found")
 
     storage = StorageService()
-    data = storage.download(document.object_key)
+    data = await asyncio.to_thread(storage.download, document.object_key)
     return Response(
         content=data,
         media_type=_document_media_type(document),
@@ -123,9 +124,11 @@ async def render_document_page(
         raise HTTPException(status_code=404, detail="Document not found")
 
     storage = StorageService()
-    file_bytes = storage.download(document.object_key)
+    file_bytes = await asyncio.to_thread(storage.download, document.object_key)
     try:
-        rendered = render_page_png(file_bytes, document.name, page, scale=scale)
+        rendered = await asyncio.to_thread(
+            render_page_png, file_bytes, document.name, page, scale=scale
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

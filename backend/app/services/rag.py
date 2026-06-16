@@ -80,8 +80,6 @@ def _semantic_primary_scores(evidence: list[dict]) -> list[float]:
     for chunk in evidence:
         if not chunk.get("from_semantic_search"):
             continue
-        if chunk.get("is_neighbor"):
-            continue
         score = chunk.get("score")
         if score is not None:
             scores.append(float(score))
@@ -179,8 +177,6 @@ class RAGService:
                     "page": chunk.page,
                     "section": chunk.section,
                     "chunk_type": chunk.chunk_type,
-                    "content_role": chunk.content_role,
-                    "chunk_index": chunk.chunk_index,
                     "caption": chunk.caption,
                     "score": score_map.get(chunk_id, 0.0),
                     "snippet": chunk_display_snippet(
@@ -190,7 +186,6 @@ class RAGService:
                     ),
                     "text": body_text,
                     "index_text": index_text,
-                    "is_neighbor": False,
                     "assets": [
                         {
                             "asset_id": str(asset.id),
@@ -205,73 +200,6 @@ class RAGService:
                 }
             )
         return chunks
-
-    async def _expand_neighbor_chunks(
-        self,
-        db: AsyncSession,
-        chunks: list[dict],
-    ) -> list[dict]:
-        window = self.settings.rag_neighbor_window
-        if window <= 0 or not chunks:
-            return chunks
-
-        hit_pairs: list[tuple[UUID, int]] = []
-        for chunk in chunks:
-            document_id = chunk.get("document_id")
-            chunk_index = chunk.get("chunk_index")
-            if document_id is None or chunk_index is None:
-                continue
-            hit_pairs.append((UUID(str(document_id)), int(chunk_index)))
-        if not hit_pairs:
-            return chunks
-
-        document_ids = {doc_id for doc_id, _ in hit_pairs}
-        result = await db.execute(
-            select(Chunk, Document)
-            .join(Document, Chunk.document_id == Document.id)
-            .where(Chunk.document_id.in_(document_ids))
-        )
-        by_document: dict[str, dict[int, tuple[Chunk, Document]]] = {}
-        for chunk, document in result.all():
-            doc_key = str(document.id)
-            by_document.setdefault(doc_key, {})[chunk.chunk_index] = (chunk, document)
-
-        existing_ids = {chunk["chunk_id"] for chunk in chunks}
-        neighbor_ids: list[str] = []
-        for document_id, hit_index in hit_pairs:
-            doc_chunks = by_document.get(str(document_id), {})
-            for neighbor_index in range(hit_index - window, hit_index + window + 1):
-                if neighbor_index == hit_index:
-                    continue
-                row = doc_chunks.get(neighbor_index)
-                if row is None:
-                    continue
-                neighbor_id = str(row[0].id)
-                if neighbor_id in existing_ids:
-                    continue
-                existing_ids.add(neighbor_id)
-                neighbor_ids.append(neighbor_id)
-
-        if not neighbor_ids:
-            return self._sort_chunks_for_context(chunks)
-
-        neighbor_score_map = {chunk_id: 0.0 for chunk_id in neighbor_ids}
-        neighbor_chunks = await self._load_chunks(db, neighbor_ids, neighbor_score_map)
-        for chunk in neighbor_chunks:
-            chunk["is_neighbor"] = True
-
-        return self._sort_chunks_for_context(chunks + neighbor_chunks)
-
-    @staticmethod
-    def _sort_chunks_for_context(chunks: list[dict]) -> list[dict]:
-        return sorted(
-            chunks,
-            key=lambda item: (
-                item.get("document_id") or "",
-                item.get("chunk_index") if item.get("chunk_index") is not None else -1,
-                1 if item.get("is_neighbor") else 0,
-            ),
-        )
 
     async def _search_hybrid(
         self,
@@ -304,7 +232,6 @@ class RAGService:
         vector_hits, bm25_hits = await asyncio.gather(vector_search(), bm25_search())
 
         vector_ids = [str(hit.id) for hit in vector_hits]
-        vector_score_map = {str(hit.id): float(hit.score) for hit in vector_hits}
 
         if bm25_hits:
             bm25_ids = [chunk_id for chunk_id, _ in bm25_hits]
@@ -315,6 +242,7 @@ class RAGService:
             )
             return [chunk_id for chunk_id, _ in fused], dict(fused)
 
+        vector_score_map = {str(hit.id): float(hit.score) for hit in vector_hits}
         return vector_ids, vector_score_map
 
     async def _retrieve_once(
@@ -346,22 +274,24 @@ class RAGService:
             return []
 
         if self.reranker:
-            chunks = self.reranker.rerank(question, chunks)
-        primary = chunks[:final_k]
-        if self.settings.rag_neighbor_window > 0:
-            primary = await self._expand_neighbor_chunks(db, primary)
-        return primary
+            chunks = await asyncio.to_thread(self.reranker.rerank, question, chunks)
+        return chunks[:final_k]
 
     async def _retrieve_with_relaxation(
         self,
         db: AsyncSession,
         question: str,
         chunk_filter: ChunkFilter,
+        *,
+        query_vector: list[float] | None = None,
     ) -> list[dict]:
         if not chunk_filter.has_metadata_constraints():
-            return await self._retrieve_once(db, question, chunk_filter) or []
+            return await self._retrieve_once(
+                db, question, chunk_filter, query_vector=query_vector
+            ) or []
 
-        query_vector = await asyncio.to_thread(self.embedding.embed_query, question)
+        if query_vector is None:
+            query_vector = await asyncio.to_thread(self.embedding.embed_query, question)
         broad_filter = chunk_filter.broad_filter()
         broad_chunks, strict_chunks = await asyncio.gather(
             self._retrieve_once(db, question, broad_filter, query_vector=query_vector),
@@ -390,10 +320,15 @@ class RAGService:
         chunk_filter: ChunkFilter,
         *,
         top_k: int | None = None,
+        query_vector: list[float] | None = None,
     ) -> list[dict]:
         if chunk_filter.has_metadata_constraints():
-            return await self._retrieve_with_relaxation(db, question, chunk_filter)
-        return await self._retrieve_once(db, question, chunk_filter, top_k=top_k) or []
+            return await self._retrieve_with_relaxation(
+                db, question, chunk_filter, query_vector=query_vector
+            )
+        return await self._retrieve_once(
+            db, question, chunk_filter, top_k=top_k, query_vector=query_vector
+        ) or []
 
     async def read_chunks(
         self,
@@ -414,8 +349,6 @@ class RAGService:
                 header += f" p.{item['page']}"
             if item.get("section"):
                 header += f" §{item['section']}"
-            if item.get("is_neighbor"):
-                header += " (上下文)"
             if item.get("assets"):
                 header += " (visual)"
             parts.append(f"{header}\n{item['text']}")

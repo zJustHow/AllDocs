@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import logging
 import uuid
@@ -16,7 +17,7 @@ from app.services.storage import StorageService
 
 logger = logging.getLogger(__name__)
 
-_TYPE_PRIORITY = {"table": 0, "procedure": 1, "warning": 2, "figure": 3, "text": 4, "page": 5}
+_TYPE_PRIORITY = {"table": 0, "figure": 1, "text": 2, "page": 3}
 
 
 @dataclass(frozen=True)
@@ -35,7 +36,7 @@ def _asset_type(chunk_type: str | None, asset_type: str | None = None) -> str:
         return asset_type
     if chunk_type == "table":
         return "table"
-    if chunk_type in {"procedure", "warning", "figure"}:
+    if chunk_type == "figure":
         return chunk_type
     return "page"
 
@@ -71,6 +72,75 @@ def select_evidence_for_vision(
     return [(index, chunk) for _, index, _, chunk in candidates[:max_images]]
 
 
+def _load_png_bytes(
+    storage: StorageService,
+    settings: Settings,
+    file_cache: dict[str, tuple[bytes, str]],
+    chunk: dict,
+) -> tuple[bytes, str]:
+    document_id = str(chunk["document_id"])
+    page = int(chunk["page"]) if chunk.get("page") else 1
+    assets = chunk.get("assets") or []
+
+    if assets and assets[0].get("object_key"):
+        return storage.download(assets[0]["object_key"]), "image/png"
+
+    file_bytes, filename = file_cache[document_id]
+    png_bytes = render_page_png(
+        file_bytes,
+        filename,
+        page,
+        scale=settings.llm_vision_render_scale,
+    )
+    ext = filename.rsplit(".", 1)[-1].lower()
+    media_type = "image/png" if ext == "pdf" else f"image/{ext if ext != 'jpg' else 'jpeg'}"
+    return png_bytes, media_type
+
+
+async def _render_vision_image(
+    storage: StorageService,
+    settings: Settings,
+    file_cache: dict[str, tuple[bytes, str]],
+    ref_index: int,
+    chunk: dict,
+) -> VisionImage | None:
+    document_id = str(chunk["document_id"])
+    page = int(chunk["page"]) if chunk.get("page") else 1
+    assets = chunk.get("assets") or []
+    needs_document = not (assets and assets[0].get("object_key"))
+    if needs_document and document_id not in file_cache:
+        return None
+
+    try:
+        png_bytes, media_type = await asyncio.to_thread(
+            _load_png_bytes,
+            storage,
+            settings,
+            file_cache,
+            chunk,
+        )
+        return VisionImage(
+            ref_index=ref_index,
+            document_id=document_id,
+            document_name=str(chunk.get("document_name") or ""),
+            page=page,
+            asset_type=_asset_type(
+                chunk.get("chunk_type"),
+                assets[0].get("type") if assets else None,
+            ),
+            base64=base64.b64encode(png_bytes).decode("ascii"),
+            media_type=media_type,
+        )
+    except Exception:
+        logger.warning(
+            "Failed to render vision image for doc=%s page=%s",
+            document_id,
+            page,
+            exc_info=True,
+        )
+        return None
+
+
 async def prepare_vision_images(
     db: AsyncSession,
     evidence: list[dict],
@@ -85,57 +155,32 @@ async def prepare_vision_images(
         return []
 
     storage = StorageService(settings)
-    images: list[VisionImage] = []
     file_cache: dict[str, tuple[bytes, str]] = {}
 
-    for ref_index, chunk in selected:
-        document_id = str(chunk["document_id"])
-        page = int(chunk["page"]) if chunk.get("page") else 1
+    doc_ids_to_load: set[str] = set()
+    for _, chunk in selected:
         assets = chunk.get("assets") or []
-        try:
-            if assets and assets[0].get("object_key"):
-                png_bytes = storage.download(assets[0]["object_key"])
-                media_type = "image/png"
-            else:
-                if document_id not in file_cache:
-                    document = await db.get(Document, uuid.UUID(document_id))
-                    if not document:
-                        continue
-                    file_cache[document_id] = (
-                        storage.download(document.object_key),
-                        document.name,
-                    )
-                file_bytes, filename = file_cache[document_id]
-                png_bytes = render_page_png(
-                    file_bytes,
-                    filename,
-                    page,
-                    scale=settings.llm_vision_render_scale,
-                )
-                ext = filename.rsplit(".", 1)[-1].lower()
-                media_type = (
-                    "image/png" if ext == "pdf" else f"image/{ext if ext != 'jpg' else 'jpeg'}"
-                )
+        if not (assets and assets[0].get("object_key")):
+            doc_ids_to_load.add(str(chunk["document_id"]))
 
-            images.append(
-                VisionImage(
-                    ref_index=ref_index,
-                    document_id=document_id,
-                    document_name=str(chunk.get("document_name") or ""),
-                    page=page,
-                    asset_type=_asset_type(
-                        chunk.get("chunk_type"),
-                        assets[0].get("type") if assets else None,
-                    ),
-                    base64=base64.b64encode(png_bytes).decode("ascii"),
-                    media_type=media_type,
-                )
-            )
-        except Exception:
-            logger.warning(
-                "Failed to render vision image for doc=%s page=%s",
-                document_id,
-                page,
-                exc_info=True,
-            )
-    return images
+    async def _download_document(doc_id: str) -> tuple[str, tuple[bytes, str]] | None:
+        document = await db.get(Document, uuid.UUID(doc_id))
+        if not document:
+            return None
+        file_bytes = await asyncio.to_thread(storage.download, document.object_key)
+        return doc_id, (file_bytes, document.name)
+
+    if doc_ids_to_load:
+        downloads = await asyncio.gather(*(_download_document(doc_id) for doc_id in doc_ids_to_load))
+        for item in downloads:
+            if item is not None:
+                doc_id, payload = item
+                file_cache[doc_id] = payload
+
+    images = await asyncio.gather(
+        *(
+            _render_vision_image(storage, settings, file_cache, ref_index, chunk)
+            for ref_index, chunk in selected
+        )
+    )
+    return [image for image in images if image is not None]

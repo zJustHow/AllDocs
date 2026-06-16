@@ -11,7 +11,7 @@ from app.api.schemas import ChatRequest, ChatResponse
 from app.config import get_settings
 from app.db.models import Message, Session
 from app.db.session import get_db
-from app.services.agent import AgentRAGService
+from app.services.deps import get_agent_service
 from app.services.citations_util import finalize_answer, public_citations
 from app.services.rag import detect_language
 from app.services.vision_util import prepare_vision_images
@@ -68,7 +68,7 @@ async def chat(
         async def event_stream():
             try:
                 yield f"data: {json.dumps({'type': 'status', 'stage': 'agent'}, ensure_ascii=False)}\n\n"
-                agent = AgentRAGService(settings)
+                agent = get_agent_service()
                 step_queue: asyncio.Queue[dict | None] = asyncio.Queue()
 
                 async def on_step(event: dict) -> None:
@@ -149,7 +149,7 @@ async def chat(
             headers=STREAM_HEADERS,
         )
 
-    agent = AgentRAGService(settings)
+    agent = get_agent_service()
     result = await agent.run(
         db,
         payload.message,

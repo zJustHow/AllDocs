@@ -5,11 +5,13 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import assets, chat, documents, ws_voice
 from app.db.session import init_db
+from app.services.infra_init import ensure_external_stores_async
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     await init_db()
+    await ensure_external_stores_async()
     yield
 
 

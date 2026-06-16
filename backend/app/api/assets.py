@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -25,7 +26,7 @@ async def get_asset(
         raise HTTPException(status_code=404, detail="Asset not found")
 
     storage = StorageService()
-    data = storage.download(asset.object_key)
+    data = await asyncio.to_thread(storage.download, asset.object_key)
     return Response(
         content=data,
         media_type="image/png",

@@ -1,9 +1,13 @@
 import io
 from functools import lru_cache
+from threading import Lock
 
 from minio import Minio
 
 from app.config import Settings, get_settings
+
+_bucket_lock = Lock()
+_bucket_ready = False
 
 
 @lru_cache
@@ -17,17 +21,27 @@ def get_minio_client() -> Minio:
     )
 
 
+def ensure_bucket(settings: Settings | None = None) -> None:
+    global _bucket_ready
+    if _bucket_ready:
+        return
+    with _bucket_lock:
+        if _bucket_ready:
+            return
+        settings = settings or get_settings()
+        client = get_minio_client()
+        if not client.bucket_exists(settings.minio_bucket):
+            client.make_bucket(settings.minio_bucket)
+        _bucket_ready = True
+
+
 class StorageService:
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
         self.client = get_minio_client()
-        self._ensure_bucket()
-
-    def _ensure_bucket(self) -> None:
-        if not self.client.bucket_exists(self.settings.minio_bucket):
-            self.client.make_bucket(self.settings.minio_bucket)
 
     def upload(self, object_key: str, data: bytes, content_type: str) -> str:
+        ensure_bucket(self.settings)
         self.client.put_object(
             self.settings.minio_bucket,
             object_key,
@@ -38,6 +52,7 @@ class StorageService:
         return object_key
 
     def download(self, object_key: str) -> bytes:
+        ensure_bucket(self.settings)
         response = self.client.get_object(self.settings.minio_bucket, object_key)
         try:
             return response.read()

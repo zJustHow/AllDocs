@@ -43,7 +43,6 @@ class RerankerService:
             ranked.append(
                 {
                     **item,
-                    "vector_score": item.get("score"),
                     "score": float(score),
                 }
             )

@@ -9,21 +9,12 @@ from typing import Any
 
 import fitz
 
-VALID_CHUNK_TYPES = frozenset({"text", "procedure", "warning", "table"})
+VALID_CHUNK_TYPES = frozenset({"text", "table"})
 _HIGHLIGHT_ANNOT_TYPES = frozenset({fitz.PDF_ANNOT_HIGHLIGHT, fitz.PDF_ANNOT_TEXT, fitz.PDF_ANNOT_FREE_TEXT})
 
 _TYPE_LABELS: dict[str, str] = {
     "text": "text",
     "正文": "text",
-    "procedure": "procedure",
-    "步骤": "procedure",
-    "step": "procedure",
-    "steps": "procedure",
-    "warning": "warning",
-    "警告": "warning",
-    "注意": "warning",
-    "危险": "warning",
-    "caution": "warning",
     "table": "table",
     "表格": "table",
 }

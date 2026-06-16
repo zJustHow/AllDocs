@@ -1,4 +1,5 @@
 from functools import lru_cache
+from threading import Lock
 from uuid import UUID
 
 from elasticsearch import Elasticsearch
@@ -6,6 +7,9 @@ from elasticsearch.helpers import bulk
 
 from app.config import Settings, get_settings
 from app.services.chunk_filter import ChunkFilter, build_es_filters
+
+_index_lock = Lock()
+_index_ready = False
 
 INDEX_BODY = {
     "settings": {
@@ -42,8 +46,6 @@ INDEX_BODY = {
             "page": {"type": "integer"},
             "section": {"type": "keyword"},
             "chunk_type": {"type": "keyword"},
-            "content_role": {"type": "keyword"},
-            "chunk_index": {"type": "integer"},
         }
     },
 }
@@ -55,36 +57,47 @@ def get_elasticsearch_client() -> Elasticsearch:
     return Elasticsearch(settings.elasticsearch_url)
 
 
+def _ensure_caption_mapping(client: Elasticsearch, index: str) -> None:
+    mapping = client.indices.get_mapping(index=index)
+    props = mapping.get(index, {}).get("mappings", {}).get("properties", {})
+    if "caption" in props:
+        return
+    client.indices.put_mapping(
+        index=index,
+        body={
+            "properties": {
+                "caption": {
+                    "type": "text",
+                    "analyzer": "manual_index_analyzer",
+                    "search_analyzer": "manual_search_analyzer",
+                }
+            }
+        },
+    )
+
+
+def ensure_index(settings: Settings | None = None) -> None:
+    global _index_ready
+    if _index_ready:
+        return
+    with _index_lock:
+        if _index_ready:
+            return
+        settings = settings or get_settings()
+        client = get_elasticsearch_client()
+        index = settings.elasticsearch_index
+        if not client.indices.exists(index=index):
+            client.indices.create(index=index, body=INDEX_BODY)
+        else:
+            _ensure_caption_mapping(client, index)
+        _index_ready = True
+
+
 class FulltextStore:
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
         self.client = get_elasticsearch_client()
         self.index = self.settings.elasticsearch_index
-        self._ensure_index()
-
-    def _ensure_index(self) -> None:
-        if not self.client.indices.exists(index=self.index):
-            self.client.indices.create(index=self.index, body=INDEX_BODY)
-        else:
-            self._ensure_caption_mapping()
-
-    def _ensure_caption_mapping(self) -> None:
-        mapping = self.client.indices.get_mapping(index=self.index)
-        props = mapping.get(self.index, {}).get("mappings", {}).get("properties", {})
-        if "caption" in props:
-            return
-        self.client.indices.put_mapping(
-            index=self.index,
-            body={
-                "properties": {
-                    "caption": {
-                        "type": "text",
-                        "analyzer": "manual_index_analyzer",
-                        "search_analyzer": "manual_search_analyzer",
-                    }
-                }
-            },
-        )
 
     def upsert_chunks(
         self,
@@ -93,6 +106,7 @@ class FulltextStore:
         payloads: list[dict],
         captions: list[str] | None = None,
     ) -> None:
+        ensure_index(self.settings)
         caption_values = captions or [""] * len(chunk_ids)
         actions = [
             {
@@ -108,7 +122,11 @@ class FulltextStore:
                 chunk_ids, texts, caption_values, payloads, strict=True
             )
         ]
-        bulk(self.client, actions, refresh="wait_for")
+        bulk(self.client, actions, refresh=False)
+
+    def refresh_index(self) -> None:
+        ensure_index(self.settings)
+        self.client.indices.refresh(index=self.index)
 
     def search(
         self,
@@ -116,6 +134,7 @@ class FulltextStore:
         top_k: int,
         chunk_filter: ChunkFilter | None = None,
     ) -> list[tuple[str, float]]:
+        ensure_index(self.settings)
         must: list[dict] = [
             {
                 "multi_match": {
@@ -142,6 +161,7 @@ class FulltextStore:
         return hits
 
     def delete_by_document(self, document_id: UUID) -> None:
+        ensure_index(self.settings)
         self.client.delete_by_query(
             index=self.index,
             query={"term": {"document_id": str(document_id)}},

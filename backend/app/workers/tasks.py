@@ -1,4 +1,6 @@
 import uuid
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session as OrmSession, sessionmaker
@@ -15,13 +17,87 @@ from app.services.fulltext_store import FulltextStore
 from app.services.chunk_index import chunk_fulltext_caption
 from app.services.ingest_caption import apply_ingest_captions
 from app.services.ingestion import IngestionService, toc_entry_to_dict
+from app.services.infra_init import ensure_external_stores
 from app.services.storage import StorageService
 from app.services.vector_store import VectorStore
 from app.workers.celery_app import celery_app
 
 settings = get_settings()
-sync_engine = create_engine(settings.postgres_url_sync)
+sync_engine = create_engine(
+    settings.postgres_url_sync,
+    pool_pre_ping=True,
+    pool_size=5,
+    max_overflow=10,
+)
 SyncSession = sessionmaker(bind=sync_engine)
+
+_PROGRESS_PAGE_INTERVAL = 5
+_UPLOAD_WORKERS = 8
+
+
+@dataclass(frozen=True)
+class _PendingAssetUpload:
+    asset_id: uuid.UUID
+    chunk_id: uuid.UUID
+    object_key: str
+    png_bytes: bytes
+    asset_type: str
+    page: int
+    bbox: list[float]
+    width: int | None
+    height: int | None
+
+
+def _collect_pending_asset_uploads(
+    doc_uuid: uuid.UUID,
+    parsed_chunks,
+    chunk_rows: list[Chunk],
+) -> list[_PendingAssetUpload]:
+    pending: list[_PendingAssetUpload] = []
+    for parsed, chunk in zip(parsed_chunks, chunk_rows, strict=True):
+        if parsed.asset_png and parsed.asset_bbox and parsed.page is not None:
+            asset_id = uuid.uuid4()
+            pending.append(
+                _PendingAssetUpload(
+                    asset_id=asset_id,
+                    chunk_id=chunk.id,
+                    object_key=f"{doc_uuid}/assets/{asset_id}.png",
+                    png_bytes=parsed.asset_png,
+                    asset_type=parsed.chunk_type,
+                    page=parsed.page,
+                    bbox=list(parsed.asset_bbox),
+                    width=parsed.asset_width,
+                    height=parsed.asset_height,
+                )
+            )
+        for attached in parsed.attached_assets:
+            asset_id = uuid.uuid4()
+            pending.append(
+                _PendingAssetUpload(
+                    asset_id=asset_id,
+                    chunk_id=chunk.id,
+                    object_key=f"{doc_uuid}/assets/{asset_id}.png",
+                    png_bytes=attached.png_bytes,
+                    asset_type=attached.asset_type,
+                    page=attached.page,
+                    bbox=list(attached.bbox),
+                    width=attached.width,
+                    height=attached.height,
+                )
+            )
+    return pending
+
+
+def _upload_assets_parallel(storage: StorageService, pending: list[_PendingAssetUpload]) -> None:
+    if not pending:
+        return
+    workers = min(_UPLOAD_WORKERS, len(pending))
+
+    def _upload_one(item: _PendingAssetUpload) -> None:
+        storage.upload(item.object_key, item.png_bytes, "image/png")
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        list(pool.map(_upload_one, pending))
 
 
 def _set_progress(
@@ -29,11 +105,34 @@ def _set_progress(
     document: Document,
     progress: int,
     message: str | None = None,
+    *,
+    commit: bool = True,
 ) -> None:
     document.progress = min(max(progress, 0), 100)
     if message is not None:
         document.progress_message = message
-    db.commit()
+    if commit:
+        db.commit()
+
+
+def _throttled_page_progress(
+    db: OrmSession,
+    document: Document,
+    *,
+    interval: int = _PROGRESS_PAGE_INTERVAL,
+):
+    last_committed = 0
+
+    def on_page_progress(current: int, total: int) -> None:
+        nonlocal last_committed
+        pct = 10 + int(45 * current / total)
+        document.progress = min(max(pct, 0), 100)
+        document.progress_message = f"解析第 {current}/{total} 页"
+        if current == total or current - last_committed >= interval:
+            db.commit()
+            last_committed = current
+
+    return on_page_progress
 
 
 def _abort_if_deleting(db: OrmSession, document: Document) -> bool:
@@ -52,6 +151,7 @@ def process_document(document_id: str) -> None:
         document.status = DocumentStatus.processing
         document.error_message = None
         _set_progress(db, document, 5, "开始处理")
+        ensure_external_stores()
 
         try:
             _set_progress(db, document, 10, "读取文件")
@@ -59,14 +159,10 @@ def process_document(document_id: str) -> None:
                 return
             file_bytes = StorageService().download(document.object_key)
 
-            def on_page_progress(current: int, total: int) -> None:
-                pct = 10 + int(45 * current / total)
-                _set_progress(db, document, pct, f"解析第 {current}/{total} 页")
-
             parse_result = IngestionService().parse_document(
                 file_bytes,
                 document.name,
-                on_page_progress=on_page_progress,
+                on_page_progress=_throttled_page_progress(db, document),
             )
             parsed_chunks = parse_result.chunks
             page_count = parse_result.page_count
@@ -103,41 +199,22 @@ def process_document(document_id: str) -> None:
                 chunk_rows.append(chunk)
             db.flush()
 
-            for parsed, chunk in zip(parsed_chunks, chunk_rows, strict=True):
-                if parsed.asset_png and parsed.asset_bbox and parsed.page is not None:
-                    asset_id = uuid.uuid4()
-                    object_key = f"{doc_uuid}/assets/{asset_id}.png"
-                    storage.upload(object_key, parsed.asset_png, "image/png")
-                    db.add(
-                        ChunkAsset(
-                            id=asset_id,
-                            chunk_id=chunk.id,
-                            document_id=doc_uuid,
-                            asset_type=parsed.chunk_type,
-                            page=parsed.page,
-                            bbox=list(parsed.asset_bbox),
-                            object_key=object_key,
-                            width=parsed.asset_width,
-                            height=parsed.asset_height,
-                        )
+            pending_assets = _collect_pending_asset_uploads(doc_uuid, parsed_chunks, chunk_rows)
+            _upload_assets_parallel(storage, pending_assets)
+            for item in pending_assets:
+                db.add(
+                    ChunkAsset(
+                        id=item.asset_id,
+                        chunk_id=item.chunk_id,
+                        document_id=doc_uuid,
+                        asset_type=item.asset_type,
+                        page=item.page,
+                        bbox=item.bbox,
+                        object_key=item.object_key,
+                        width=item.width,
+                        height=item.height,
                     )
-                for attached in parsed.attached_assets:
-                    asset_id = uuid.uuid4()
-                    object_key = f"{doc_uuid}/assets/{asset_id}.png"
-                    storage.upload(object_key, attached.png_bytes, "image/png")
-                    db.add(
-                        ChunkAsset(
-                            id=asset_id,
-                            chunk_id=chunk.id,
-                            document_id=doc_uuid,
-                            asset_type=attached.asset_type,
-                            page=attached.page,
-                            bbox=list(attached.bbox),
-                            object_key=object_key,
-                            width=attached.width,
-                            height=attached.height,
-                        )
-                    )
+                )
             db.flush()
 
             _set_progress(db, document, 62, "生成图像描述")
@@ -150,6 +227,11 @@ def process_document(document_id: str) -> None:
                 file_bytes=file_bytes,
                 filename=document.name,
                 settings=settings,
+                asset_image_bytes={
+                    str(item.asset_id): item.png_bytes for item in pending_assets
+                }
+                if pending_assets
+                else None,
             )
 
             asset_rows = (
@@ -188,8 +270,6 @@ def process_document(document_id: str) -> None:
                     "page": chunk.page,
                     "section": chunk.section,
                     "chunk_type": chunk.chunk_type,
-                    "content_role": chunk.content_role,
-                    "chunk_index": chunk.chunk_index,
                 }
                 for chunk in chunk_rows
             ]
@@ -216,6 +296,7 @@ def process_document(document_id: str) -> None:
                     ],
                     payloads=payloads,
                 )
+                fulltext_store.refresh_index()
 
             if _abort_if_deleting(db, document):
                 vector_store.delete_by_document(doc_uuid)
@@ -223,9 +304,6 @@ def process_document(document_id: str) -> None:
                     FulltextStore().delete_by_document(doc_uuid)
                 db.rollback()
                 return
-
-            for chunk in chunk_rows:
-                chunk.qdrant_point_id = str(chunk.id)
 
             document.status = DocumentStatus.ready
             document.page_count = page_count

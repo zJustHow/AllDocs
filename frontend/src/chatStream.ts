@@ -1,6 +1,12 @@
 import type { Dispatch, SetStateAction } from "react";
 import { upsertAgentStep } from "./agentStepUtils";
-import { createDeltaBatcher } from "./streamBatch";
+import { createDeltaBatcher, createEventBatcher } from "./streamBatch";
+import {
+  appendStreamingContent,
+  clearStreamingContent,
+  getStreamingContent,
+  initStreamingContent,
+} from "./streamingContent";
 import type { AgentStepEvent, ChatMessage, Citation, MessageEmbed } from "./types";
 
 export type StreamDispatchResult = "continue" | "done" | "error";
@@ -48,6 +54,9 @@ export function createAssistantStreamController(
     onAudio,
   } = options;
 
+  initStreamingContent(assistantId);
+  let contentStarted = false;
+
   const patchAssistant = (patch: Partial<ChatMessage>) => {
     setMessages((prev) =>
       prev.map((msg) => (msg.id === assistantId ? { ...msg, ...patch } : msg)),
@@ -55,12 +64,23 @@ export function createAssistantStreamController(
   };
 
   const deltaBatcher = createDeltaBatcher((delta) => {
+    appendStreamingContent(assistantId, delta);
+    if (!contentStarted) {
+      contentStarted = true;
+      patchAssistant({ agentRunning: false });
+    }
+  });
+
+  const agentStepBatcher = createEventBatcher<AgentStepEvent>((steps) => {
     setMessages((prev) =>
-      prev.map((msg) =>
-        msg.id === assistantId
-          ? { ...msg, content: msg.content + delta, agentRunning: false }
-          : msg,
-      ),
+      prev.map((msg) => {
+        if (msg.id !== assistantId) return msg;
+        let agentSteps = msg.agentSteps ?? [];
+        for (const step of steps) {
+          agentSteps = upsertAgentStep(agentSteps, step);
+        }
+        return { ...msg, agentSteps };
+      }),
     );
   });
 
@@ -69,6 +89,8 @@ export function createAssistantStreamController(
     citations?: ChatMessage["citations"];
     embeds?: ChatMessage["embeds"];
   }) => {
+    const streamed = getStreamingContent(assistantId);
+    clearStreamingContent(assistantId);
     setMessages((prev) =>
       prev.map((msg) =>
         msg.id === assistantId
@@ -76,7 +98,7 @@ export function createAssistantStreamController(
               ...msg,
               streaming: false,
               agentRunning: false,
-              content: payload.content ?? msg.content,
+              content: payload.content ?? (streamed || msg.content),
               citations: payload.citations ?? msg.citations,
               embeds: payload.embeds ?? msg.embeds,
             }
@@ -85,16 +107,13 @@ export function createAssistantStreamController(
     );
   };
 
+  const flushAll = () => {
+    deltaBatcher.flush();
+    agentStepBatcher.flush();
+  };
+
   const handlers = {
-    onAgentStep: (step: AgentStepEvent) => {
-      setMessages((prev) =>
-        prev.map((msg) =>
-          msg.id === assistantId
-            ? { ...msg, agentSteps: upsertAgentStep(msg.agentSteps ?? [], step) }
-            : msg,
-        ),
-      );
-    },
+    onAgentStep: (step: AgentStepEvent) => agentStepBatcher.push(step),
     onCitations: (citations: Citation[]) => patchAssistant({ citations }),
     onEmbeds: (embeds: MessageEmbed[]) => patchAssistant({ embeds }),
     onDelta: (delta: string) => deltaBatcher.push(delta),
@@ -109,16 +128,22 @@ export function createAssistantStreamController(
       citations: Citation[];
       embeds: MessageEmbed[];
     }) => {
-      deltaBatcher.flush();
+      flushAll();
       setSessionId(sessionId);
       setLoading(false);
       finalizeAssistant({ content, citations, embeds });
     },
     onError: (message: string) => {
-      deltaBatcher.flush();
+      flushAll();
+      const streamed = getStreamingContent(assistantId);
+      clearStreamingContent(assistantId);
       setError(message);
       setLoading(false);
-      patchAssistant({ streaming: false, agentRunning: false });
+      patchAssistant({
+        streaming: false,
+        agentRunning: false,
+        content: streamed,
+      });
     },
   };
 
@@ -160,7 +185,7 @@ export function createAssistantStreamController(
     }
 
     if (payload.type === "done") {
-      deltaBatcher.flush();
+      flushAll();
       setSessionId(payload.session_id as string);
       setLoading(false);
       finalizeAssistant({
@@ -172,8 +197,14 @@ export function createAssistantStreamController(
     }
 
     if (payload.type === "error") {
-      deltaBatcher.flush();
-      patchAssistant({ streaming: false, agentRunning: false });
+      flushAll();
+      const streamed = getStreamingContent(assistantId);
+      clearStreamingContent(assistantId);
+      patchAssistant({
+        streaming: false,
+        agentRunning: false,
+        content: streamed,
+      });
       return "error";
     }
 
@@ -182,7 +213,7 @@ export function createAssistantStreamController(
 
   return {
     deltaBatcher,
-    flush: () => deltaBatcher.flush(),
+    flush: flushAll,
     handlers,
     dispatchPayload,
   };

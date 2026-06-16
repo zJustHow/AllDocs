@@ -43,12 +43,6 @@ def renumber_answer_citations(answer: str, context_chunks: list[dict]) -> tuple[
     return INLINE_CITATION_REF.sub(replace_ref, answer), new_chunks, old_to_new
 
 
-def finalize_answer_citations(answer: str, context_chunks: list[dict]) -> tuple[str, list[dict]]:
-    answer = normalize_answer_citations(answer)
-    answer, cited_chunks, _ = renumber_answer_citations(answer, context_chunks)
-    return answer, public_citations(cited_chunks)
-
-
 def finalize_answer(answer: str, context_chunks: list[dict]) -> tuple[str, list[dict], list[dict]]:
     from app.services.embeds_util import (
         dedupe_answer_embed_markers,

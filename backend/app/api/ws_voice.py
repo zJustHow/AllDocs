@@ -11,7 +11,7 @@ from app.api.schemas import ChunkFilter
 from app.config import get_settings
 from app.db.models import Message, Session
 from app.db.session import async_session_factory
-from app.services.agent import AgentRAGService
+from app.services.deps import get_agent_service
 from app.services.citations_util import finalize_answer, public_citations
 from app.services.rag import detect_language
 from app.services.vision_util import prepare_vision_images
@@ -46,7 +46,7 @@ async def voice_websocket(websocket: WebSocket) -> None:
     await websocket.accept()
     speech = SpeechService()
     settings = get_settings()
-    agent = AgentRAGService(settings)
+    agent = get_agent_service()
 
     try:
         while True:

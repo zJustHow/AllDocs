@@ -53,9 +53,7 @@ class Chunk(Base):
     section: Mapped[str | None] = mapped_column(String(512), nullable=True)
     chunk_index: Mapped[int] = mapped_column(Integer)
     chunk_type: Mapped[str] = mapped_column(String(64), default="text")
-    content_role: Mapped[str | None] = mapped_column(String(64), nullable=True)
     caption: Mapped[str | None] = mapped_column(Text, nullable=True)
-    qdrant_point_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     document: Mapped["Document"] = relationship(back_populates="chunks")
     assets: Mapped[list["ChunkAsset"]] = relationship(

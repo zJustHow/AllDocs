@@ -24,7 +24,6 @@ class Settings(BaseSettings):
     rag_top_k: int = 5
     rag_chunk_size: int = 500
     rag_chunk_overlap: int = 80
-    rag_neighbor_window: int = 1
     rag_agent_max_steps: int = 7
     rag_agent_max_retrievals: int = 6
     rag_batch_search_max: int = 4

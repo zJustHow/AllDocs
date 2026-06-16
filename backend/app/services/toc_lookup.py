@@ -164,7 +164,6 @@ def document_outline_to_chunk(document: Document) -> dict | None:
         "document_name": document.name,
         "page": start_page,
         "section": "目录",
-        "content_role": None,
         "score": 1.0,
         "snippet": f"文档目录 · {document.name}",
         "text": text,
@@ -192,11 +191,26 @@ def _entry_to_chunk(document: Document, entry: TocEntry, index: int, score: floa
         "document_name": document.name,
         "page": entry.start_page,
         "section": entry.path,
-        "content_role": None,
         "score": score,
         "snippet": f"{entry.title} ··· 第 {entry.start_page} 页",
         "text": text,
     }
+
+
+_OUTLINE_QUESTION_RE = re.compile(
+    r"(?:目录|章节树|章节列表|章节目录|有哪些章|全书结构|"
+    r"outline|table\s+of\s+contents|chapter\s+list)",
+    re.IGNORECASE,
+)
+
+
+def is_toc_outline_question(question: str) -> bool:
+    return bool(_OUTLINE_QUESTION_RE.search(question.strip()))
+
+
+def is_toc_navigation_question(question: str) -> bool:
+    text = question.strip()
+    return bool(_TOC_NAV_NOISE_RE.search(text) or _CHAPTER_INDEX_RE.search(text))
 
 
 async def lookup_toc(

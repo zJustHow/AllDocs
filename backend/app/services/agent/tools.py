@@ -149,6 +149,7 @@ class AgentToolRegistry:
         doc_ids: list[UUID] | None,
         explicit_filters: ChunkFilter | None,
         search_input: dict,
+        query_vector: list[float] | None = None,
     ) -> list[dict]:
         top_k = search_input.get("top_k")
         try:
@@ -166,6 +167,7 @@ class AgentToolRegistry:
             query or question,
             chunk_filter,
             top_k=top_k,
+            query_vector=query_vector,
         )
 
     async def execute(
@@ -222,7 +224,14 @@ class AgentToolRegistry:
             if not searches:
                 return "search_chunks_batch 需要非空 searches 列表。", [], 0
 
-            async def run_one(search_item: dict) -> tuple[str, list[dict]]:
+            queries = [str(item.get("query") or question).strip() for item in searches]
+            query_vectors = await asyncio.to_thread(
+                self.rag.embedding.embed_queries, queries
+            )
+
+            async def run_one(
+                search_item: dict, query_vector: list[float]
+            ) -> tuple[str, list[dict]]:
                 query = str(search_item.get("query") or question).strip()
                 chunks = await self._search_chunks(
                     db,
@@ -231,10 +240,16 @@ class AgentToolRegistry:
                     doc_ids=doc_ids,
                     explicit_filters=explicit_filters,
                     search_input=search_item,
+                    query_vector=query_vector,
                 )
                 return query, chunks
 
-            results = await asyncio.gather(*(run_one(item) for item in searches))
+            results = await asyncio.gather(
+                *(
+                    run_one(item, query_vector)
+                    for item, query_vector in zip(searches, query_vectors, strict=True)
+                )
+            )
             merged: list[dict] = []
             for _, chunks in results:
                 merged.extend(chunks)

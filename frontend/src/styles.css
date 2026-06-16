@@ -736,6 +736,18 @@ button {
   width: 100%;
 }
 
+.messages-virtual-list {
+  position: relative;
+  width: 100%;
+}
+
+.messages-virtual-row {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+}
+
 .messages-show-earlier {
   display: block;
   width: 100%;

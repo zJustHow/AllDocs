@@ -54,10 +54,16 @@ class EmbeddingService:
         return [vec.tolist() for vec in dense]
 
     def embed_query(self, text: str) -> list[float]:
+        return self.embed_queries([text])[0]
+
+    def embed_queries(self, texts: list[str]) -> list[list[float]]:
+        if not texts:
+            return []
         model = _get_model(self.settings)
         output = model.encode(
-            [text],
-            batch_size=1,
+            texts,
+            batch_size=min(self.settings.embedding_batch_size, len(texts)),
             max_length=8192,
         )
-        return output["dense_vecs"][0].tolist()
+        dense = output["dense_vecs"]
+        return [vec.tolist() for vec in dense]

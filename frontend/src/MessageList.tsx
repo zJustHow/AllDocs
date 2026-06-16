@@ -1,13 +1,15 @@
-import { memo, useMemo, useState, type RefObject } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
+import { memo, useEffect, type RefObject } from "react";
 import ChatMessageItem from "./ChatMessageItem";
-import { useI18n } from "./i18n";
 import type { ChatMessage } from "./types";
 import type { ViewerTarget } from "./citations";
 
-const VISIBLE_MESSAGE_LIMIT = 40;
+const ESTIMATED_MESSAGE_HEIGHT = 140;
 
 interface MessageListProps {
   messages: ChatMessage[];
+  scrollRef: RefObject<HTMLDivElement | null>;
+  scrollTargetId: string | null;
   onOpenDocument: (target: ViewerTarget) => void;
   registerRef: (id: string, el: HTMLElement | null) => void;
   spacerRef: RefObject<HTMLDivElement | null>;
@@ -15,38 +17,56 @@ interface MessageListProps {
 
 function MessageList({
   messages,
+  scrollRef,
+  scrollTargetId,
   onOpenDocument,
   registerRef,
   spacerRef,
 }: MessageListProps) {
-  const { t } = useI18n();
-  const [showAll, setShowAll] = useState(false);
+  const virtualizer = useVirtualizer({
+    count: messages.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => ESTIMATED_MESSAGE_HEIGHT,
+    overscan: 5,
+  });
 
-  const hiddenCount = Math.max(0, messages.length - VISIBLE_MESSAGE_LIMIT);
-  const visibleMessages = useMemo(() => {
-    if (showAll || hiddenCount === 0) return messages;
-    return messages.slice(-VISIBLE_MESSAGE_LIMIT);
-  }, [messages, showAll, hiddenCount]);
+  useEffect(() => {
+    if (!scrollTargetId) return;
+    const index = messages.findIndex((message) => message.id === scrollTargetId);
+    if (index < 0) return;
+
+    requestAnimationFrame(() => {
+      virtualizer.scrollToIndex(index, { align: "start" });
+    });
+    // scrollTargetId is the only intentional trigger; messages/virtualizer are read at fire time.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scrollTargetId]);
 
   return (
     <section className="messages">
-      {hiddenCount > 0 && !showAll ? (
-        <button
-          type="button"
-          className="messages-show-earlier"
-          onClick={() => setShowAll(true)}
-        >
-          {t("chat.showEarlier", { count: hiddenCount })}
-        </button>
-      ) : null}
-      {visibleMessages.map((msg) => (
-        <ChatMessageItem
-          key={msg.id}
-          message={msg}
-          onOpenDocument={onOpenDocument}
-          registerRef={registerRef}
-        />
-      ))}
+      <div
+        className="messages-virtual-list"
+        style={{ height: `${virtualizer.getTotalSize()}px` }}
+      >
+        {virtualizer.getVirtualItems().map((item) => {
+          const message = messages[item.index];
+          return (
+            <div
+              key={message.id}
+              data-index={item.index}
+              ref={virtualizer.measureElement}
+              className="messages-virtual-row"
+              style={{ transform: `translateY(${item.start}px)` }}
+            >
+              <ChatMessageItem
+                message={message}
+                onOpenDocument={onOpenDocument}
+                registerRef={registerRef}
+              />
+            </div>
+          );
+        })}
+      </div>
       <div
         ref={spacerRef}
         className="message-scroll-spacer"

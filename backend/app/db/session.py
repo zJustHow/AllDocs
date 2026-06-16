@@ -7,7 +7,13 @@ from app.config import get_settings
 from app.db.models import Base
 
 settings = get_settings()
-engine = create_async_engine(settings.postgres_url, echo=False)
+engine = create_async_engine(
+    settings.postgres_url,
+    echo=False,
+    pool_pre_ping=True,
+    pool_size=10,
+    max_overflow=20,
+)
 async_session_factory = async_sessionmaker(engine, expire_on_commit=False)
 
 
@@ -29,9 +35,6 @@ async def init_db() -> None:
             text(
                 "ALTER TABLE documents ADD COLUMN IF NOT EXISTS progress_message VARCHAR(256)"
             )
-        )
-        await conn.execute(
-            text("ALTER TABLE chunks ADD COLUMN IF NOT EXISTS content_role VARCHAR(64)")
         )
         await conn.execute(
             text("ALTER TABLE documents ADD COLUMN IF NOT EXISTS toc_entries JSONB")

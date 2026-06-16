@@ -9,7 +9,7 @@ import fitz
 
 from app.config import Settings
 
-_ATTACHABLE_CHUNK_TYPES = frozenset({"text", "procedure", "warning"})
+_ATTACHABLE_CHUNK_TYPES = frozenset({"text"})
 _OVERLAP_SKIP_RATIO = 0.35
 
 
@@ -246,7 +246,7 @@ def attach_figures_to_chunks(
     figures: list[EmbeddedFigure],
     chunks: list,
 ) -> list[EmbeddedFigure]:
-    """Attach figures to nearby text/procedure/warning chunks; return orphans."""
+    """Attach figures to nearby text chunks; return orphans."""
     if not figures:
         return []
 
@@ -282,10 +282,3 @@ def attach_figures_to_chunks(
             target.attached_assets.append(_figure_to_attached_asset(figure))
 
     return orphans
-
-
-def attach_figures_to_text_chunks(
-    figures: list[EmbeddedFigure],
-    chunks: list,
-) -> list[EmbeddedFigure]:
-    return attach_figures_to_chunks(figures, chunks)

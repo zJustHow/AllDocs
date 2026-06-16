@@ -55,7 +55,7 @@ export default function App() {
 
   const chatAreaRef = useRef<HTMLDivElement>(null);
   const messageRefs = useRef<Map<string, HTMLElement>>(new Map());
-  const scrollUserMessageIdRef = useRef<string | null>(null);
+  const [scrollTargetId, setScrollTargetId] = useState<string | null>(null);
   const spacerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const viewerCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
@@ -154,14 +154,15 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const userMessageId = scrollUserMessageIdRef.current;
-    if (!userMessageId) return;
+    if (!scrollTargetId) return;
 
-    requestAnimationFrame(() => {
+    const layoutAndScroll = () => {
       const container = chatAreaRef.current;
-      const messageEl = messageRefs.current.get(userMessageId);
+      const messageEl = messageRefs.current.get(scrollTargetId);
       const spacer = spacerRef.current;
-      if (container && messageEl && spacer) {
+      if (!messageEl) return false;
+
+      if (container && spacer) {
         const topGap =
           parseFloat(
             getComputedStyle(document.documentElement).getPropertyValue(
@@ -176,12 +177,18 @@ export default function App() {
         spacer.style.minHeight = `${Math.max(room, 0)}px`;
       }
 
+      scrollUserMessageToTop(scrollTargetId);
+      setScrollTargetId(null);
+      return true;
+    };
+
+    requestAnimationFrame(() => {
+      if (layoutAndScroll()) return;
       requestAnimationFrame(() => {
-        scrollUserMessageToTop(userMessageId);
-        scrollUserMessageIdRef.current = null;
+        layoutAndScroll();
       });
     });
-  }, [messages, scrollUserMessageToTop]);
+  }, [scrollTargetId, scrollUserMessageToTop]);
 
   useEffect(
     () => () => {
@@ -276,7 +283,7 @@ export default function App() {
     setSessionId(null);
     setError(null);
     setInput("");
-    scrollUserMessageIdRef.current = null;
+    setScrollTargetId(null);
     if (spacerRef.current) spacerRef.current.style.minHeight = "";
   };
 
@@ -300,7 +307,7 @@ export default function App() {
         role: "user",
         content: text,
       };
-      scrollUserMessageIdRef.current = userMessage.id;
+      setScrollTargetId(userMessage.id);
       assistantId = newId();
       setMessages((prev) => [
         ...prev,
@@ -413,7 +420,7 @@ export default function App() {
 
         if (payload.type === "transcript") {
           const userMessageId = newId();
-          scrollUserMessageIdRef.current = userMessageId;
+          setScrollTargetId(userMessageId);
           setMessages((prev) => [
             ...prev,
             {
@@ -622,6 +629,8 @@ export default function App() {
             <MessageList
               key={sessionId ?? "new"}
               messages={messages}
+              scrollRef={chatAreaRef}
+              scrollTargetId={scrollTargetId}
               onOpenDocument={openDocument}
               registerRef={registerMessageRef}
               spacerRef={spacerRef}
@@ -651,7 +660,7 @@ export default function App() {
         <div className={`doc-viewer-slot ${viewerOpen ? "is-open" : ""}`}>
           <Suspense fallback={null}>
             <DocumentViewer
-              key={`${viewerTarget.documentId}-${viewerTarget.page ?? 1}`}
+              key={viewerTarget.documentId}
               target={viewerTarget}
               onClose={closeViewer}
             />

@@ -3,6 +3,7 @@ import AgentSteps from "./AgentSteps";
 import { useI18n } from "./i18n";
 import { AllDocsIcon } from "./icons";
 import MessageContent from "./MessageContent";
+import { useStreamingContent } from "./streamingContent";
 import type { ChatMessage } from "./types";
 import type { ViewerTarget } from "./citations";
 
@@ -18,6 +19,8 @@ function ChatMessageItem({
   registerRef,
 }: ChatMessageItemProps) {
   const { t } = useI18n();
+  const liveContent = useStreamingContent(message.id);
+  const content = message.streaming ? liveContent : message.content;
 
   const setRef: RefCallback<HTMLElement> = useCallback(
     (el) => registerRef(message.id, el),
@@ -47,7 +50,7 @@ function ChatMessageItem({
         <div className="message-content">
           {message.role === "assistant" ? (
             <MessageContent
-              content={message.content}
+              content={content}
               citations={message.citations ?? []}
               embeds={message.embeds ?? []}
               streaming={message.streaming}
