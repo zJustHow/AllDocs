@@ -9,17 +9,29 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.schemas import DocumentResponse
 from app.db.models import Document, DocumentStatus
 from app.db.session import get_db
+from app.services.document_reindex import (
+    find_reindexable_by_name,
+    reset_document_for_reindex,
+    schedule_document_reindex,
+)
+from app.services.file_types import is_supported_filename, resolve_content_type, supported_formats_label
 from app.services.storage import StorageService
-from app.workers.tasks import process_document
+from app.workers.tasks import delete_document as delete_document_task, process_document
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 
 
 def _inline_content_disposition(filename: str) -> str:
-    ascii_fallback = filename.encode("ascii", "ignore").decode() or "document.pdf"
+    ascii_fallback = filename.encode("ascii", "ignore").decode() or "document"
     if ascii_fallback == filename:
         return f'inline; filename="{ascii_fallback}"'
     return f"inline; filename=\"{ascii_fallback}\"; filename*=UTF-8''{quote(filename)}"
+
+
+def _document_media_type(document: Document) -> str:
+    if document.content_type:
+        return document.content_type
+    return resolve_content_type(document.name)
 
 
 @router.post("", response_model=DocumentResponse)
@@ -29,22 +41,37 @@ async def upload_document(
 ) -> DocumentResponse:
     if not file.filename:
         raise HTTPException(status_code=400, detail="Filename is required")
-    if not file.filename.lower().endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="Only PDF files are supported")
+    if not is_supported_filename(file.filename):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file type. Supported formats: {supported_formats_label()}",
+        )
 
     data = await file.read()
     if not data:
         raise HTTPException(status_code=400, detail="Empty file")
 
+    content_type = resolve_content_type(file.filename, file.content_type)
+    storage = StorageService()
+    existing = await find_reindexable_by_name(db, file.filename)
+    if existing:
+        storage.upload(existing.object_key, data, content_type)
+        existing.content_type = content_type
+        reset_document_for_reindex(existing)
+        await db.commit()
+        await db.refresh(existing)
+        process_document.delay(str(existing.id))
+        return DocumentResponse.model_validate(existing)
+
     document_id = uuid.uuid4()
     object_key = f"{document_id}/{file.filename}"
-    storage = StorageService()
-    storage.upload(object_key, data, file.content_type or "application/pdf")
+    storage.upload(object_key, data, content_type)
 
     document = Document(
         id=document_id,
         name=file.filename,
         object_key=object_key,
+        content_type=content_type,
         status=DocumentStatus.pending,
     )
     db.add(document)
@@ -67,14 +94,14 @@ async def get_document_file(
     db: AsyncSession = Depends(get_db),
 ) -> Response:
     document = await db.get(Document, document_id)
-    if not document:
+    if not document or document.status == DocumentStatus.deleting:
         raise HTTPException(status_code=404, detail="Document not found")
 
     storage = StorageService()
     data = storage.download(document.object_key)
     return Response(
         content=data,
-        media_type="application/pdf",
+        media_type=_document_media_type(document),
         headers={"Content-Disposition": _inline_content_disposition(document.name)},
     )
 
@@ -90,6 +117,21 @@ async def get_document(
     return DocumentResponse.model_validate(document)
 
 
+@router.post("/{document_id}/reindex", response_model=DocumentResponse)
+async def reindex_document(
+    document_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+) -> DocumentResponse:
+    document = await db.get(Document, document_id)
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+    try:
+        document = await schedule_document_reindex(db, document)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return DocumentResponse.model_validate(document)
+
+
 @router.delete("/{document_id}")
 async def delete_document(
     document_id: uuid.UUID,
@@ -98,19 +140,15 @@ async def delete_document(
     document = await db.get(Document, document_id)
     if not document:
         raise HTTPException(status_code=404, detail="Document not found")
+    if document.status == DocumentStatus.deleting:
+        delete_document_task.delay(str(document_id))
+        return {"status": "deleting"}
 
-    storage = StorageService()
-    storage.delete(document.object_key)
-
-    from app.config import get_settings
-    from app.services.fulltext_store import FulltextStore
-    from app.services.vector_store import VectorStore
-
-    VectorStore().delete_by_document(document_id)
-    settings = get_settings()
-    if settings.hybrid_enabled:
-        FulltextStore().delete_by_document(document_id)
-
-    await db.delete(document)
+    document.progress_message = document.status.value
+    document.status = DocumentStatus.deleting
+    document.progress = 0
+    document.error_message = None
     await db.commit()
-    return {"status": "deleted"}
+
+    delete_document_task.delay(str(document_id))
+    return {"status": "deleting"}

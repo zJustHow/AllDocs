@@ -16,6 +16,7 @@ class DocumentStatus(str, enum.Enum):
     processing = "processing"
     ready = "ready"
     failed = "failed"
+    deleting = "deleting"
 
 
 class Document(Base):
@@ -24,6 +25,7 @@ class Document(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(String(512))
     object_key: Mapped[str] = mapped_column(String(1024))
+    content_type: Mapped[str] = mapped_column(String(128), default="application/pdf")
     status: Mapped[DocumentStatus] = mapped_column(
         Enum(DocumentStatus), default=DocumentStatus.pending
     )

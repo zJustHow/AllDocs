@@ -147,26 +147,26 @@ def build_es_filters(chunk_filter: ChunkFilter | None) -> list[dict]:
     return filters
 
 
-def citation_matches(citation: dict, chunk_filter: ChunkFilter) -> bool:
+def chunk_matches(chunk: dict, chunk_filter: ChunkFilter) -> bool:
     if chunk_filter.document_ids:
-        if citation.get("document_id") not in {str(doc_id) for doc_id in chunk_filter.document_ids}:
+        if chunk.get("document_id") not in {str(doc_id) for doc_id in chunk_filter.document_ids}:
             return False
 
-    if chunk_filter.chunk_types and citation.get("chunk_type") not in chunk_filter.chunk_types:
+    if chunk_filter.chunk_types and chunk.get("chunk_type") not in chunk_filter.chunk_types:
         return False
 
     if chunk_filter.content_roles:
-        role = citation.get("content_role")
+        role = chunk.get("content_role")
         if role not in chunk_filter.content_roles:
             return False
 
-    page = citation.get("page")
+    page = chunk.get("page")
     if chunk_filter.page_gte is not None and (page is None or page < chunk_filter.page_gte):
         return False
     if chunk_filter.page_lte is not None and (page is None or page > chunk_filter.page_lte):
         return False
 
-    section = citation.get("section") or ""
+    section = chunk.get("section") or ""
     if chunk_filter.section_prefix and not section.startswith(chunk_filter.section_prefix):
         return False
     if chunk_filter.section_contains and chunk_filter.section_contains not in section:
@@ -175,7 +175,7 @@ def citation_matches(citation: dict, chunk_filter: ChunkFilter) -> bool:
     return True
 
 
-def filter_citations(citations: list[dict], chunk_filter: ChunkFilter | None) -> list[dict]:
+def filter_chunks(chunks: list[dict], chunk_filter: ChunkFilter | None) -> list[dict]:
     if chunk_filter is None or not chunk_filter.has_constraints():
-        return citations
-    return [citation for citation in citations if citation_matches(citation, chunk_filter)]
+        return chunks
+    return [chunk for chunk in chunks if chunk_matches(chunk, chunk_filter)]

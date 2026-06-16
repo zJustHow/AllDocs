@@ -36,3 +36,20 @@ async def init_db() -> None:
         await conn.execute(
             text("ALTER TABLE documents ADD COLUMN IF NOT EXISTS toc_entries JSONB")
         )
+        await conn.execute(
+            text(
+                "ALTER TABLE documents ADD COLUMN IF NOT EXISTS content_type "
+                "VARCHAR(128) DEFAULT 'application/pdf'"
+            )
+        )
+        await conn.execute(
+            text(
+                """
+                DO $$ BEGIN
+                    ALTER TYPE documentstatus ADD VALUE 'deleting';
+                EXCEPTION
+                    WHEN duplicate_object THEN NULL;
+                END $$;
+                """
+            )
+        )

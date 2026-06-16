@@ -9,12 +9,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings, get_settings
 from app.db.models import Chunk, Document
-from app.services.chunk_filter import ChunkFilter, filter_citations
+from app.services.chunk_filter import ChunkFilter, filter_chunks
 from app.services.embedding import EmbeddingService
 from app.services.fulltext_store import FulltextStore
 from app.services.hybrid import reciprocal_rank_fusion
-from app.services.llm import LLMService, QueryIntent
-from app.services.query_plan import QueryPlan, QueryPlannerService, SubQuery
 from app.services.reranker import RerankerService
 from app.services.vector_store import VectorStore
 
@@ -40,6 +38,58 @@ def not_found_message(lang: str) -> str:
     return "Not found in the manual." if lang == "en" else "说明书中未找到相关信息。"
 
 
+def low_relevance_message(lang: str) -> str:
+    if lang == "en":
+        return (
+            "The manual was searched, but the retrieved passages are not relevant enough "
+            "to answer confidently. Try rephrasing with more specific keywords, model numbers, "
+            "or fault symptoms."
+        )
+    return (
+        "说明书里检索到了片段，但与您的问题相关性不足，暂时无法据此给出可靠回答。"
+        "建议补充更具体的关键词、型号或故障现象后重新提问。"
+    )
+
+
+def _min_relevance_score(settings: Settings) -> float:
+    if settings.rerank_enabled:
+        return settings.rag_min_rerank_score
+    return settings.rag_min_retrieval_score
+
+
+def _semantic_primary_scores(evidence: list[dict]) -> list[float]:
+    scores: list[float] = []
+    for chunk in evidence:
+        if not chunk.get("from_semantic_search"):
+            continue
+        if chunk.get("is_neighbor") or chunk.get("is_prerequisite"):
+            continue
+        score = chunk.get("score")
+        if score is not None:
+            scores.append(float(score))
+    return scores
+
+
+def resolve_retrieval_fallback(
+    lang: str,
+    *,
+    evidence: list[dict],
+    settings: Settings,
+) -> str | None:
+    """Return a user-facing fallback when synthesis should be skipped, else None."""
+    semantic_evidence = [chunk for chunk in evidence if chunk.get("from_semantic_search")]
+    if semantic_evidence:
+        scores = _semantic_primary_scores(evidence)
+        if scores and max(scores) < _min_relevance_score(settings):
+            return low_relevance_message(lang)
+        return None
+
+    if not evidence:
+        return not_found_message(lang)
+
+    return None
+
+
 class RAGService:
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
@@ -48,8 +98,6 @@ class RAGService:
         self.fulltext_store = (
             FulltextStore(self.settings) if self.settings.hybrid_enabled else None
         )
-        self.llm = LLMService(self.settings)
-        self.query_planner = QueryPlannerService(self.settings, self.llm)
         self.reranker = None
         if self.settings.rerank_enabled:
             if model_path_ready(self.settings.rerank_model):
@@ -60,7 +108,7 @@ class RAGService:
                     self.settings.rerank_model,
                 )
 
-    async def _load_citations(
+    async def _load_chunks(
         self,
         db: AsyncSession,
         ranked_chunk_ids: list[str],
@@ -77,12 +125,12 @@ class RAGService:
         )
         rows = {str(chunk.id): (chunk, document) for chunk, document in result.all()}
 
-        citations: list[dict] = []
+        chunks: list[dict] = []
         for chunk_id in ranked_chunk_ids:
             if chunk_id not in rows:
                 continue
             chunk, document = rows[chunk_id]
-            citations.append(
+            chunks.append(
                 {
                     "chunk_id": chunk_id,
                     "document_id": str(document.id),
@@ -91,12 +139,81 @@ class RAGService:
                     "section": chunk.section,
                     "chunk_type": chunk.chunk_type,
                     "content_role": chunk.content_role,
+                    "chunk_index": chunk.chunk_index,
                     "score": score_map.get(chunk_id, 0.0),
                     "snippet": chunk.text[:300],
                     "text": chunk.text,
+                    "is_neighbor": False,
                 }
             )
-        return citations
+        return chunks
+
+    async def _expand_neighbor_chunks(
+        self,
+        db: AsyncSession,
+        chunks: list[dict],
+    ) -> list[dict]:
+        window = self.settings.rag_neighbor_window
+        if window <= 0 or not chunks:
+            return chunks
+
+        hit_pairs: list[tuple[UUID, int]] = []
+        for chunk in chunks:
+            document_id = chunk.get("document_id")
+            chunk_index = chunk.get("chunk_index")
+            if document_id is None or chunk_index is None:
+                continue
+            hit_pairs.append((UUID(str(document_id)), int(chunk_index)))
+        if not hit_pairs:
+            return chunks
+
+        document_ids = {doc_id for doc_id, _ in hit_pairs}
+        result = await db.execute(
+            select(Chunk, Document)
+            .join(Document, Chunk.document_id == Document.id)
+            .where(Chunk.document_id.in_(document_ids))
+        )
+        by_document: dict[str, dict[int, tuple[Chunk, Document]]] = {}
+        for chunk, document in result.all():
+            doc_key = str(document.id)
+            by_document.setdefault(doc_key, {})[chunk.chunk_index] = (chunk, document)
+
+        existing_ids = {chunk["chunk_id"] for chunk in chunks}
+        neighbor_ids: list[str] = []
+        for document_id, hit_index in hit_pairs:
+            doc_chunks = by_document.get(str(document_id), {})
+            for neighbor_index in range(hit_index - window, hit_index + window + 1):
+                if neighbor_index == hit_index:
+                    continue
+                row = doc_chunks.get(neighbor_index)
+                if row is None:
+                    continue
+                neighbor_id = str(row[0].id)
+                if neighbor_id in existing_ids:
+                    continue
+                existing_ids.add(neighbor_id)
+                neighbor_ids.append(neighbor_id)
+
+        if not neighbor_ids:
+            return self._sort_chunks_for_context(chunks)
+
+        neighbor_score_map = {chunk_id: 0.0 for chunk_id in neighbor_ids}
+        neighbor_chunks = await self._load_chunks(db, neighbor_ids, neighbor_score_map)
+        for chunk in neighbor_chunks:
+            chunk["is_neighbor"] = True
+
+        return self._sort_chunks_for_context(chunks + neighbor_chunks)
+
+    @staticmethod
+    def _sort_chunks_for_context(chunks: list[dict]) -> list[dict]:
+        return sorted(
+            chunks,
+            key=lambda item: (
+                item.get("document_id") or "",
+                item.get("chunk_index") if item.get("chunk_index") is not None else -1,
+                1 if item.get("is_neighbor") else 0,
+            ),
+        )
 
     async def _search_hybrid(
         self,
@@ -149,7 +266,6 @@ class RAGService:
         chunk_filter: ChunkFilter,
         *,
         top_k: int | None = None,
-        skip_rerank: bool = False,
         query_vector: list[float] | None = None,
     ) -> list[dict]:
         use_extended_retrieval = self.reranker or self.settings.hybrid_enabled
@@ -166,24 +282,17 @@ class RAGService:
             chunk_filter,
         )
 
-        citations = await self._load_citations(db, ranked_chunk_ids, score_map)
-        citations = filter_citations(citations, chunk_filter)
-        if not citations:
+        chunks = await self._load_chunks(db, ranked_chunk_ids, score_map)
+        chunks = filter_chunks(chunks, chunk_filter)
+        if not chunks:
             return []
 
-        if self.reranker and not skip_rerank:
-            citations = self.reranker.rerank(question, citations)
-        return citations[:final_k]
-
-    def _merge_sub_query_filter(self, base: ChunkFilter, sub: SubQuery) -> ChunkFilter:
-        merged = base.model_copy(deep=True)
-        if sub.content_roles:
-            merged.content_roles = sub.content_roles
-        if sub.chunk_types:
-            merged.chunk_types = sub.chunk_types
-        if sub.section_hints:
-            merged.section_contains = sub.section_hints[0]
-        return merged
+        if self.reranker:
+            chunks = self.reranker.rerank(question, chunks)
+        primary = chunks[:final_k]
+        if self.settings.rag_neighbor_window > 0:
+            primary = await self._expand_neighbor_chunks(db, primary)
+        return primary
 
     async def _retrieve_with_relaxation(
         self,
@@ -196,98 +305,25 @@ class RAGService:
 
         query_vector = await asyncio.to_thread(self.embedding.embed_query, question)
         broad_filter = chunk_filter.broad_filter()
-        broad_citations, strict_citations = await asyncio.gather(
+        broad_chunks, strict_chunks = await asyncio.gather(
             self._retrieve_once(db, question, broad_filter, query_vector=query_vector),
             self._retrieve_once(db, question, chunk_filter, query_vector=query_vector),
         )
 
-        if strict_citations:
-            if broad_citations and broad_filter.model_dump_json() != chunk_filter.model_dump_json():
+        if strict_chunks:
+            if broad_chunks and broad_filter.model_dump_json() != chunk_filter.model_dump_json():
                 logger.info(
                     "Metadata filter applied; strict=%s",
                     chunk_filter.model_dump(exclude_none=True),
                 )
-            return strict_citations
+            return strict_chunks
 
-        if broad_citations:
+        if broad_chunks:
             logger.info(
                 "Broad retrieval fallback after strict filter returned empty; original=%s",
                 chunk_filter.model_dump(exclude_none=True),
             )
-        return broad_citations or []
-
-    async def _retrieve_troubleshooting_slot(
-        self,
-        db: AsyncSession,
-        sub: SubQuery,
-        base_filter: ChunkFilter,
-        *,
-        per_slot: int,
-    ) -> list[dict]:
-        slot_filter = self._merge_sub_query_filter(base_filter, sub)
-        slot_citations = await self._retrieve_once(
-            db,
-            sub.query,
-            slot_filter,
-            top_k=per_slot,
-            skip_rerank=True,
-        )
-        if slot_citations:
-            return slot_citations
-
-        broad_slot_filter = slot_filter.broad_filter()
-        return await self._retrieve_once(
-            db,
-            sub.query,
-            broad_slot_filter,
-            top_k=per_slot,
-            skip_rerank=True,
-        ) or []
-
-    async def _retrieve_troubleshooting(
-        self,
-        db: AsyncSession,
-        question: str,
-        plan: QueryPlan,
-        base_filter: ChunkFilter,
-    ) -> list[dict]:
-        per_slot = min(
-            plan.top_k_per_slot,
-            self.settings.rag_troubleshooting_top_k_per_slot,
-        )
-        max_total = self.settings.rag_troubleshooting_max_total
-        collected: list[dict] = []
-        seen: set[str] = set()
-
-        slot_results = await asyncio.gather(
-            *[
-                self._retrieve_troubleshooting_slot(
-                    db,
-                    sub,
-                    base_filter,
-                    per_slot=per_slot,
-                )
-                for sub in plan.sub_queries
-            ]
-        )
-
-        for sub, slot_citations in zip(plan.sub_queries, slot_results, strict=True):
-            for citation in slot_citations:
-                chunk_id = citation["chunk_id"]
-                if chunk_id in seen:
-                    continue
-                seen.add(chunk_id)
-                enriched = dict(citation)
-                enriched["slot"] = sub.slot
-                collected.append(enriched)
-
-        if not collected:
-            logger.info("Troubleshooting slot retrieval empty; falling back to broad retrieval")
-            return await self._retrieve_with_relaxation(db, question, base_filter)
-
-        if self.reranker:
-            collected = self.reranker.rerank(question, collected)
-        return collected[:max_total]
+        return broad_chunks or []
 
     async def search_chunks(
         self,
@@ -301,35 +337,25 @@ class RAGService:
             return await self._retrieve_with_relaxation(db, question, chunk_filter)
         return await self._retrieve_once(db, question, chunk_filter, top_k=top_k) or []
 
-    async def search_troubleshooting(
-        self,
-        db: AsyncSession,
-        question: str,
-        base_filter: ChunkFilter,
-    ) -> tuple[list[dict], QueryIntent]:
-        plan = await self.query_planner.plan(question)
-        citations = await self._retrieve_troubleshooting(db, question, plan, base_filter)
-        return citations, plan.intent
-
     async def read_chunks(
         self,
         db: AsyncSession,
         chunk_ids: list[str],
     ) -> list[dict]:
         score_map = {chunk_id: 1.0 for chunk_id in chunk_ids}
-        return await self._load_citations(db, chunk_ids, score_map)
+        return await self._load_chunks(db, chunk_ids, score_map)
 
-    def build_context(self, citations: list[dict]) -> str:
+    def build_context(self, chunks: list[dict]) -> str:
         parts: list[str] = []
-        for index, item in enumerate(citations, start=1):
+        for index, item in enumerate(chunks, start=1):
             header = f"[{index}] {item['document_name']}"
-            if item.get("slot"):
-                header += f" slot={item['slot']}"
             if item.get("content_role"):
                 header += f" role={item['content_role']}"
             if item.get("page"):
                 header += f" p.{item['page']}"
             if item.get("section"):
                 header += f" §{item['section']}"
+            if item.get("is_neighbor"):
+                header += " (上下文)"
             parts.append(f"{header}\n{item['text']}")
         return "\n\n---\n\n".join(parts)

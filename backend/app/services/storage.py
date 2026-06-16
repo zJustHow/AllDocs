@@ -45,5 +45,11 @@ class StorageService:
             response.close()
             response.release_conn()
 
+    def try_download(self, object_key: str) -> bytes | None:
+        try:
+            return self.download(object_key)
+        except Exception:
+            return None
+
     def delete(self, object_key: str) -> None:
         self.client.remove_object(self.settings.minio_bucket, object_key)

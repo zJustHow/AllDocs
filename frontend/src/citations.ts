@@ -3,6 +3,7 @@ import type { Citation } from "./types";
 export interface ViewerTarget {
   documentId: string;
   documentName: string;
+  contentType?: string | null;
   page: number | null;
   section: string | null;
   snippet?: string;

@@ -1,3 +1,4 @@
+import asyncio
 import json
 from uuid import UUID
 
@@ -12,17 +13,18 @@ from app.services.rag import RAGService
 from app.services.toc_lookup import lookup_toc
 
 RETRIEVAL_TOOLS = frozenset(
-    {"list_outline", "lookup_toc", "search_chunks", "search_troubleshooting", "read_chunks"}
+    {"list_outline", "lookup_toc", "search_chunks", "search_chunks_batch", "read_chunks"}
 )
+SEMANTIC_SEARCH_ACTIONS = frozenset({"search_chunks", "search_chunks_batch"})
 
 
-def _evidence_key(citation: dict) -> str:
-    chunk_id = citation.get("chunk_id")
+def _evidence_key(chunk: dict) -> str:
+    chunk_id = chunk.get("chunk_id")
     if chunk_id:
         return str(chunk_id)
     return (
-        f"{citation.get('document_id')}:{citation.get('page')}:"
-        f"{citation.get('section') or ''}"
+        f"{chunk.get('document_id')}:{chunk.get('page')}:"
+        f"{chunk.get('section') or ''}"
     )
 
 
@@ -48,43 +50,63 @@ def _format_outline(documents: list[Document]) -> str:
     return "\n\n".join(parts)
 
 
-def _format_citations(citations: list[dict], *, source_tool: str) -> str:
-    if not citations:
+def _format_chunks(chunks: list[dict], *, source_tool: str) -> str:
+    if not chunks:
         return "未检索到相关内容。"
 
-    lines = [f"检索工具：{source_tool}，命中 {len(citations)} 条："]
-    for index, item in enumerate(citations, start=1):
+    lines = [f"检索工具：{source_tool}，命中 {len(chunks)} 条："]
+    for index, item in enumerate(chunks, start=1):
         header = f"[{index}] {item.get('document_name', '')}"
         if item.get("page"):
             header += f" p.{item['page']}"
         if item.get("section"):
             header += f" §{item.get('section')}"
-        if item.get("slot"):
-            header += f" slot={item['slot']}"
+        if item.get("content_role"):
+            header += f" role={item['content_role']}"
         snippet = (item.get("snippet") or item.get("text") or "")[:240]
         lines.append(f"{header}\n{snippet}")
     return "\n\n".join(lines)
 
 
-def merge_citations_into_evidence(
+def _format_batch_observation(results: list[tuple[str, list[dict]]]) -> str:
+    if not results:
+        return "search_chunks_batch 需要非空 searches 列表。"
+
+    total = sum(len(chunks) for _, chunks in results)
+    lines = [f"并行检索 {len(results)} 路，合计命中 {total} 条："]
+    for index, (query, chunks) in enumerate(results, start=1):
+        lines.append(f"\n--- 检索 {index}：{query} · 命中 {len(chunks)} 条 ---")
+        if not chunks:
+            lines.append("（无结果）")
+            continue
+        for hit, item in enumerate(chunks, start=1):
+            header = f"  [{hit}] {item.get('document_name', '')}"
+            if item.get("page"):
+                header += f" p.{item['page']}"
+            if item.get("content_role"):
+                header += f" role={item['content_role']}"
+            snippet = (item.get("snippet") or item.get("text") or "")[:160]
+            lines.append(f"{header}\n    {snippet}")
+    return "\n".join(lines)
+
+
+def merge_chunks_into_evidence(
     evidence: list[dict],
     seen_keys: set[str],
-    citations: list[dict],
+    chunks: list[dict],
     *,
-    source_tool: str,
+    source_action: str | None = None,
 ) -> None:
-    for citation in citations:
-        key = _evidence_key(citation)
+    mark_semantic = source_action in SEMANTIC_SEARCH_ACTIONS
+    for chunk in chunks:
+        key = _evidence_key(chunk)
         if key in seen_keys:
             continue
         seen_keys.add(key)
-        evidence.append(
-            {
-                **citation,
-                "evidence_id": len(evidence) + 1,
-                "source_tool": source_tool,
-            }
-        )
+        entry = dict(chunk)
+        if mark_semantic:
+            entry["from_semantic_search"] = True
+        evidence.append(entry)
 
 
 def parse_tool_filters(raw: dict | None, doc_ids: list[UUID] | None) -> ChunkFilter:
@@ -97,9 +119,63 @@ def parse_tool_filters(raw: dict | None, doc_ids: list[UUID] | None) -> ChunkFil
     return ChunkFilter.from_request(doc_ids, filters if filters.has_constraints() else None)
 
 
+def parse_batch_searches(action_input: dict, question: str, *, max_items: int) -> list[dict]:
+    raw = action_input.get("searches")
+    if not isinstance(raw, list):
+        return []
+
+    searches: list[dict] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        query = str(item.get("query") or "").strip()
+        if not query:
+            continue
+        searches.append(item)
+        if len(searches) >= max_items:
+            break
+    return searches
+
+
+def count_retrieval_units(action: str, action_input: dict, *, max_batch: int) -> int:
+    if action == "search_chunks_batch":
+        return len(parse_batch_searches(action_input, "", max_items=max_batch))
+    if action in RETRIEVAL_TOOLS:
+        return 1
+    return 0
+
+
 class AgentToolRegistry:
     def __init__(self, rag: RAGService) -> None:
         self.rag = rag
+
+    async def _search_chunks(
+        self,
+        db: AsyncSession,
+        *,
+        query: str,
+        question: str,
+        doc_ids: list[UUID] | None,
+        explicit_filters: ChunkFilter | None,
+        search_input: dict,
+    ) -> list[dict]:
+        top_k = search_input.get("top_k")
+        try:
+            top_k = int(top_k) if top_k is not None else self.rag.settings.rag_top_k
+        except (TypeError, ValueError):
+            top_k = self.rag.settings.rag_top_k
+        tool_filters = parse_tool_filters(search_input.get("filters"), doc_ids)
+        chunk_filter = ChunkFilter.merge_sources(
+            doc_ids,
+            explicit_filters,
+            tool_filters if tool_filters.has_constraints() else None,
+        )
+        return await self.rag.search_chunks(
+            db,
+            query or question,
+            chunk_filter,
+            top_k=top_k,
+        )
 
     async def execute(
         self,
@@ -110,11 +186,12 @@ class AgentToolRegistry:
         question: str,
         doc_ids: list[UUID] | None,
         explicit_filters: ChunkFilter | None,
-    ) -> tuple[str, list[dict], str | None]:
-        """Return observation text, new citations, and optional intent override."""
+        retrieval_budget: int | None = None,
+    ) -> tuple[str, list[dict], int]:
+        """Return observation text, retrieved chunks, and retrieval units consumed."""
         if action == "finish":
             reason = str(action_input.get("reason") or "证据已足够")
-            return f"结束检索：{reason}", [], None
+            return f"结束检索：{reason}", [], 0
 
         if action == "list_outline":
             stmt = select(Document)
@@ -122,66 +199,65 @@ class AgentToolRegistry:
                 stmt = stmt.where(Document.id.in_(doc_ids))
             result = await db.execute(stmt)
             documents = list(result.scalars().all())
-            return _format_outline(documents), [], None
+            return _format_outline(documents), [], 1
 
         if action == "lookup_toc":
             lookup_question = str(action_input.get("question") or question)
-            citations = await lookup_toc(
+            chunks = await lookup_toc(
                 db,
                 lookup_question,
                 doc_ids,
                 top_k=self.rag.settings.rag_top_k,
             )
-            return _format_citations(citations, source_tool="lookup_toc"), citations, None
+            return _format_chunks(chunks, source_tool="lookup_toc"), chunks, 1
 
         if action == "search_chunks":
             query = str(action_input.get("query") or question).strip()
-            top_k = action_input.get("top_k")
-            try:
-                top_k = int(top_k) if top_k is not None else self.rag.settings.rag_top_k
-            except (TypeError, ValueError):
-                top_k = self.rag.settings.rag_top_k
-            tool_filters = parse_tool_filters(action_input.get("filters"), doc_ids)
-            chunk_filter = ChunkFilter.merge_sources(
-                doc_ids,
-                explicit_filters,
-                tool_filters if tool_filters.has_constraints() else None,
-            )
-            citations = await self.rag.search_chunks(
+            chunks = await self._search_chunks(
                 db,
-                query,
-                chunk_filter,
-                top_k=top_k,
+                query=query,
+                question=question,
+                doc_ids=doc_ids,
+                explicit_filters=explicit_filters,
+                search_input=action_input,
             )
-            return (
-                _format_citations(citations, source_tool="search_chunks"),
-                citations,
-                None,
-            )
+            return _format_chunks(chunks, source_tool="search_chunks"), chunks, 1
 
-        if action == "search_troubleshooting":
-            troubleshoot_question = str(action_input.get("question") or question).strip()
-            base_filter = ChunkFilter.from_request(doc_ids, explicit_filters)
-            citations, intent = await self.rag.search_troubleshooting(
-                db,
-                troubleshoot_question,
-                base_filter,
-            )
-            return (
-                _format_citations(citations, source_tool="search_troubleshooting"),
-                citations,
-                intent,
-            )
+        if action == "search_chunks_batch":
+            max_batch = self.rag.settings.rag_batch_search_max
+            searches = parse_batch_searches(action_input, question, max_items=max_batch)
+            if retrieval_budget is not None:
+                searches = searches[:retrieval_budget]
+            if not searches:
+                return "search_chunks_batch 需要非空 searches 列表。", [], 0
+
+            async def run_one(search_item: dict) -> tuple[str, list[dict]]:
+                query = str(search_item.get("query") or question).strip()
+                chunks = await self._search_chunks(
+                    db,
+                    query=query,
+                    question=question,
+                    doc_ids=doc_ids,
+                    explicit_filters=explicit_filters,
+                    search_input=search_item,
+                )
+                return query, chunks
+
+            results = await asyncio.gather(*(run_one(item) for item in searches))
+            merged: list[dict] = []
+            for _, chunks in results:
+                merged.extend(chunks)
+            return _format_batch_observation(results), merged, len(searches)
 
         if action == "read_chunks":
             raw_ids = action_input.get("chunk_ids") or []
             if not isinstance(raw_ids, list) or not raw_ids:
-                return "read_chunks 需要非空 chunk_ids 列表。", [], None
+                return "read_chunks 需要非空 chunk_ids 列表。", [], 1
             chunk_ids = [str(item) for item in raw_ids][:10]
-            citations = await self.rag.read_chunks(db, chunk_ids)
-            return _format_citations(citations, source_tool="read_chunks"), citations, None
+            chunks = await self.rag.read_chunks(db, chunk_ids)
+            return _format_chunks(chunks, source_tool="read_chunks"), chunks, 1
 
-        return f"未知工具：{action}", [], None
+        return f"未知工具：{action}", [], 0
 
     @staticmethod
     def cache_key(action: str, action_input: dict) -> str:

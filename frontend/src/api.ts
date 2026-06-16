@@ -1,4 +1,4 @@
-import type { AgentPlannerHint, AgentStepEvent, Citation, DocumentItem } from "./types";
+import type { AgentStepEvent, Citation, DocumentItem } from "./types";
 import { t } from "./i18n";
 
 const API_BASE = "";
@@ -28,6 +28,15 @@ export async function deleteDocument(id: string): Promise<void> {
   if (!res.ok) throw new Error(t("errors.deleteFailed"));
 }
 
+export async function reindexDocument(id: string): Promise<DocumentItem> {
+  const res = await fetch(`${API_BASE}/api/v1/documents/${id}/reindex`, { method: "POST" });
+  if (!res.ok) {
+    const detail = await res.text();
+    throw new Error(detail || t("errors.reindexFailed"));
+  }
+  return res.json();
+}
+
 export async function getDocumentFileUrl(documentId: string): Promise<string> {
   const res = await fetch(`${API_BASE}/api/v1/documents/${documentId}/file`);
   if (!res.ok) throw new Error(t("errors.loadDocumentFailed"));
@@ -37,7 +46,6 @@ export async function getDocumentFileUrl(documentId: string): Promise<string> {
 
 export interface StreamHandlers {
   onStatus?: (stage: string) => void;
-  onAgentPlannerHint?: (hint: AgentPlannerHint) => void;
   onAgentStep?: (step: AgentStepEvent) => void;
   onCitations?: (citations: Citation[]) => void;
   onDelta: (text: string) => void;
@@ -46,7 +54,6 @@ export interface StreamHandlers {
     content?: string;
     citations: Citation[];
     language: string;
-    agentSteps?: number;
   }) => void;
   onError: (message: string) => void;
 }
@@ -93,9 +100,6 @@ export async function streamChat(
         continue;
       }
       if (payload.type === "status") handlers.onStatus?.(payload.stage as string);
-      if (payload.type === "agent_planner_hint") {
-        handlers.onAgentPlannerHint?.((payload.hint as AgentPlannerHint) ?? {});
-      }
       if (payload.type === "agent_step") {
         handlers.onAgentStep?.({
           step: payload.step as number,
@@ -117,7 +121,6 @@ export async function streamChat(
           content: payload.content as string | undefined,
           citations: (payload.citations as Citation[]) ?? [],
           language: payload.language as string,
-          agentSteps: payload.agent_steps as number | undefined,
         });
       }
       if (payload.type === "error") {

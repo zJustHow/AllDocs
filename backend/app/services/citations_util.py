@@ -12,7 +12,7 @@ def normalize_answer_citations(answer: str) -> str:
     return TRAILING_SOURCES_SECTION.sub("", answer).strip()
 
 
-def renumber_answer_citations(answer: str, citations: list[dict]) -> tuple[str, list[dict]]:
+def renumber_answer_citations(answer: str, context_chunks: list[dict]) -> tuple[str, list[dict]]:
     """Renumber inline [n] markers from 1 by first appearance; keep only cited sources."""
     seen_old_indices: list[int] = []
     seen_set: set[int] = set()
@@ -20,7 +20,7 @@ def renumber_answer_citations(answer: str, citations: list[dict]) -> tuple[str, 
     for match in INLINE_CITATION_REF.finditer(answer):
         old_num = int(match.group(1) or match.group(2))
         old_index = old_num - 1
-        if old_index < 0 or old_index >= len(citations) or old_index in seen_set:
+        if old_index < 0 or old_index >= len(context_chunks) or old_index in seen_set:
             continue
         seen_set.add(old_index)
         seen_old_indices.append(old_index)
@@ -29,7 +29,7 @@ def renumber_answer_citations(answer: str, citations: list[dict]) -> tuple[str, 
         return answer, []
 
     old_to_new = {old_index + 1: new_num for new_num, old_index in enumerate(seen_old_indices, start=1)}
-    new_citations = [citations[old_index] for old_index in seen_old_indices]
+    new_chunks = [context_chunks[old_index] for old_index in seen_old_indices]
 
     def replace_ref(match: re.Match[str]) -> str:
         old_num = int(match.group(1) or match.group(2))
@@ -40,20 +40,16 @@ def renumber_answer_citations(answer: str, citations: list[dict]) -> tuple[str, 
             return f"【{new_num}】"
         return f"[{new_num}]"
 
-    return INLINE_CITATION_REF.sub(replace_ref, answer), new_citations
+    return INLINE_CITATION_REF.sub(replace_ref, answer), new_chunks
 
 
-def finalize_answer_citations(answer: str, citations: list[dict]) -> tuple[str, list[dict]]:
+def finalize_answer_citations(answer: str, context_chunks: list[dict]) -> tuple[str, list[dict]]:
     answer = normalize_answer_citations(answer)
-    answer, cited = renumber_answer_citations(answer, citations)
-    return answer, public_citations(cited)
+    answer, cited_chunks = renumber_answer_citations(answer, context_chunks)
+    return answer, public_citations(cited_chunks)
 
 
-def evidence_to_citations(evidence: list[dict]) -> list[dict]:
-    return [{key: value for key, value in item.items() if key != "evidence_id"} for item in evidence]
-
-
-def public_citations(citations: list[dict]) -> list[dict]:
+def public_citations(chunks: list[dict]) -> list[dict]:
     return [
         {
             "document_id": item["document_id"],
@@ -63,5 +59,5 @@ def public_citations(citations: list[dict]) -> list[dict]:
             "snippet": item["snippet"],
             "score": item["score"],
         }
-        for item in citations
+        for item in chunks
     ]

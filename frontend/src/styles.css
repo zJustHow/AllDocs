@@ -31,9 +31,10 @@
   --panel-shadow: 0 0 0 1px rgba(0, 0, 0, 0.05), 0 4px 16px rgba(0, 0, 0, 0.06);
   --radius-sm: 8px;
   --radius-md: 12px;
-  --radius-lg: 26px;
-  --radius-panel: 20px;
+  --radius-lg: 20px;
+  --radius-xl: 26px;
   --radius-full: 999px;
+  --radius-circle: 50%;
   --app-padding: 12px;
   --layout-header: 56px;
   --chat-content-top: 32px;
@@ -122,7 +123,7 @@ button {
   backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
   border: 1px solid var(--line);
-  border-radius: var(--radius-panel);
+  border-radius: var(--radius-lg);
   box-shadow: var(--panel-shadow);
   display: flex;
   flex-direction: column;
@@ -245,6 +246,14 @@ button {
   cursor: not-allowed;
 }
 
+.upload-hint {
+  margin: -4px 0 8px;
+  padding: 0 4px;
+  font-size: 0.72rem;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
 .doc-list {
   flex: 1;
   min-height: 0;
@@ -328,7 +337,8 @@ button {
 }
 
 .status.processing,
-.status.pending {
+.status.pending,
+.status.deleting {
   background: var(--warning-bg);
   color: var(--warning);
 }
@@ -390,8 +400,36 @@ button {
   transition: opacity 0.15s, background 0.15s;
 }
 
-.doc-item:hover .doc-delete {
+.doc-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.doc-reindex {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--muted);
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.15s, background 0.15s;
+}
+
+.doc-item:hover .doc-delete,
+.doc-item:hover .doc-reindex {
   opacity: 1;
+}
+
+.doc-reindex:hover {
+  background: var(--surface-hover);
+  color: var(--text);
 }
 
 .doc-delete:hover {
@@ -659,7 +697,7 @@ button {
   border: 1px solid var(--glass-border);
   box-shadow: var(--panel-shadow);
   padding: 12px 18px;
-  border-radius: 18px;
+  border-radius: var(--radius-lg);
   max-width: 85%;
 }
 
@@ -702,7 +740,7 @@ button {
 .agent-steps-dot {
   width: 7px;
   height: 7px;
-  border-radius: 50%;
+  border-radius: var(--radius-circle);
   background: var(--muted);
   flex-shrink: 0;
 }
@@ -726,29 +764,6 @@ button {
   border-top: 1px solid var(--glass-border);
 }
 
-.agent-planner-hint {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  padding-top: 10px;
-}
-
-.agent-intent-badge {
-  font-size: 0.72rem;
-  font-weight: 600;
-  padding: 2px 8px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
-  color: var(--accent);
-  border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
-}
-
-.agent-symptom {
-  font-size: 0.82rem;
-  color: var(--text-secondary);
-}
-
 .agent-step {
   padding-top: 10px;
 }
@@ -763,7 +778,7 @@ button {
 .agent-step-num {
   width: 20px;
   height: 20px;
-  border-radius: 50%;
+  border-radius: var(--radius-circle);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -778,7 +793,7 @@ button {
   font-size: 0.72rem;
   font-weight: 600;
   padding: 2px 8px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: var(--surface-hover);
   color: var(--text);
   border: 1px solid var(--line);
@@ -806,7 +821,7 @@ button {
 .agent-observation {
   margin: 6px 0 0;
   padding: 8px 10px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: var(--surface-hover);
   border: 1px solid var(--line);
   font-size: 0.78rem;
@@ -895,7 +910,7 @@ button {
   padding: 3px 10px;
   margin: 0 3px;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: var(--surface-hover);
   backdrop-filter: blur(8px) saturate(var(--glass-saturate));
   -webkit-backdrop-filter: blur(8px) saturate(var(--glass-saturate));
@@ -934,7 +949,7 @@ button {
   background: var(--surface-elevated);
   backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-xl);
   padding: 6px 6px 6px 20px;
   box-shadow: var(--panel-shadow);
   border: 1px solid var(--glass-border);
@@ -1048,7 +1063,7 @@ button {
 .status-pill .dot {
   width: 8px;
   height: 8px;
-  border-radius: 50%;
+  border-radius: var(--radius-circle);
   background: var(--text-secondary);
   animation: pulse 1.5s infinite;
 }
@@ -1109,7 +1124,7 @@ button {
   overflow: hidden;
   background: rgba(255, 255, 255, 0.96);
   border: 1px solid var(--line);
-  border-radius: var(--radius-panel);
+  border-radius: var(--radius-lg);
   box-shadow: var(--panel-shadow);
   padding: 0 12px 12px;
   box-sizing: border-box;
@@ -1209,10 +1224,41 @@ button {
   display: block;
 }
 
+.doc-viewer-image {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  display: block;
+  margin: 0 auto;
+}
+
+.doc-viewer-text {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 20px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: inherit;
+  font-size: 0.9rem;
+  line-height: 1.6;
+  color: var(--viewer-text);
+  background: var(--surface);
+  box-sizing: border-box;
+}
+
+.doc-viewer-download {
+  margin-top: 12px;
+  color: #7eb8ff;
+  text-decoration: underline;
+}
+
 .doc-viewer-status {
   position: absolute;
   inset: 0;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
   margin: 0;
@@ -1255,7 +1301,7 @@ button {
   width: 42px;
   padding: 4px 6px;
   border: 1px solid rgba(255, 255, 255, 0.2);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: rgba(255, 255, 255, 0.12);
   color: #fff;
   font-size: 0.8rem;

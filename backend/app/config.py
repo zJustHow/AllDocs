@@ -18,17 +18,17 @@ class Settings(BaseSettings):
     rag_top_k: int = 5
     rag_chunk_size: int = 500
     rag_chunk_overlap: int = 80
-    rag_query_planner_enabled: bool = True
-    rag_agent_max_steps: int = 5
-    rag_agent_max_retrievals: int = 4
-    rag_agent_planner_hint: bool = True
-    rag_troubleshooting_top_k_per_slot: int = 3
-    rag_troubleshooting_max_total: int = 10
+    rag_neighbor_window: int = 1
+    rag_agent_max_steps: int = 7
+    rag_agent_max_retrievals: int = 6
+    rag_batch_search_max: int = 4
 
     rerank_enabled: bool = True
     rerank_model: str = "BAAI/bge-reranker-v2-m3"
     rerank_device: str = "cpu"
     rerank_batch_size: int = 8
+    rag_min_rerank_score: float = 0.0
+    rag_min_retrieval_score: float = 0.015
 
     postgres_url: str = "postgresql+asyncpg://alldocs:alldocs@localhost:5432/alldocs"
     postgres_url_sync: str = "postgresql://alldocs:alldocs@localhost:5432/alldocs"

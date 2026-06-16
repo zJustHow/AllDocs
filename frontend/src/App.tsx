@@ -3,11 +3,13 @@ import {
   createVoiceSocket,
   deleteDocument,
   listDocuments,
+  reindexDocument,
   streamChat,
   uploadDocument,
 } from "./api";
 import { type ViewerTarget } from "./citations";
 import DocumentViewer from "./DocumentViewer";
+import { UPLOAD_ACCEPT } from "./fileTypes";
 import { useI18n, type Locale } from "./i18n";
 import {
   AllDocsIcon,
@@ -16,12 +18,13 @@ import {
   MicIcon,
   NewChatIcon,
   PlusIcon,
+  ReindexIcon,
   SendIcon,
   TrashIcon,
 } from "./icons";
 import AgentSteps from "./AgentSteps";
 import MessageContent from "./MessageContent";
-import type { AgentPlannerHint, AgentStepEvent, ChatMessage, DocumentItem } from "./types";
+import type { AgentStepEvent, ChatMessage, DocumentItem } from "./types";
 
 function newId() {
   if (typeof crypto?.randomUUID === "function") {
@@ -66,6 +69,7 @@ export default function App() {
       processing: t("doc.status.processing"),
       ready: t("doc.status.ready"),
       failed: t("doc.status.failed"),
+      deleting: t("doc.status.deleting"),
     }),
     [t],
   );
@@ -76,7 +80,13 @@ export default function App() {
   );
 
   const indexingDocs = useMemo(
-    () => documents.filter((doc) => doc.status === "pending" || doc.status === "processing"),
+    () =>
+      documents.filter(
+        (doc) =>
+          doc.status === "pending" ||
+          doc.status === "processing" ||
+          doc.status === "deleting",
+      ),
     [documents],
   );
 
@@ -199,8 +209,20 @@ export default function App() {
 
   const handleDelete = async (docId: string) => {
     if (!confirm(t("sidebar.deleteConfirm"))) return;
+    setSelectedDocIds((prev) => prev.filter((id) => id !== docId));
     await deleteDocument(docId);
     await refreshDocuments();
+  };
+
+  const handleReindex = async (docId: string) => {
+    if (!confirm(t("sidebar.reindexConfirm"))) return;
+    setError(null);
+    try {
+      await reindexDocument(docId);
+      await refreshDocuments();
+    } catch (err) {
+      setError(String(err));
+    }
   };
 
   const clearChat = () => {
@@ -239,13 +261,6 @@ export default function App() {
       await streamChat(text, sessionId, selectedDocIds, {
         onStatus: (stage) => {
           if (stage === "agent") setChatStage(t("chat.agentRunning"));
-        },
-        onAgentPlannerHint: (hint) => {
-          setMessages((prev) =>
-            prev.map((msg) =>
-              msg.id === assistantId ? { ...msg, agentPlannerHint: hint } : msg,
-            ),
-          );
         },
         onAgentStep: (step) => {
           setMessages((prev) =>
@@ -388,16 +403,6 @@ export default function App() {
           if (stage === "speaking") setVoiceStage(t("voice.synthesizing"));
           return;
         }
-        if (payload.type === "agent_planner_hint") {
-          setMessages((prev) =>
-            prev.map((msg) =>
-              msg.id === assistantId
-                ? { ...msg, agentPlannerHint: payload.hint as AgentPlannerHint }
-                : msg,
-            ),
-          );
-          return;
-        }
         if (payload.type === "agent_step") {
           const step: AgentStepEvent = {
             step: payload.step as number,
@@ -532,6 +537,7 @@ export default function App() {
 
     const nextTarget = {
       ...target,
+      contentType: doc?.content_type ?? target.contentType ?? null,
       pageCount: doc?.page_count ?? target.pageCount ?? null,
     };
     const alreadyOpen = viewerTarget !== null && viewerOpen;
@@ -583,14 +589,15 @@ export default function App() {
           <label className="upload-btn">
             <input
               type="file"
-              accept="application/pdf"
+              accept={UPLOAD_ACCEPT}
               hidden
               disabled={uploading}
               onChange={(e) => handleUpload(e.target.files?.[0] ?? null)}
             />
             <PlusIcon />
-            <span>{uploading ? t("sidebar.uploading") : t("sidebar.uploadPdf")}</span>
+            <span>{uploading ? t("sidebar.uploading") : t("sidebar.uploadDoc")}</span>
           </label>
+          <p className="upload-hint">{t("sidebar.uploadHint")}</p>
 
           <div className="sidebar-section-label">
             {t("sidebar.docLibrary", { count: readyDocs.length })}
@@ -642,13 +649,25 @@ export default function App() {
                     ) : null}
                   </div>
                 </label>
-                <button
-                  className="doc-delete"
-                  onClick={() => handleDelete(doc.id)}
-                  aria-label={t("sidebar.deleteDoc")}
-                >
-                  <TrashIcon />
-                </button>
+                <div className="doc-actions">
+                  {(doc.status === "ready" || doc.status === "failed") && (
+                    <button
+                      className="doc-reindex"
+                      onClick={() => handleReindex(doc.id)}
+                      aria-label={t("sidebar.reindexDoc")}
+                    >
+                      <ReindexIcon />
+                    </button>
+                  )}
+                  <button
+                    className="doc-delete"
+                    onClick={() => handleDelete(doc.id)}
+                    disabled={doc.status === "deleting"}
+                    aria-label={t("sidebar.deleteDoc")}
+                  >
+                    <TrashIcon />
+                  </button>
+                </div>
               </div>
             ))}
           </div>
@@ -739,10 +758,9 @@ export default function App() {
                   </div>
                   <div className="message-body">
                     {msg.role === "assistant" &&
-                    ((msg.agentSteps?.length ?? 0) > 0 || msg.agentPlannerHint || msg.agentRunning) ? (
+                    ((msg.agentSteps?.length ?? 0) > 0 || msg.agentRunning) ? (
                       <AgentSteps
                         steps={msg.agentSteps ?? []}
-                        plannerHint={msg.agentPlannerHint}
                         running={msg.agentRunning}
                       />
                     ) : null}

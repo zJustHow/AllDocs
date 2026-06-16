@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { getDocumentFileUrl } from "./api";
 import type { ViewerTarget } from "./citations";
+import { getPreviewMode } from "./fileTypes";
 import { useI18n } from "./i18n";
 import { CloseIcon, ZoomInIcon, ZoomOutIcon } from "./icons";
 
@@ -13,27 +14,30 @@ const ZOOM_MIN = 50;
 const ZOOM_MAX = 200;
 const ZOOM_STEP = 25;
 
-const pdfUrlCache = new Map<string, string>();
+const fileUrlCache = new Map<string, string>();
 
 export default function DocumentViewer({ target, onClose }: DocumentViewerProps) {
   const { t } = useI18n();
-  const [pdfUrl, setPdfUrl] = useState<string | null>(
-    () => pdfUrlCache.get(target.documentId) ?? null,
+  const previewMode = getPreviewMode(target.documentName, target.contentType);
+  const [fileUrl, setFileUrl] = useState<string | null>(
+    () => fileUrlCache.get(target.documentId) ?? null,
   );
-  const [loading, setLoading] = useState(() => !pdfUrlCache.has(target.documentId));
+  const [textContent, setTextContent] = useState<string | null>(null);
+  const [loading, setLoading] = useState(() => !fileUrlCache.has(target.documentId));
   const [error, setError] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState(target.page ?? 1);
   const [pageInput, setPageInput] = useState(String(target.page ?? 1));
   const [zoom, setZoom] = useState(100);
 
   const pageCount = target.pageCount ?? null;
+  const showPageToolbar = previewMode === "pdf" && pageCount !== null;
 
   useEffect(() => {
     let active = true;
-    const cached = pdfUrlCache.get(target.documentId);
+    const cached = fileUrlCache.get(target.documentId);
 
     if (cached) {
-      setPdfUrl(cached);
+      setFileUrl(cached);
       setLoading(false);
       setError(null);
       return;
@@ -41,12 +45,18 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
 
     setLoading(true);
     setError(null);
+    setTextContent(null);
 
     getDocumentFileUrl(target.documentId)
-      .then((url) => {
+      .then(async (url) => {
         if (!active) return;
-        pdfUrlCache.set(target.documentId, url);
-        setPdfUrl(url);
+        fileUrlCache.set(target.documentId, url);
+        setFileUrl(url);
+        if (previewMode === "text") {
+          const response = await fetch(url);
+          const text = await response.text();
+          if (active) setTextContent(text);
+        }
       })
       .catch((err) => {
         if (active) setError(String(err));
@@ -58,12 +68,12 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
     return () => {
       active = false;
     };
-  }, [target.documentId]);
+  }, [target.documentId, previewMode]);
 
   const iframeSrc = useMemo(() => {
-    if (!pdfUrl) return undefined;
-    return `${pdfUrl}#page=${currentPage}`;
-  }, [pdfUrl, currentPage]);
+    if (!fileUrl || previewMode !== "pdf") return undefined;
+    return `${fileUrl}#page=${currentPage}`;
+  }, [fileUrl, currentPage, previewMode]);
 
   const commitPage = (raw: string) => {
     const parsed = Number.parseInt(raw, 10);
@@ -96,7 +106,7 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
       <div className="doc-viewer-shell">
         <div className="doc-viewer-stage">
           <div className="doc-viewer-canvas" style={{ transform: `scale(${zoom / 100})` }}>
-            {loading && !pdfUrl && <p className="doc-viewer-status">{t("viewer.loading")}</p>}
+            {loading && !fileUrl && <p className="doc-viewer-status">{t("viewer.loading")}</p>}
             {error && <p className="doc-viewer-status error-text">{error}</p>}
             {iframeSrc && !error && (
               <iframe
@@ -106,9 +116,27 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
                 className="doc-viewer-frame"
               />
             )}
+            {fileUrl && previewMode === "image" && !error && (
+              <img
+                src={fileUrl}
+                alt={target.documentName}
+                className="doc-viewer-image"
+              />
+            )}
+            {previewMode === "text" && textContent && !error && (
+              <pre className="doc-viewer-text">{textContent}</pre>
+            )}
+            {previewMode === "unsupported" && fileUrl && !error && (
+              <div className="doc-viewer-status">
+                <p>{t("viewer.unsupported")}</p>
+                <a href={fileUrl} download={target.documentName} className="doc-viewer-download">
+                  {t("viewer.download")}
+                </a>
+              </div>
+            )}
           </div>
 
-          {!loading && !error && pdfUrl && (
+          {!loading && !error && fileUrl && showPageToolbar && (
             <div className="doc-viewer-toolbar">
               <span className="doc-viewer-toolbar-label">{t("viewer.pageLabel")}</span>
               <input

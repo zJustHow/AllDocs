@@ -18,6 +18,7 @@ class DocumentResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: UUID
     name: str
+    content_type: str = "application/pdf"
     status: str
     page_count: int | None
     ocr_pages: int | None = 0

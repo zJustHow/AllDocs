@@ -1,8 +1,6 @@
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
-from app.services.llm import QueryIntent
-
 OnAgentStep = Callable[[dict], Awaitable[None] | None]
 
 
@@ -19,10 +17,10 @@ class AgentStep:
 class AgentResult:
     answer: str
     citations: list[dict]
-    intent: QueryIntent
     language: str
     steps: list[AgentStep]
     evidence: list[dict]
+    fallback_message: str | None = None
 
 
 @dataclass
@@ -31,6 +29,6 @@ class AgentState:
     evidence: list[dict] = field(default_factory=list)
     seen_evidence_keys: set[str] = field(default_factory=set)
     retrieval_calls: int = 0
+    semantic_search_units: int = 0
     done: bool = False
-    intent: QueryIntent = "general"
     tool_cache: dict[str, str] = field(default_factory=dict)

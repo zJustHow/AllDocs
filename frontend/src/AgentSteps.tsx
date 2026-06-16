@@ -1,17 +1,18 @@
 import { useEffect, useState } from "react";
 import { useI18n } from "./i18n";
-import type { AgentPlannerHint, AgentStepEvent } from "./types";
+import type { AgentStepEvent } from "./types";
 
 interface AgentStepsProps {
   steps: AgentStepEvent[];
-  plannerHint?: AgentPlannerHint | null;
   running?: boolean;
 }
 
 function summarizeActionInput(action: string, input: Record<string, unknown>): string | null {
   if (action === "search_chunks" && typeof input.query === "string") return input.query;
+  if (action === "search_chunks_batch" && Array.isArray(input.searches)) {
+    return `${input.searches.length} parallel search(es)`;
+  }
   if (action === "lookup_toc" && typeof input.question === "string") return input.question;
-  if (action === "search_troubleshooting" && typeof input.question === "string") return input.question;
   if (action === "read_chunks" && Array.isArray(input.chunk_ids)) {
     return `${input.chunk_ids.length} chunk(s)`;
   }
@@ -25,7 +26,7 @@ function truncate(text: string, max = 160): string {
   return `${trimmed.slice(0, max)}…`;
 }
 
-export default function AgentSteps({ steps, plannerHint, running = false }: AgentStepsProps) {
+export default function AgentSteps({ steps, running = false }: AgentStepsProps) {
   const { t } = useI18n();
   const [expanded, setExpanded] = useState(running);
 
@@ -43,12 +44,6 @@ export default function AgentSteps({ steps, plannerHint, running = false }: Agen
     return label === key ? action : label;
   };
 
-  const intentLabel = (intent: string) => {
-    const key = `agent.intent.${intent}`;
-    const label = t(key);
-    return label === key ? intent : label;
-  };
-
   const summary =
     steps.length === 0
       ? t("agent.planning")
@@ -57,7 +52,7 @@ export default function AgentSteps({ steps, plannerHint, running = false }: Agen
           actions: steps.map((step) => toolLabel(step.action)).join(" → "),
         });
 
-  if (steps.length === 0 && !plannerHint && !running) return null;
+  if (steps.length === 0 && !running) return null;
 
   return (
     <details
@@ -71,15 +66,6 @@ export default function AgentSteps({ steps, plannerHint, running = false }: Agen
       </summary>
 
       <div className="agent-steps-body">
-        {plannerHint?.intent ? (
-          <div className="agent-planner-hint">
-            <span className="agent-intent-badge">{intentLabel(plannerHint.intent)}</span>
-            {plannerHint.symptom ? (
-              <span className="agent-symptom">{plannerHint.symptom}</span>
-            ) : null}
-          </div>
-        ) : null}
-
         {steps.map((step) => {
           const inputSummary = summarizeActionInput(step.action, step.action_input);
           return (

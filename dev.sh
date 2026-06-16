@@ -190,6 +190,8 @@ start_backend() {
 
   info "启动 Docker 服务..."
   "${COMPOSE[@]}" up -d "${build_flag[@]}" postgres redis qdrant minio api worker
+  # Celery worker 不热重载代码，每次开发启动时重启以加载最新任务定义
+  "${COMPOSE[@]}" restart worker
   wait_for_api
 }
 

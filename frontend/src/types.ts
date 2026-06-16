@@ -1,7 +1,8 @@
 export interface DocumentItem {
   id: string;
   name: string;
-  status: "pending" | "processing" | "ready" | "failed";
+  content_type?: string;
+  status: "pending" | "processing" | "ready" | "failed" | "deleting";
   page_count: number | null;
   ocr_pages: number | null;
   progress: number;
@@ -17,19 +18,6 @@ export interface Citation {
   section: string | null;
   snippet: string;
   score?: number | null;
-}
-
-export interface AgentPlannerHint {
-  intent?: string;
-  symptom?: string | null;
-  apply_metadata_filters?: boolean;
-  filters?: Record<string, unknown> | null;
-  sub_queries?: Array<{
-    slot: string;
-    query: string;
-    content_roles?: string[] | null;
-    chunk_types?: string[] | null;
-  }>;
 }
 
 export interface AgentStepEvent {
@@ -48,6 +36,5 @@ export interface ChatMessage {
   citations?: Citation[];
   streaming?: boolean;
   agentSteps?: AgentStepEvent[];
-  agentPlannerHint?: AgentPlannerHint | null;
   agentRunning?: boolean;
 }

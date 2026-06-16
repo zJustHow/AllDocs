@@ -124,7 +124,7 @@ def _score_entry(
     return score
 
 
-def _entry_to_citation(document: Document, entry: TocEntry, index: int, score: float) -> dict:
+def _entry_to_chunk(document: Document, entry: TocEntry, index: int, score: float) -> dict:
     text = (
         f"章节：{entry.path}\n"
         f"起始页：第 {entry.start_page} 页\n"
@@ -177,14 +177,14 @@ async def lookup_toc(
             ranked.append((score, document, entry, index))
 
     ranked.sort(key=lambda item: item[0], reverse=True)
-    citations: list[dict] = []
+    chunks: list[dict] = []
     seen: set[tuple[str, str]] = set()
     for score, document, entry, index in ranked:
         key = (str(document.id), entry.path)
         if key in seen:
             continue
         seen.add(key)
-        citations.append(_entry_to_citation(document, entry, index, score))
-        if len(citations) >= top_k:
+        chunks.append(_entry_to_chunk(document, entry, index, score))
+        if len(chunks) >= top_k:
             break
-    return citations
+    return chunks

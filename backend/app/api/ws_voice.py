@@ -12,9 +12,8 @@ from app.config import get_settings
 from app.db.models import Message, Session
 from app.db.session import async_session_factory
 from app.services.agent import AgentRAGService
-from app.services.citations_util import evidence_to_citations, finalize_answer_citations, public_citations
-from app.services.chat_runner import run_agent_answer
-from app.services.rag import detect_language, not_found_message
+from app.services.citations_util import finalize_answer_citations, public_citations
+from app.services.rag import detect_language
 from app.services.speech import SpeechService
 
 router = APIRouter(tags=["voice-ws"])
@@ -118,21 +117,20 @@ async def voice_websocket(websocket: WebSocket) -> None:
                 async def on_step(event: dict) -> None:
                     step_events.append(event)
 
-                result = await run_agent_answer(
+                result = await agent.run(
                     db,
                     question,
                     effective_doc_ids or None,
                     chunk_filters,
                     history,
-                    agent=agent,
                     on_step=on_step,
                     skip_synthesis=True,
                 )
                 for event in step_events:
                     await _send_json(websocket, event)
 
-                if not result.evidence:
-                    fallback = not_found_message(lang)
+                if result.fallback_message:
+                    fallback = result.fallback_message
                     await _send_json(websocket, {"type": "answer_delta", "content": fallback})
                     if with_audio:
                         audio_wav = await asyncio.to_thread(speech.synthesize, fallback, lang)
@@ -157,13 +155,11 @@ async def voice_websocket(websocket: WebSocket) -> None:
                             "session_id": str(session.id),
                             "citations": [],
                             "language": lang,
-                            "agent_steps": len(result.steps),
                         },
                     )
                     continue
 
-                full_citations = evidence_to_citations(result.evidence)
-                refs = public_citations(full_citations)
+                refs = public_citations(result.evidence)
                 await _send_json(websocket, {"type": "citations", "citations": refs})
 
                 answer_parts: list[str] = []
@@ -171,7 +167,7 @@ async def voice_websocket(websocket: WebSocket) -> None:
                 await _send_json(websocket, {"type": "status", "stage": "answering"})
 
                 async for delta in agent.iter_synthesis(
-                    question, result.evidence, history, intent=result.intent
+                    question, result.evidence, history
                 ):
                     answer_parts.append(delta)
                     pending_tts += delta
@@ -199,7 +195,7 @@ async def voice_websocket(websocket: WebSocket) -> None:
                             {"type": "audio", "data": base64.b64encode(audio_wav).decode("ascii")},
                         )
 
-                answer, refs = finalize_answer_citations("".join(answer_parts), full_citations)
+                answer, refs = finalize_answer_citations("".join(answer_parts), result.evidence)
                 db.add(Message(session_id=session.id, role="user", content=question))
                 db.add(
                     Message(
@@ -218,7 +214,6 @@ async def voice_websocket(websocket: WebSocket) -> None:
                         "content": answer,
                         "citations": refs,
                         "language": lang,
-                        "agent_steps": len(result.steps),
                     },
                 )
     except WebSocketDisconnect:

@@ -51,7 +51,9 @@ class OCRService:
         scale = self.settings.ocr_render_scale
         matrix = fitz.Matrix(scale, scale)
         pixmap = page.get_pixmap(matrix=matrix, alpha=False)
-        image_bytes = pixmap.tobytes("png")
+        return self.recognize_bytes(pixmap.tobytes("png"))
+
+    def recognize_bytes(self, image_bytes: bytes) -> str:
         image = cv2.imdecode(np.frombuffer(image_bytes, np.uint8), cv2.IMREAD_COLOR)
         if image is None:
             return ""

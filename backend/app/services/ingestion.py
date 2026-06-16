@@ -1,11 +1,20 @@
+import html
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
+from io import BytesIO
 
 import fitz
 
 from app.config import Settings, get_settings
+from app.services.file_types import detect_file_type
 from app.services.ocr import OCRService
+from app.services.type_annotations import (
+    HighlightTypeRegion,
+    extract_page_text_excluding_rects,
+    extract_pdf_highlight_regions,
+    highlight_rects_on_page,
+)
 
 _SECTION_PATH_MAX_LEN = 512
 _SECTION_PATH_SEPARATOR = " > "
@@ -56,6 +65,7 @@ _PRINCIPLE_TEXT_RE = re.compile(
     r"工作原理|触发条件|检测逻辑|控制逻辑|when.*trigger",
     re.IGNORECASE,
 )
+_MD_HEADING_RE = re.compile(r"^(#{1,6})\s+(.+)$")
 
 
 @dataclass
@@ -66,6 +76,16 @@ class ParsedChunk:
     chunk_index: int
     chunk_type: str
     content_role: str | None = None
+    type_source: str = "heuristic"
+
+
+@dataclass(frozen=True)
+class TocEntry:
+    level: int
+    title: str
+    start_page: int
+    end_page: int
+    path: str
 
 
 @dataclass
@@ -97,15 +117,6 @@ def toc_entries_from_dicts(items: list[dict]) -> list[TocEntry]:
         )
         for item in items
     ]
-
-
-@dataclass(frozen=True)
-class TocEntry:
-    level: int
-    title: str
-    start_page: int
-    end_page: int
-    path: str
 
 
 def is_toc_text(text: str) -> bool:
@@ -338,6 +349,153 @@ def should_skip_front_matter(page: int, toc_entries: list[TocEntry]) -> bool:
     return content_start is not None and page < content_start
 
 
+def _decode_text_bytes(data: bytes) -> str:
+    for encoding in ("utf-8", "utf-8-sig", "gb18030", "gbk", "latin-1"):
+        try:
+            return data.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    raise ValueError("Unable to decode text file")
+
+
+def _strip_html(raw_html: str) -> str:
+    text = re.sub(r"(?is)<(script|style).*?>.*?</\1>", "", raw_html)
+    text = re.sub(r"(?s)<[^>]+>", "\n", text)
+    text = html.unescape(text)
+    return re.sub(r"\n{3,}", "\n\n", text).strip()
+
+
+def _flush_text_buffer(
+    pages: list[tuple[str | None, str, int]],
+    section: str | None,
+    buffer: list[str],
+    page_number: int = 1,
+) -> None:
+    if not buffer:
+        return
+    text = "\n".join(buffer).strip()
+    if text and not is_toc_text(text):
+        pages.append((section, text, page_number))
+
+
+def _parse_structured_text_pages(text: str, *, markdown: bool) -> list[tuple[str | None, str, int]]:
+    text = text.strip()
+    if not text:
+        return []
+
+    if not markdown:
+        return [(None, text, 1)]
+
+    pages: list[tuple[str | None, str, int]] = []
+    section: str | None = None
+    buffer: list[str] = []
+    for line in text.splitlines():
+        match = _MD_HEADING_RE.match(line)
+        if match:
+            _flush_text_buffer(pages, section, buffer)
+            section = match.group(2).strip()
+            buffer = []
+            continue
+        buffer.append(line)
+    _flush_text_buffer(pages, section, buffer)
+    return pages if pages else [(None, text, 1)]
+
+
+def _parse_docx_pages(file_bytes: bytes) -> list[tuple[str | None, str, int]]:
+    from docx import Document as DocxDocument
+
+    doc = DocxDocument(BytesIO(file_bytes))
+    pages: list[tuple[str | None, str, int]] = []
+    section: str | None = None
+    buffer: list[str] = []
+
+    for para in doc.paragraphs:
+        text = para.text.strip()
+        if not text:
+            continue
+        style = (para.style.name or "").lower()
+        if style.startswith("heading"):
+            _flush_text_buffer(pages, section, buffer)
+            section = text
+            buffer = []
+            continue
+        buffer.append(text)
+    _flush_text_buffer(pages, section, buffer)
+
+    if pages:
+        return pages
+
+    for para in doc.paragraphs:
+        text = para.text.strip()
+        if text:
+            pages.append((section, text, 1))
+    return pages
+
+
+def _merge_pdf_highlight_chunks(
+    highlight_regions: list[HighlightTypeRegion],
+    page_chunks: list[ParsedChunk],
+) -> list[ParsedChunk]:
+    ordered: list[tuple[int, float, int, ParsedChunk]] = []
+
+    for region in highlight_regions:
+        ordered.append(
+            (
+                region.page,
+                region.sort_key,
+                0,
+                ParsedChunk(
+                    text=region.text,
+                    page=region.page,
+                    section=region.section,
+                    chunk_index=0,
+                    chunk_type=region.chunk_type,
+                    content_role=region.content_role
+                    or _detect_content_role(region.section, region.text),
+                    type_source="pdf_highlight",
+                ),
+            )
+        )
+
+    for chunk in page_chunks:
+        ordered.append((chunk.page or 0, float("inf"), chunk.chunk_index + 1, chunk))
+
+    ordered.sort(key=lambda item: (item[0], item[1], item[2]))
+    merged: list[ParsedChunk] = []
+    for index, (_, _, _, chunk) in enumerate(ordered):
+        chunk.chunk_index = index
+        merged.append(chunk)
+    return merged
+
+
+def _build_chunks_from_pages(
+    pages: list[tuple[str | None, str, int]],
+    settings: Settings,
+) -> list[ParsedChunk]:
+    parsed_chunks: list[ParsedChunk] = []
+    chunk_index = 0
+    for section, page_group in _group_contiguous_sections(pages):
+        section_text, page_spans = _concat_pages(page_group)
+        for offset, piece in _split_text_with_offsets(
+            section_text,
+            settings.rag_chunk_size,
+            settings.rag_chunk_overlap,
+        ):
+            parsed_chunks.append(
+                ParsedChunk(
+                    text=piece,
+                    page=_page_for_offset(page_spans, offset),
+                    section=section,
+                    chunk_index=chunk_index,
+                    chunk_type=_detect_chunk_type(piece),
+                    content_role=_detect_content_role(section, piece),
+                    type_source="heuristic",
+                )
+            )
+            chunk_index += 1
+    return parsed_chunks
+
+
 class IngestionService:
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
@@ -364,49 +522,52 @@ class IngestionService:
         doc = fitz.open(stream=file_bytes, filetype="pdf")
         page_count = doc.page_count
         toc_entries = build_toc_entries(doc)
+
+        def _section_for_page(page_number: int) -> str | None:
+            return section_for_page(toc_entries, page_number)
+
+        highlight_regions = extract_pdf_highlight_regions(
+            doc,
+            section_for_page=_section_for_page,
+        )
         pages: list[tuple[str | None, str, int]] = []
         ocr_pages = 0
 
         for page_index in range(page_count):
             page = doc[page_index]
             page_number = page_index + 1
-            page_text, used_ocr = self._extract_page_text(page)
+            if should_skip_front_matter(page_number, toc_entries):
+                continue
+
+            section = _section_for_page(page_number)
+            page_highlights = [region for region in highlight_regions if region.page == page_number]
+            highlight_rects = highlight_rects_on_page(page) if page_highlights else []
+            if highlight_rects:
+                page_text = extract_page_text_excluding_rects(page, highlight_rects)
+                used_ocr = False
+            else:
+                page_text, used_ocr = self._extract_page_text(page)
+
             if used_ocr:
                 ocr_pages += 1
             if not page_text.strip():
                 continue
-            if should_skip_front_matter(page_number, toc_entries):
-                continue
             if is_toc_text(page_text):
                 continue
-            section = section_for_page(toc_entries, page_number)
             pages.append((section, page_text.strip(), page_number))
             if on_page_progress is not None:
                 on_page_progress(page_number, page_count)
 
-        if not pages:
+        if not pages and not highlight_regions:
+            doc.close()
             raise ValueError("No text extracted from PDF")
 
-        parsed_chunks: list[ParsedChunk] = []
-        chunk_index = 0
-        for section, page_group in _group_contiguous_sections(pages):
-            section_text, page_spans = _concat_pages(page_group)
-            for offset, piece in _split_text_with_offsets(
-                section_text,
-                self.settings.rag_chunk_size,
-                self.settings.rag_chunk_overlap,
-            ):
-                parsed_chunks.append(
-                    ParsedChunk(
-                        text=piece,
-                        page=_page_for_offset(page_spans, offset),
-                        section=section,
-                        chunk_index=chunk_index,
-                        chunk_type=_detect_chunk_type(piece),
-                        content_role=_detect_content_role(section, piece),
-                    )
-                )
-                chunk_index += 1
+        page_chunks = _build_chunks_from_pages(pages, self.settings)
+        parsed_chunks = (
+            _merge_pdf_highlight_chunks(highlight_regions, page_chunks)
+            if highlight_regions
+            else page_chunks
+        )
 
         doc.close()
         return ParseResult(
@@ -415,3 +576,107 @@ class IngestionService:
             ocr_pages=ocr_pages,
             toc_entries=toc_entries,
         )
+
+    def _parse_text_document(
+        self,
+        file_bytes: bytes,
+        *,
+        markdown: bool,
+        on_page_progress: Callable[[int, int], None] | None = None,
+    ) -> ParseResult:
+        pages = _parse_structured_text_pages(_decode_text_bytes(file_bytes), markdown=markdown)
+        if not pages:
+            raise ValueError("No text extracted from file")
+        if on_page_progress is not None:
+            on_page_progress(1, 1)
+        return ParseResult(
+            chunks=_build_chunks_from_pages(pages, self.settings),
+            page_count=1,
+            ocr_pages=0,
+            toc_entries=[],
+        )
+
+    def _parse_html_document(
+        self,
+        file_bytes: bytes,
+        on_page_progress: Callable[[int, int], None] | None = None,
+    ) -> ParseResult:
+        text = _strip_html(_decode_text_bytes(file_bytes))
+        if not text:
+            raise ValueError("No text extracted from HTML")
+        pages = [(None, text, 1)]
+        if on_page_progress is not None:
+            on_page_progress(1, 1)
+        return ParseResult(
+            chunks=_build_chunks_from_pages(pages, self.settings),
+            page_count=1,
+            ocr_pages=0,
+            toc_entries=[],
+        )
+
+    def _parse_docx_document(
+        self,
+        file_bytes: bytes,
+        on_page_progress: Callable[[int, int], None] | None = None,
+    ) -> ParseResult:
+        pages = _parse_docx_pages(file_bytes)
+        if not pages:
+            raise ValueError("No text extracted from Word document")
+        if on_page_progress is not None:
+            on_page_progress(1, 1)
+        return ParseResult(
+            chunks=_build_chunks_from_pages(pages, self.settings),
+            page_count=1,
+            ocr_pages=0,
+            toc_entries=[],
+        )
+
+    def _parse_image_document(
+        self,
+        file_bytes: bytes,
+        on_page_progress: Callable[[int, int], None] | None = None,
+    ) -> ParseResult:
+        if self.ocr is None:
+            raise ValueError("OCR is disabled; cannot process image files")
+        text = self.ocr.recognize_bytes(file_bytes).strip()
+        if not text:
+            raise ValueError("No text extracted from image")
+        pages = [(None, text, 1)]
+        if on_page_progress is not None:
+            on_page_progress(1, 1)
+        return ParseResult(
+            chunks=_build_chunks_from_pages(pages, self.settings),
+            page_count=1,
+            ocr_pages=1,
+            toc_entries=[],
+        )
+
+    def parse_document(
+        self,
+        file_bytes: bytes,
+        filename: str,
+        on_page_progress: Callable[[int, int], None] | None = None,
+    ) -> ParseResult:
+        file_type = detect_file_type(filename)
+        if file_type is None:
+            raise ValueError(f"Unsupported file type: {filename}")
+
+        match file_type.extension:
+            case ".pdf":
+                return self.parse_pdf(file_bytes, on_page_progress=on_page_progress)
+            case ".docx":
+                return self._parse_docx_document(file_bytes, on_page_progress=on_page_progress)
+            case ".txt":
+                return self._parse_text_document(
+                    file_bytes, markdown=False, on_page_progress=on_page_progress
+                )
+            case ".md":
+                return self._parse_text_document(
+                    file_bytes, markdown=True, on_page_progress=on_page_progress
+                )
+            case ".html" | ".htm":
+                return self._parse_html_document(file_bytes, on_page_progress=on_page_progress)
+            case ".png" | ".jpg" | ".jpeg" | ".webp":
+                return self._parse_image_document(file_bytes, on_page_progress=on_page_progress)
+            case _:
+                raise ValueError(f"Unsupported file type: {filename}")
