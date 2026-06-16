@@ -34,6 +34,11 @@ INDEX_BODY = {
                 "analyzer": "manual_index_analyzer",
                 "search_analyzer": "manual_search_analyzer",
             },
+            "caption": {
+                "type": "text",
+                "analyzer": "manual_index_analyzer",
+                "search_analyzer": "manual_search_analyzer",
+            },
             "page": {"type": "integer"},
             "section": {"type": "keyword"},
             "chunk_type": {"type": "keyword"},
@@ -60,13 +65,35 @@ class FulltextStore:
     def _ensure_index(self) -> None:
         if not self.client.indices.exists(index=self.index):
             self.client.indices.create(index=self.index, body=INDEX_BODY)
+        else:
+            self._ensure_caption_mapping()
+
+    def _ensure_caption_mapping(self) -> None:
+        mapping = self.client.indices.get_mapping(index=self.index)
+        props = mapping.get(self.index, {}).get("mappings", {}).get("properties", {})
+        if "caption" in props:
+            return
+        self.client.indices.put_mapping(
+            index=self.index,
+            body={
+                "properties": {
+                    "caption": {
+                        "type": "text",
+                        "analyzer": "manual_index_analyzer",
+                        "search_analyzer": "manual_search_analyzer",
+                    }
+                }
+            },
+        )
 
     def upsert_chunks(
         self,
         chunk_ids: list[UUID],
         texts: list[str],
         payloads: list[dict],
+        captions: list[str] | None = None,
     ) -> None:
+        caption_values = captions or [""] * len(chunk_ids)
         actions = [
             {
                 "_op_type": "index",
@@ -74,9 +101,12 @@ class FulltextStore:
                 "_id": str(chunk_id),
                 "chunk_id": str(chunk_id),
                 "text": text,
+                "caption": caption,
                 **payload,
             }
-            for chunk_id, text, payload in zip(chunk_ids, texts, payloads, strict=True)
+            for chunk_id, text, caption, payload in zip(
+                chunk_ids, texts, caption_values, payloads, strict=True
+            )
         ]
         bulk(self.client, actions, refresh="wait_for")
 
@@ -90,7 +120,7 @@ class FulltextStore:
             {
                 "multi_match": {
                     "query": query,
-                    "fields": ["text^3", "section^2", "document_name"],
+                    "fields": ["text^3", "caption^2", "section^2", "document_name"],
                     "type": "best_fields",
                 }
             }

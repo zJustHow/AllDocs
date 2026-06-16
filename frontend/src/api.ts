@@ -1,4 +1,4 @@
-import type { AgentStepEvent, Citation, DocumentItem } from "./types";
+import type { AgentStepEvent, Citation, DocumentItem, MessageEmbed } from "./types";
 import { t } from "./i18n";
 
 const API_BASE = "";
@@ -48,11 +48,13 @@ export interface StreamHandlers {
   onStatus?: (stage: string) => void;
   onAgentStep?: (step: AgentStepEvent) => void;
   onCitations?: (citations: Citation[]) => void;
+  onEmbeds?: (embeds: MessageEmbed[]) => void;
   onDelta: (text: string) => void;
   onDone: (payload: {
     sessionId: string;
     content?: string;
     citations: Citation[];
+    embeds: MessageEmbed[];
     language: string;
   }) => void;
   onError: (message: string) => void;
@@ -113,6 +115,9 @@ export async function streamChat(
       if (payload.type === "citations") {
         handlers.onCitations?.((payload.citations as Citation[]) ?? []);
       }
+      if (payload.type === "embeds") {
+        handlers.onEmbeds?.((payload.embeds as MessageEmbed[]) ?? []);
+      }
       if (payload.type === "delta") handlers.onDelta(payload.content as string);
       if (payload.type === "done") {
         finished = true;
@@ -120,6 +125,7 @@ export async function streamChat(
           sessionId: payload.session_id as string,
           content: payload.content as string | undefined,
           citations: (payload.citations as Citation[]) ?? [],
+          embeds: (payload.embeds as MessageEmbed[]) ?? [],
           language: payload.language as string,
         });
       }

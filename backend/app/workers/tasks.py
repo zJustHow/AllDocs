@@ -4,7 +4,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session as OrmSession, sessionmaker
 
 from app.config import get_settings
-from app.db.models import Chunk, Document, DocumentStatus
+from app.db.models import Chunk, ChunkAsset, Document, DocumentStatus
 from app.services.document_delete import (
     delete_external_stores,
     finalize_document_deletion,
@@ -12,6 +12,8 @@ from app.services.document_delete import (
 )
 from app.services.embedding import EmbeddingService, chunk_embedding_text
 from app.services.fulltext_store import FulltextStore
+from app.services.chunk_index import chunk_fulltext_caption
+from app.services.ingest_caption import apply_ingest_captions
 from app.services.ingestion import IngestionService, toc_entry_to_dict
 from app.services.storage import StorageService
 from app.services.vector_store import VectorStore
@@ -74,6 +76,9 @@ def process_document(document_id: str) -> None:
             if _abort_if_deleting(db, document):
                 return
 
+            storage = StorageService()
+            storage.delete_prefix(f"{doc_uuid}/assets/")
+
             settings = get_settings()
             vector_store = VectorStore()
             vector_store.delete_by_document(doc_uuid)
@@ -93,18 +98,70 @@ def process_document(document_id: str) -> None:
                     section=parsed.section,
                     chunk_index=parsed.chunk_index,
                     chunk_type=parsed.chunk_type,
-                    content_role=parsed.content_role,
                 )
                 db.add(chunk)
                 chunk_rows.append(chunk)
             db.flush()
+
+            for parsed, chunk in zip(parsed_chunks, chunk_rows, strict=True):
+                if not parsed.asset_png or not parsed.asset_bbox or parsed.page is None:
+                    continue
+                asset_id = uuid.uuid4()
+                object_key = f"{doc_uuid}/assets/{asset_id}.png"
+                storage.upload(object_key, parsed.asset_png, "image/png")
+                db.add(
+                    ChunkAsset(
+                        id=asset_id,
+                        chunk_id=chunk.id,
+                        document_id=doc_uuid,
+                        asset_type=parsed.chunk_type,
+                        page=parsed.page,
+                        bbox=list(parsed.asset_bbox),
+                        object_key=object_key,
+                    )
+                )
+            db.flush()
+
+            _set_progress(db, document, 62, "生成图像描述")
+            if _abort_if_deleting(db, document):
+                return
+            apply_ingest_captions(
+                db,
+                document=document,
+                chunk_rows=chunk_rows,
+                file_bytes=file_bytes,
+                filename=document.name,
+                settings=settings,
+            )
+
+            asset_rows = (
+                db.query(ChunkAsset).filter(ChunkAsset.document_id == doc_uuid).all()
+            )
+            assets_by_chunk: dict[str, list[ChunkAsset]] = {}
+            for asset in asset_rows:
+                assets_by_chunk.setdefault(str(asset.chunk_id), []).append(asset)
+
+            def _asset_captions(chunk_id: uuid.UUID) -> list[str]:
+                return [
+                    asset.caption
+                    for asset in assets_by_chunk.get(str(chunk_id), [])
+                    if asset.caption
+                ]
 
             _set_progress(db, document, 65, "生成向量")
             if _abort_if_deleting(db, document):
                 db.rollback()
                 return
             vectors = EmbeddingService().embed_documents(
-                [chunk_embedding_text(chunk.text, chunk.section) for chunk in chunk_rows]
+                [
+                    chunk_embedding_text(
+                        chunk.text,
+                        chunk.section,
+                        caption=chunk.caption,
+                        asset_captions=_asset_captions(chunk.id),
+                    )
+                    for chunk in chunk_rows
+                ]
             )
             payloads = [
                 {
@@ -132,6 +189,13 @@ def process_document(document_id: str) -> None:
                 fulltext_store.upsert_chunks(
                     chunk_ids=[chunk.id for chunk in chunk_rows],
                     texts=[chunk.text for chunk in chunk_rows],
+                    captions=[
+                        chunk_fulltext_caption(
+                            chunk.caption,
+                            _asset_captions(chunk.id),
+                        )
+                        for chunk in chunk_rows
+                    ],
                     payloads=payloads,
                 )
 

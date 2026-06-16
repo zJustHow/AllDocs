@@ -42,8 +42,6 @@ export default function App() {
   const [input, setInput] = useState("");
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [chatStage, setChatStage] = useState<string | null>(null);
-  const [voiceStage, setVoiceStage] = useState<string | null>(null);
   const [recording, setRecording] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -56,7 +54,9 @@ export default function App() {
   const scrollUserMessageIdRef = useRef<string | null>(null);
   const spacerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const viewerCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const viewerCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const audioQueueRef = useRef<HTMLAudioElement[]>([]);
@@ -94,7 +94,9 @@ export default function App() {
     const docs = await listDocuments();
     setDocuments(docs);
     setSelectedDocIds((prev) => {
-      const readyIds = docs.filter((d) => d.status === "ready").map((d) => d.id);
+      const readyIds = docs
+        .filter((d) => d.status === "ready")
+        .map((d) => d.id);
       if (prev.length === 0) return readyIds;
       return prev.filter((id) => readyIds.includes(id));
     });
@@ -126,10 +128,15 @@ export default function App() {
       if (container && messageEl && spacer) {
         const topGap =
           parseFloat(
-            getComputedStyle(document.documentElement).getPropertyValue("--chat-content-top"),
+            getComputedStyle(document.documentElement).getPropertyValue(
+              "--chat-content-top",
+            ),
           ) || 32;
         const room =
-          container.clientHeight - messageEl.getBoundingClientRect().height - topGap - 24;
+          container.clientHeight -
+          messageEl.getBoundingClientRect().height -
+          topGap -
+          24;
         spacer.style.minHeight = `${Math.max(room, 0)}px`;
       }
 
@@ -142,7 +149,8 @@ export default function App() {
 
   useEffect(
     () => () => {
-      if (viewerCloseTimerRef.current) clearTimeout(viewerCloseTimerRef.current);
+      if (viewerCloseTimerRef.current)
+        clearTimeout(viewerCloseTimerRef.current);
     },
     [],
   );
@@ -189,7 +197,9 @@ export default function App() {
 
   const toggleDoc = (docId: string) => {
     setSelectedDocIds((prev) =>
-      prev.includes(docId) ? prev.filter((id) => id !== docId) : [...prev, docId],
+      prev.includes(docId)
+        ? prev.filter((id) => id !== docId)
+        : [...prev, docId],
     );
   };
 
@@ -245,23 +255,30 @@ export default function App() {
     setError(null);
     setInput("");
     setLoading(true);
-    setChatStage(t("chat.thinking"));
 
     let assistantId: string | null = null;
     try {
-      const userMessage: ChatMessage = { id: newId(), role: "user", content: text };
+      const userMessage: ChatMessage = {
+        id: newId(),
+        role: "user",
+        content: text,
+      };
       scrollUserMessageIdRef.current = userMessage.id;
       assistantId = newId();
       setMessages((prev) => [
         ...prev,
         userMessage,
-        { id: assistantId!, role: "assistant", content: "", streaming: true, agentSteps: [], agentRunning: true },
+        {
+          id: assistantId!,
+          role: "assistant",
+          content: "",
+          streaming: true,
+          agentSteps: [],
+          agentRunning: true,
+        },
       ]);
 
       await streamChat(text, sessionId, selectedDocIds, {
-        onStatus: (stage) => {
-          if (stage === "agent") setChatStage(t("chat.agentRunning"));
-        },
         onAgentStep: (step) => {
           setMessages((prev) =>
             prev.map((msg) =>
@@ -273,11 +290,19 @@ export default function App() {
         },
         onCitations: (citations) => {
           setMessages((prev) =>
-            prev.map((msg) => (msg.id === assistantId ? { ...msg, citations } : msg)),
+            prev.map((msg) =>
+              msg.id === assistantId ? { ...msg, citations } : msg,
+            ),
+          );
+        },
+        onEmbeds: (embeds) => {
+          setMessages((prev) =>
+            prev.map((msg) =>
+              msg.id === assistantId ? { ...msg, embeds } : msg,
+            ),
           );
         },
         onDelta: (delta) => {
-          setChatStage(t("chat.generating"));
           setMessages((prev) =>
             prev.map((msg) =>
               msg.id === assistantId
@@ -286,9 +311,8 @@ export default function App() {
             ),
           );
         },
-        onDone: ({ sessionId: sid, content, citations }) => {
+        onDone: ({ sessionId: sid, content, citations, embeds }) => {
           setSessionId(sid);
-          setChatStage(null);
           setLoading(false);
           setMessages((prev) =>
             prev.map((msg) =>
@@ -299,6 +323,7 @@ export default function App() {
                     agentRunning: false,
                     content: content ?? msg.content,
                     citations,
+                    embeds,
                   }
                 : msg,
             ),
@@ -306,11 +331,12 @@ export default function App() {
         },
         onError: (message) => {
           setError(message);
-          setChatStage(null);
           setLoading(false);
           setMessages((prev) =>
             prev.map((msg) =>
-              msg.id === assistantId ? { ...msg, streaming: false, agentRunning: false } : msg,
+              msg.id === assistantId
+                ? { ...msg, streaming: false, agentRunning: false }
+                : msg,
             ),
           );
         },
@@ -321,7 +347,6 @@ export default function App() {
         setMessages((prev) => prev.filter((msg) => msg.id !== assistantId));
       }
     } finally {
-      setChatStage(null);
       setLoading(false);
     }
   };
@@ -331,7 +356,6 @@ export default function App() {
     voiceDoneRef.current = true;
     if (message) setError(message);
     setLoading(false);
-    setVoiceStage(null);
   }, []);
 
   const sendVoice = async (blob: Blob) => {
@@ -341,7 +365,6 @@ export default function App() {
     }
 
     setLoading(true);
-    setVoiceStage(t("voice.connecting"));
     setError(null);
     audioQueueRef.current = [];
     voiceDoneRef.current = false;
@@ -374,7 +397,6 @@ export default function App() {
       }, 300_000);
 
       ws.onopen = () => {
-        setVoiceStage(t("voice.transcribing"));
         ws?.send(
           JSON.stringify({
             type: "audio",
@@ -395,20 +417,13 @@ export default function App() {
           return;
         }
 
-        if (payload.type === "status") {
-          const stage = payload.stage as string;
-          if (stage === "transcribing") setVoiceStage(t("voice.transcribing"));
-          if (stage === "agent") setVoiceStage(t("chat.agentRunning"));
-          if (stage === "answering") setVoiceStage(t("voice.generating"));
-          if (stage === "speaking") setVoiceStage(t("voice.synthesizing"));
-          return;
-        }
         if (payload.type === "agent_step") {
           const step: AgentStepEvent = {
             step: payload.step as number,
             thought: (payload.thought as string) ?? "",
             action: (payload.action as string) ?? "",
-            action_input: (payload.action_input as Record<string, unknown>) ?? {},
+            action_input:
+              (payload.action_input as Record<string, unknown>) ?? {},
             observation: (payload.observation as string) ?? "",
             evidence_count: payload.evidence_count as number | undefined,
           };
@@ -422,12 +437,15 @@ export default function App() {
           return;
         }
         if (payload.type === "transcript") {
-          setVoiceStage(t("chat.agentRunning"));
           const userMessageId = newId();
           scrollUserMessageIdRef.current = userMessageId;
           setMessages((prev) => [
             ...prev,
-            { id: userMessageId, role: "user", content: payload.text as string },
+            {
+              id: userMessageId,
+              role: "user",
+              content: payload.text as string,
+            },
             {
               id: assistantId,
               role: "assistant",
@@ -443,7 +461,23 @@ export default function App() {
           setMessages((prev) =>
             prev.map((msg) =>
               msg.id === assistantId
-                ? { ...msg, citations: (payload.citations as ChatMessage["citations"]) ?? [] }
+                ? {
+                    ...msg,
+                    citations:
+                      (payload.citations as ChatMessage["citations"]) ?? [],
+                  }
+                : msg,
+            ),
+          );
+        }
+        if (payload.type === "embeds") {
+          setMessages((prev) =>
+            prev.map((msg) =>
+              msg.id === assistantId
+                ? {
+                    ...msg,
+                    embeds: (payload.embeds as ChatMessage["embeds"]) ?? [],
+                  }
                 : msg,
             ),
           );
@@ -462,7 +496,6 @@ export default function App() {
           );
         }
         if (payload.type === "audio") {
-          setVoiceStage(t("voice.playing"));
           enqueueAudio(payload.data as string);
         }
         if (payload.type === "done") {
@@ -474,8 +507,11 @@ export default function App() {
                     ...msg,
                     streaming: false,
                     agentRunning: false,
-                    content: (payload.content as string | undefined) ?? msg.content,
-                    citations: (payload.citations as ChatMessage["citations"]) ?? [],
+                    content:
+                      (payload.content as string | undefined) ?? msg.content,
+                    citations:
+                      (payload.citations as ChatMessage["citations"]) ?? [],
+                    embeds: (payload.embeds as ChatMessage["embeds"]) ?? [],
                   }
                 : msg,
             ),
@@ -558,7 +594,6 @@ export default function App() {
     if (window.innerWidth <= 900) setSidebarOpen(false);
   };
 
-  const activeStage = voiceStage ?? chatStage;
   const hasMessages = messages.length > 0;
 
   const handleLocaleChange = (next: Locale) => {
@@ -566,7 +601,9 @@ export default function App() {
   };
 
   return (
-    <div className={`app ${viewerTarget ? "with-viewer" : ""} ${viewerOpen ? "viewer-open" : ""}`}>
+    <div
+      className={`app ${viewerTarget ? "with-viewer" : ""} ${viewerOpen ? "viewer-open" : ""}`}
+    >
       <div
         className={`sidebar-overlay ${sidebarOpen ? "visible" : ""}`}
         onClick={() => setSidebarOpen(false)}
@@ -576,7 +613,11 @@ export default function App() {
       <aside className={`sidebar ${sidebarOpen ? "open" : "collapsed"}`}>
         <div className="sidebar-inner">
           <div className="sidebar-top">
-            <button className="icon-btn" onClick={toggleSidebar} aria-label={t("sidebar.collapse")}>
+            <button
+              className="icon-btn"
+              onClick={toggleSidebar}
+              aria-label={t("sidebar.collapse")}
+            >
               <MenuIcon />
             </button>
           </div>
@@ -595,7 +636,9 @@ export default function App() {
               onChange={(e) => handleUpload(e.target.files?.[0] ?? null)}
             />
             <PlusIcon />
-            <span>{uploading ? t("sidebar.uploading") : t("sidebar.uploadDoc")}</span>
+            <span>
+              {uploading ? t("sidebar.uploading") : t("sidebar.uploadDoc")}
+            </span>
           </label>
           <p className="upload-hint">{t("sidebar.uploadHint")}</p>
 
@@ -619,20 +662,27 @@ export default function App() {
                   <div className="doc-info">
                     <strong>{doc.name}</strong>
                     <div className="doc-meta">
-                      <span className={`status ${doc.status}`}>{statusLabel[doc.status]}</span>
+                      <span className={`status ${doc.status}`}>
+                        {statusLabel[doc.status]}
+                      </span>
                       {doc.page_count ? (
-                        <span className="muted">{t("doc.pages", { count: doc.page_count })}</span>
+                        <span className="muted">
+                          {t("doc.pages", { count: doc.page_count })}
+                        </span>
                       ) : null}
                       {doc.ocr_pages ? (
                         <span className="muted">OCR {doc.ocr_pages}</span>
                       ) : null}
                     </div>
-                    {(doc.status === "pending" || doc.status === "processing") && (
+                    {(doc.status === "pending" ||
+                      doc.status === "processing") && (
                       <div className="index-progress">
                         <div className="index-progress-bar">
                           <div
                             className="index-progress-fill"
-                            style={{ width: `${doc.status === "pending" ? 0 : doc.progress}%` }}
+                            style={{
+                              width: `${doc.status === "pending" ? 0 : doc.progress}%`,
+                            }}
                           />
                         </div>
                         <span className="index-progress-label">
@@ -640,7 +690,9 @@ export default function App() {
                             (doc.status === "pending"
                               ? t("doc.status.pending")
                               : t("doc.indexing"))}
-                          {doc.status === "processing" ? ` ${doc.progress}%` : ""}
+                          {doc.status === "processing"
+                            ? ` ${doc.progress}%`
+                            : ""}
                         </span>
                       </div>
                     )}
@@ -692,14 +744,21 @@ export default function App() {
           <span className="top-bar-title">{t("app.brand")}</span>
           {selectedDocIds.length > 0 ? (
             <span className="top-bar-sub">
-              <DocIcon /> {t("topBar.docsSelected", { count: selectedDocIds.length })}
+              <DocIcon />{" "}
+              {t("topBar.docsSelected", { count: selectedDocIds.length })}
             </span>
           ) : (
             <span className="top-bar-sub top-bar-hint">
-              {readyDocs.length === 0 ? t("topBar.uploadFirst") : t("topBar.selectDocs")}
+              {readyDocs.length === 0
+                ? t("topBar.uploadFirst")
+                : t("topBar.selectDocs")}
             </span>
           )}
-          <div className="lang-switch" role="group" aria-label={t("language.label")}>
+          <div
+            className="lang-switch"
+            role="group"
+            aria-label={t("language.label")}
+          >
             {(["zh", "en"] as const).map((code) => (
               <button
                 key={code}
@@ -769,6 +828,8 @@ export default function App() {
                         <MessageContent
                           content={msg.content}
                           citations={msg.citations ?? []}
+                          embeds={msg.embeds ?? []}
+                          streaming={msg.streaming}
                           onOpenDocument={openDocument}
                         />
                       ) : (
@@ -779,23 +840,20 @@ export default function App() {
                   </div>
                 </article>
               ))}
-              <div ref={spacerRef} className="message-scroll-spacer" aria-hidden="true" />
+              <div
+                ref={spacerRef}
+                className="message-scroll-spacer"
+                aria-hidden="true"
+              />
             </section>
           )}
         </div>
 
-        {(error || activeStage) && (
+        {error ? (
           <div className="status-bar">
-            {error ? (
-              <div className="banner error">{error}</div>
-            ) : activeStage ? (
-              <div className="status-pill">
-                <span className="dot" />
-                {activeStage}
-              </div>
-            ) : null}
+            <div className="banner error">{error}</div>
           </div>
-        )}
+        ) : null}
 
         <footer className="composer-wrap">
           <div className="input-pill">
@@ -818,7 +876,9 @@ export default function App() {
                 onClick={recording ? stopRecording : startRecording}
                 disabled={loading && !recording}
                 title={t("voice.ask")}
-                aria-label={recording ? t("voice.stopRecording") : t("voice.ask")}
+                aria-label={
+                  recording ? t("voice.stopRecording") : t("voice.ask")
+                }
               >
                 <MicIcon />
               </button>

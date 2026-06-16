@@ -28,7 +28,7 @@ class RerankerService:
         if not items:
             return []
 
-        pairs = [[question, item["text"]] for item in items]
+        pairs = [[question, item.get("index_text") or item["text"]] for item in items]
         model = _get_model(self.settings)
         scores = model.compute_score(
             pairs,

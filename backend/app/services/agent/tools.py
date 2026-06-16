@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models import Document
 from app.services.chunk_filter import ChunkFilter
 from app.services.ingestion import toc_entries_from_dicts
-from app.services.rag import RAGService
+from app.services.rag import RAGService, parse_chunk_uuids
 from app.services.toc_lookup import lookup_toc
 
 RETRIEVAL_TOOLS = frozenset(
@@ -61,8 +61,18 @@ def _format_chunks(chunks: list[dict], *, source_tool: str) -> str:
             header += f" p.{item['page']}"
         if item.get("section"):
             header += f" §{item.get('section')}"
-        if item.get("content_role"):
-            header += f" role={item['content_role']}"
+        chunk_type = item.get("chunk_type")
+        if chunk_type and chunk_type != "text":
+            header += f" type={chunk_type}"
+        if item.get("assets"):
+            header += " visual=1"
+        if item.get("caption") or any(
+            asset.get("caption") for asset in item.get("assets") or []
+        ):
+            header += " caption=1"
+        chunk_id = item.get("chunk_id")
+        if chunk_id:
+            header += f" id={chunk_id}"
         snippet = (item.get("snippet") or item.get("text") or "")[:240]
         lines.append(f"{header}\n{snippet}")
     return "\n\n".join(lines)
@@ -83,8 +93,12 @@ def _format_batch_observation(results: list[tuple[str, list[dict]]]) -> str:
             header = f"  [{hit}] {item.get('document_name', '')}"
             if item.get("page"):
                 header += f" p.{item['page']}"
-            if item.get("content_role"):
-                header += f" role={item['content_role']}"
+            chunk_type = item.get("chunk_type")
+            if chunk_type and chunk_type != "text":
+                header += f" type={chunk_type}"
+            chunk_id = item.get("chunk_id")
+            if chunk_id:
+                header += f" id={chunk_id}"
             snippet = (item.get("snippet") or item.get("text") or "")[:160]
             lines.append(f"{header}\n    {snippet}")
     return "\n".join(lines)
@@ -254,8 +268,17 @@ class AgentToolRegistry:
             if not isinstance(raw_ids, list) or not raw_ids:
                 return "read_chunks 需要非空 chunk_ids 列表。", [], 1
             chunk_ids = [str(item) for item in raw_ids][:10]
-            chunks = await self.rag.read_chunks(db, chunk_ids)
-            return _format_chunks(chunks, source_tool="read_chunks"), chunks, 1
+            valid_ids, invalid_ids = parse_chunk_uuids(chunk_ids)
+            if not valid_ids:
+                hint = "read_chunks 需要有效的 chunk_id（UUID），请使用上一步检索结果中的 id= 字段，不要用 [1][2] 序号。"
+                if invalid_ids:
+                    hint += f" 无效值：{', '.join(invalid_ids[:5])}"
+                return hint, [], 1
+            chunks = await self.rag.read_chunks(db, [str(chunk_id) for chunk_id in valid_ids])
+            observation = _format_chunks(chunks, source_tool="read_chunks")
+            if invalid_ids:
+                observation += f"\n（已忽略无效 chunk_id：{', '.join(invalid_ids[:5])}）"
+            return observation, chunks, 1
 
         return f"未知工具：{action}", [], 0
 

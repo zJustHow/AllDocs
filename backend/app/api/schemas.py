@@ -49,5 +49,16 @@ class ChatResponse(BaseModel):
     session_id: UUID
     answer: str
     citations: list[Citation]
+    embeds: list[dict] = Field(default_factory=list)
     language: str
+
+
+class MessageEmbed(BaseModel):
+    ref: int
+    document_id: str
+    document_name: str | None = None
+    page: int
+    type: str = "page"
+    url: str
+    caption: str | None = None
 

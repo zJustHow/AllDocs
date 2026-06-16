@@ -8,7 +8,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings, get_settings
-from app.db.models import Chunk, Document
+from app.db.models import Chunk, ChunkAsset, Document
+from app.services.asset_urls import asset_url
+from app.services.chunk_index import (
+    chunk_display_snippet,
+    chunk_rerank_text,
+    format_context_body,
+)
 from app.services.chunk_filter import ChunkFilter, filter_chunks
 from app.services.embedding import EmbeddingService
 from app.services.fulltext_store import FulltextStore
@@ -18,6 +24,18 @@ from app.services.vector_store import VectorStore
 
 DetectorFactory.seed = 0
 logger = logging.getLogger(__name__)
+
+
+def parse_chunk_uuids(chunk_ids: list[str]) -> tuple[list[UUID], list[str]]:
+    """Return valid UUIDs and any IDs that failed to parse."""
+    valid: list[UUID] = []
+    invalid: list[str] = []
+    for chunk_id in chunk_ids:
+        try:
+            valid.append(UUID(chunk_id))
+        except ValueError:
+            invalid.append(chunk_id)
+    return valid, invalid
 
 
 def model_path_ready(model_ref: str) -> bool:
@@ -62,7 +80,7 @@ def _semantic_primary_scores(evidence: list[dict]) -> list[float]:
     for chunk in evidence:
         if not chunk.get("from_semantic_search"):
             continue
-        if chunk.get("is_neighbor") or chunk.get("is_prerequisite"):
+        if chunk.get("is_neighbor"):
             continue
         score = chunk.get("score")
         if score is not None:
@@ -117,7 +135,11 @@ class RAGService:
         if not ranked_chunk_ids:
             return []
 
-        chunk_uuids = [UUID(chunk_id) for chunk_id in ranked_chunk_ids]
+        chunk_uuids, invalid_ids = parse_chunk_uuids(ranked_chunk_ids)
+        if invalid_ids:
+            logger.warning("Skipping non-UUID chunk ids: %s", invalid_ids[:5])
+        if not chunk_uuids:
+            return []
         result = await db.execute(
             select(Chunk, Document)
             .join(Document, Chunk.document_id == Document.id)
@@ -125,11 +147,30 @@ class RAGService:
         )
         rows = {str(chunk.id): (chunk, document) for chunk, document in result.all()}
 
+        asset_result = await db.execute(
+            select(ChunkAsset).where(ChunkAsset.chunk_id.in_(chunk_uuids))
+        )
+        assets_by_chunk: dict[str, list[ChunkAsset]] = {}
+        for asset in asset_result.scalars():
+            assets_by_chunk.setdefault(str(asset.chunk_id), []).append(asset)
+
         chunks: list[dict] = []
         for chunk_id in ranked_chunk_ids:
             if chunk_id not in rows:
                 continue
             chunk, document = rows[chunk_id]
+            chunk_assets = assets_by_chunk.get(chunk_id, [])
+            asset_captions = [asset.caption for asset in chunk_assets if asset.caption]
+            body_text = format_context_body(
+                chunk.text,
+                caption=chunk.caption,
+                asset_captions=asset_captions,
+            )
+            index_text = chunk_rerank_text(
+                chunk.text,
+                caption=chunk.caption,
+                asset_captions=asset_captions,
+            )
             chunks.append(
                 {
                     "chunk_id": chunk_id,
@@ -140,10 +181,27 @@ class RAGService:
                     "chunk_type": chunk.chunk_type,
                     "content_role": chunk.content_role,
                     "chunk_index": chunk.chunk_index,
+                    "caption": chunk.caption,
                     "score": score_map.get(chunk_id, 0.0),
-                    "snippet": chunk.text[:300],
-                    "text": chunk.text,
+                    "snippet": chunk_display_snippet(
+                        chunk.text,
+                        caption=chunk.caption,
+                        asset_captions=asset_captions,
+                    ),
+                    "text": body_text,
+                    "index_text": index_text,
                     "is_neighbor": False,
+                    "assets": [
+                        {
+                            "asset_id": str(asset.id),
+                            "type": asset.asset_type,
+                            "page": asset.page,
+                            "url": asset_url(asset.id),
+                            "object_key": asset.object_key,
+                            "caption": asset.caption,
+                        }
+                        for asset in chunk_assets
+                    ],
                 }
             )
         return chunks
@@ -349,13 +407,16 @@ class RAGService:
         parts: list[str] = []
         for index, item in enumerate(chunks, start=1):
             header = f"[{index}] {item['document_name']}"
-            if item.get("content_role"):
-                header += f" role={item['content_role']}"
+            chunk_type = item.get("chunk_type")
+            if chunk_type and chunk_type != "text":
+                header += f" type={chunk_type}"
             if item.get("page"):
                 header += f" p.{item['page']}"
             if item.get("section"):
                 header += f" §{item['section']}"
             if item.get("is_neighbor"):
                 header += " (上下文)"
+            if item.get("assets"):
+                header += " (visual)"
             parts.append(f"{header}\n{item['text']}")
         return "\n\n---\n\n".join(parts)

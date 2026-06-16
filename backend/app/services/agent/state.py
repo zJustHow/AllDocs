@@ -20,6 +20,7 @@ class AgentResult:
     language: str
     steps: list[AgentStep]
     evidence: list[dict]
+    embeds: list[dict] = field(default_factory=list)
     fallback_message: str | None = None
 
 

@@ -27,8 +27,13 @@
   --viewer-text: #ececf1;
   --glass-blur: 20px;
   --glass-saturate: 120%;
-  --glass-border: rgba(236, 236, 241, 0.95);
-  --panel-shadow: 0 0 0 1px rgba(0, 0, 0, 0.05), 0 4px 16px rgba(0, 0, 0, 0.06);
+  --stroke: #ececf1;
+  --stroke-focus: #d9d9e3;
+  --glass-border: var(--stroke);
+  --panel-elevation: 0 2px 8px rgba(0, 0, 0, 0.05);
+  --panel-ring: 0 0 0 1px var(--stroke);
+  --panel-shadow: var(--panel-ring);
+  --panel-shadow-elevated: var(--panel-ring), var(--panel-elevation);
   --radius-sm: 8px;
   --radius-md: 12px;
   --radius-lg: 20px;
@@ -44,8 +49,14 @@
   --viewer-ease: cubic-bezier(0.32, 0.72, 0, 1);
   --panel-duration: 0.32s;
   --panel-ease: cubic-bezier(0.32, 0.72, 0, 1);
-  font-family: ui-sans-serif, -apple-system, "Segoe UI", "Roboto", "PingFang SC",
-    "Helvetica Neue", sans-serif;
+  font-family:
+    ui-sans-serif,
+    -apple-system,
+    "Segoe UI",
+    "Roboto",
+    "PingFang SC",
+    "Helvetica Neue",
+    sans-serif;
 }
 
 * {
@@ -98,16 +109,18 @@ button {
 .glass {
   background: var(--surface);
   backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
-  border: 1px solid var(--glass-border);
+  -webkit-backdrop-filter: blur(var(--glass-blur))
+    saturate(var(--glass-saturate));
+  border: none;
   box-shadow: var(--panel-shadow);
 }
 
 .glass-strong {
   background: var(--surface-elevated);
   backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
-  border: 1px solid var(--glass-border);
+  -webkit-backdrop-filter: blur(var(--glass-blur))
+    saturate(var(--glass-saturate));
+  border: none;
   box-shadow: var(--panel-shadow);
 }
 
@@ -121,19 +134,19 @@ button {
   min-height: 0;
   background: var(--sidebar-bg);
   backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
-  border: 1px solid var(--line);
+  -webkit-backdrop-filter: blur(var(--glass-blur))
+    saturate(var(--glass-saturate));
+  border: none;
   border-radius: var(--radius-lg);
-  box-shadow: var(--panel-shadow);
+  box-shadow: var(--panel-shadow-elevated);
   display: flex;
   flex-direction: column;
   min-height: 0;
-  overflow: hidden;
+  overflow: visible;
   transition:
     width var(--panel-duration) var(--panel-ease),
     margin var(--panel-duration) var(--panel-ease),
     opacity var(--panel-duration) var(--panel-ease),
-    border-color var(--panel-duration) var(--panel-ease),
     box-shadow var(--panel-duration) var(--panel-ease);
   z-index: 20;
 }
@@ -142,7 +155,6 @@ button {
   width: 0;
   opacity: 0;
   margin-right: calc(var(--app-padding) * -1);
-  border-color: transparent;
   box-shadow: none;
   overflow: hidden;
   pointer-events: none;
@@ -156,6 +168,8 @@ button {
   padding: 0 12px 16px;
   gap: 8px;
   min-height: 0;
+  overflow: hidden;
+  border-radius: inherit;
   transform: translateX(0);
   transition: transform var(--panel-duration) var(--panel-ease);
 }
@@ -233,12 +247,14 @@ button {
   -webkit-backdrop-filter: blur(12px) saturate(var(--glass-saturate));
   color: var(--text-secondary);
   font-size: 0.875rem;
-  transition: background 0.15s, border-color 0.15s;
+  transition:
+    background 0.15s,
+    border-color 0.15s;
 }
 
 .upload-btn:hover {
   background: var(--surface-hover);
-  border-color: #d9d9e3;
+  border-color: var(--stroke-focus);
 }
 
 .upload-btn:disabled {
@@ -333,7 +349,7 @@ button {
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
   color: var(--success);
-  border: 1px solid var(--glass-border);
+  box-shadow: var(--panel-ring);
 }
 
 .status.processing,
@@ -397,7 +413,9 @@ button {
   color: var(--muted);
   flex-shrink: 0;
   opacity: 0;
-  transition: opacity 0.15s, background 0.15s;
+  transition:
+    opacity 0.15s,
+    background 0.15s;
 }
 
 .doc-actions {
@@ -419,7 +437,9 @@ button {
   color: var(--muted);
   flex-shrink: 0;
   opacity: 0;
-  transition: opacity 0.15s, background 0.15s;
+  transition:
+    opacity 0.15s,
+    background 0.15s;
 }
 
 .doc-item:hover .doc-delete,
@@ -456,7 +476,7 @@ button {
   height: 100%;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  overflow: visible;
   position: relative;
   transition:
     flex var(--viewer-duration) var(--viewer-ease),
@@ -470,10 +490,12 @@ button {
   gap: 8px;
   width: min(
     calc(var(--content-max) + 48px),
-    calc(100vw - 2 * var(--app-padding) - var(--app-padding) - var(--sidebar-width))
+    calc(
+      100vw - 2 * var(--app-padding) - var(--app-padding) - var(--sidebar-width)
+    )
   );
   max-width: 100%;
-  margin: 0 auto;
+  margin: 2px auto 0;
   padding: 0 16px;
   min-height: var(--layout-header);
   height: var(--layout-header);
@@ -481,8 +503,9 @@ button {
   border-radius: var(--radius-md);
   background: var(--sidebar-bg);
   backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
-  border: 1px solid var(--line);
+  -webkit-backdrop-filter: blur(var(--glass-blur))
+    saturate(var(--glass-saturate));
+  border: none;
   box-shadow: var(--panel-shadow);
 }
 
@@ -531,7 +554,9 @@ button {
   font-size: 0.75rem;
   font-weight: 500;
   cursor: pointer;
-  transition: background 0.15s, color 0.15s;
+  transition:
+    background 0.15s,
+    color 0.15s;
 }
 
 .lang-switch-btn:hover {
@@ -541,7 +566,6 @@ button {
 .lang-switch-btn.active {
   background: var(--surface-elevated);
   color: var(--text);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
 }
 
 .chat-area {
@@ -591,11 +615,12 @@ button {
   gap: 10px;
   justify-content: center;
   max-width: 640px;
+  padding: 4px;
 }
 
 .suggestion-chip {
   padding: 10px 18px;
-  border: 1px solid var(--glass-border);
+  border: none;
   border-radius: var(--radius-full);
   background: var(--surface-muted);
   backdrop-filter: blur(12px) saturate(var(--glass-saturate));
@@ -603,7 +628,7 @@ button {
   color: var(--text-secondary);
   font-size: 0.875rem;
   box-shadow: var(--panel-shadow);
-  transition: background 0.15s, box-shadow 0.15s;
+  transition: background 0.15s;
 }
 
 .suggestion-chip:hover {
@@ -694,7 +719,7 @@ button {
   background: var(--surface-muted);
   backdrop-filter: blur(12px) saturate(var(--glass-saturate));
   -webkit-backdrop-filter: blur(12px) saturate(var(--glass-saturate));
-  border: 1px solid var(--glass-border);
+  border: none;
   box-shadow: var(--panel-shadow);
   padding: 12px 18px;
   border-radius: var(--radius-lg);
@@ -870,7 +895,9 @@ button {
   width: 100%;
   text-align: left;
   cursor: pointer;
-  transition: background 0.15s, border-color 0.15s;
+  transition:
+    background 0.15s,
+    border-color 0.15s;
 }
 
 .citation:hover {
@@ -932,11 +959,47 @@ button {
   opacity: 0.7;
 }
 
+.answer-embed {
+  display: block;
+  margin: 12px 0;
+  max-width: 100%;
+}
+
+.answer-embed-image {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.answer-embed figcaption {
+  margin-top: 6px;
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+}
+
+.answer-embed-link {
+  display: inline-block;
+  margin-top: 6px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--accent);
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.answer-embed-link:hover {
+  text-decoration: underline;
+}
+
 /* ── Composer (pill input) ── */
 
 .composer-wrap {
   flex-shrink: 0;
-  padding: 0 24px 20px;
+  padding: 4px 24px 24px;
   max-width: calc(var(--content-max) + 48px);
   margin: 0 auto;
   width: 100%;
@@ -948,17 +1011,17 @@ button {
   gap: 4px;
   background: var(--surface-elevated);
   backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  -webkit-backdrop-filter: blur(var(--glass-blur))
+    saturate(var(--glass-saturate));
   border-radius: var(--radius-xl);
   padding: 6px 6px 6px 20px;
+  border: none;
   box-shadow: var(--panel-shadow);
-  border: 1px solid var(--glass-border);
-  transition: border-color 0.15s, box-shadow 0.15s;
+  transition: box-shadow 0.15s;
 }
 
 .input-pill:focus-within {
-  border-color: #d9d9e3;
-  box-shadow: var(--panel-shadow);
+  box-shadow: 0 0 0 1px var(--stroke-focus);
 }
 
 .input-pill textarea {
@@ -996,7 +1059,9 @@ button {
   border-radius: var(--radius-full);
   background: transparent;
   color: var(--muted);
-  transition: background 0.15s, color 0.15s;
+  transition:
+    background 0.15s,
+    color 0.15s;
 }
 
 .action-btn:hover:not(:disabled) {
@@ -1054,7 +1119,7 @@ button {
   background: var(--surface-muted);
   backdrop-filter: blur(12px) saturate(var(--glass-saturate));
   -webkit-backdrop-filter: blur(12px) saturate(var(--glass-saturate));
-  border: 1px solid var(--glass-border);
+  border: none;
   font-size: 0.8rem;
   color: var(--muted);
   box-shadow: var(--panel-shadow);
@@ -1109,6 +1174,7 @@ button {
   flex: 1;
   max-width: none;
   visibility: visible;
+  overflow: visible;
   transition:
     flex var(--viewer-duration) var(--viewer-ease),
     max-width var(--viewer-duration) var(--viewer-ease),
@@ -1121,17 +1187,26 @@ button {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  overflow: visible;
   background: rgba(255, 255, 255, 0.96);
-  border: 1px solid var(--line);
+  border: none;
   border-radius: var(--radius-lg);
-  box-shadow: var(--panel-shadow);
+  box-shadow: var(--panel-shadow-elevated);
   padding: 0 12px 12px;
   box-sizing: border-box;
   transform: translate3d(100%, 0, 0);
   will-change: transform;
   backface-visibility: hidden;
   transition: transform var(--viewer-duration) var(--viewer-ease);
+}
+
+.doc-viewer-shell {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: var(--radius-md);
 }
 
 .doc-viewer-slot.is-open .doc-viewer {
@@ -1177,7 +1252,7 @@ button {
   justify-content: center;
   width: 40px;
   height: 40px;
-  border: 1px solid var(--glass-border);
+  border: none;
   border-radius: var(--radius-full);
   background: var(--surface-muted);
   backdrop-filter: blur(12px) saturate(var(--glass-saturate));
@@ -1190,13 +1265,6 @@ button {
 
 .doc-viewer-close:hover {
   background: var(--surface-hover);
-}
-
-.doc-viewer-shell {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
 }
 
 .doc-viewer-stage {
@@ -1284,8 +1352,8 @@ button {
   color: var(--viewer-text);
   backdrop-filter: blur(16px) saturate(180%);
   -webkit-backdrop-filter: blur(16px) saturate(180%);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  box-shadow: var(--panel-shadow);
+  border: none;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.12), var(--panel-elevation);
   z-index: 2;
 }
 
@@ -1350,7 +1418,7 @@ button {
   background: var(--surface-muted);
   backdrop-filter: blur(12px) saturate(var(--glass-saturate));
   -webkit-backdrop-filter: blur(12px) saturate(var(--glass-saturate));
-  border: 1px solid var(--glass-border);
+  border: none;
   box-shadow: var(--panel-shadow);
 }
 
@@ -1384,7 +1452,7 @@ button {
     transition:
       transform var(--panel-duration) var(--panel-ease),
       opacity var(--panel-duration) var(--panel-ease);
-    box-shadow: var(--panel-shadow);
+    box-shadow: var(--panel-shadow-elevated);
   }
 
   .sidebar.open {

@@ -36,7 +36,7 @@ class HighlightTypeRegion:
     text: str
     sort_key: float
     section: str | None = None
-    content_role: str | None = None
+    bbox: tuple[float, float, float, float] | None = None
 
 
 def normalize_chunk_type(raw: str | None) -> str | None:
@@ -70,13 +70,12 @@ def _type_from_annotation_info(info: dict[str, Any]) -> str | None:
 def extract_pdf_highlight_regions(
     doc: fitz.Document,
     *,
-    section_for_page: Callable[[int], str | None],
+    section_resolver: Callable[[int, float | None], str | None],
 ) -> list[HighlightTypeRegion]:
     regions: list[HighlightTypeRegion] = []
     for page_index in range(doc.page_count):
         page = doc[page_index]
         page_number = page_index + 1
-        section = section_for_page(page_number)
         annot = page.first_annot
         while annot:
             try:
@@ -96,13 +95,15 @@ def extract_pdf_highlight_regions(
             if not text:
                 annot = annot.next
                 continue
+            mid_y = (float(rect.y0) + float(rect.y1)) / 2
             regions.append(
                 HighlightTypeRegion(
                     chunk_type=chunk_type,
                     page=page_number,
                     text=re.sub(r"\n{3,}", "\n\n", text),
                     sort_key=float(rect.y0),
-                    section=section,
+                    section=section_resolver(page_number, mid_y),
+                    bbox=(float(rect.x0), float(rect.y0), float(rect.x1), float(rect.y1)),
                 )
             )
             annot = annot.next

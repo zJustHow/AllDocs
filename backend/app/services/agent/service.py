@@ -15,8 +15,10 @@ from app.services.agent.tools import (
     merge_chunks_into_evidence,
 )
 from app.services.chunk_filter import ChunkFilter
-from app.services.citations_util import finalize_answer_citations
+from app.services.citations_util import finalize_answer
 from app.services.llm import LLMService
+from app.services.vision_util import VisionImage, prepare_vision_images
+
 from app.services.rag import RAGService, detect_language, resolve_retrieval_fallback
 
 logger = logging.getLogger(__name__)
@@ -41,9 +43,19 @@ class AgentRAGService:
         question: str,
         evidence: list[dict],
         chat_history: list[dict[str, str]] | None,
+        vision_images: list[VisionImage] | None = None,
     ) -> AsyncIterator[str]:
         context = self.rag.build_context(evidence)
-        async for delta in self.llm.chat_stream(question, context, chat_history):
+        use_vision = (
+            self.settings.llm_vision_enabled
+            and vision_images
+        )
+        stream = (
+            self.llm.chat_stream_vision(question, context, vision_images, chat_history)
+            if use_vision
+            else self.llm.chat_stream(question, context, chat_history)
+        )
+        async for delta in stream:
             yield delta
 
     async def run(
@@ -210,8 +222,14 @@ class AgentRAGService:
             )
 
         context = self.rag.build_context(state.evidence)
-        answer = await self.llm.chat(question, context, chat_history)
-        answer, public_citations = finalize_answer_citations(answer, state.evidence)
+        vision_images = await prepare_vision_images(db, state.evidence, self.settings)
+        if self.settings.llm_vision_enabled and vision_images:
+            answer = await self.llm.chat_vision(
+                question, context, vision_images, chat_history
+            )
+        else:
+            answer = await self.llm.chat(question, context, chat_history)
+        answer, public_citations, embeds = finalize_answer(answer, state.evidence)
 
         trace = [
             {
@@ -227,6 +245,7 @@ class AgentRAGService:
         return AgentResult(
             answer=answer,
             citations=public_citations,
+            embeds=embeds,
             language=lang,
             steps=state.steps,
             evidence=state.evidence,

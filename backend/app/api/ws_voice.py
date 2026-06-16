@@ -12,8 +12,9 @@ from app.config import get_settings
 from app.db.models import Message, Session
 from app.db.session import async_session_factory
 from app.services.agent import AgentRAGService
-from app.services.citations_util import finalize_answer_citations, public_citations
+from app.services.citations_util import finalize_answer, public_citations
 from app.services.rag import detect_language
+from app.services.vision_util import prepare_vision_images
 from app.services.speech import SpeechService
 
 router = APIRouter(tags=["voice-ws"])
@@ -162,12 +163,13 @@ async def voice_websocket(websocket: WebSocket) -> None:
                 refs = public_citations(result.evidence)
                 await _send_json(websocket, {"type": "citations", "citations": refs})
 
+                vision_images = await prepare_vision_images(db, result.evidence, settings)
                 answer_parts: list[str] = []
                 pending_tts = ""
                 await _send_json(websocket, {"type": "status", "stage": "answering"})
 
                 async for delta in agent.iter_synthesis(
-                    question, result.evidence, history
+                    question, result.evidence, history, vision_images
                 ):
                     answer_parts.append(delta)
                     pending_tts += delta
@@ -195,7 +197,9 @@ async def voice_websocket(websocket: WebSocket) -> None:
                             {"type": "audio", "data": base64.b64encode(audio_wav).decode("ascii")},
                         )
 
-                answer, refs = finalize_answer_citations("".join(answer_parts), result.evidence)
+                answer, refs, embeds = finalize_answer("".join(answer_parts), result.evidence)
+                if embeds:
+                    await _send_json(websocket, {"type": "embeds", "embeds": embeds})
                 db.add(Message(session_id=session.id, role="user", content=question))
                 db.add(
                     Message(
@@ -203,6 +207,7 @@ async def voice_websocket(websocket: WebSocket) -> None:
                         role="assistant",
                         content=answer,
                         citations=refs,
+                        embeds=embeds,
                     )
                 )
                 await db.commit()
@@ -213,6 +218,7 @@ async def voice_websocket(websocket: WebSocket) -> None:
                         "session_id": str(session.id),
                         "content": answer,
                         "citations": refs,
+                        "embeds": embeds,
                         "language": lang,
                     },
                 )

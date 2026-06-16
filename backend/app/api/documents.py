@@ -1,7 +1,7 @@
 import uuid
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,6 +15,8 @@ from app.services.document_reindex import (
     schedule_document_reindex,
 )
 from app.services.file_types import is_supported_filename, resolve_content_type, supported_formats_label
+from app.services.file_types import get_extension
+from app.services.page_render import render_page_png
 from app.services.storage import StorageService
 from app.workers.tasks import delete_document as delete_document_task, process_document
 
@@ -103,6 +105,36 @@ async def get_document_file(
         content=data,
         media_type=_document_media_type(document),
         headers={"Content-Disposition": _inline_content_disposition(document.name)},
+    )
+
+
+@router.get("/{document_id}/pages/{page}/render")
+async def render_document_page(
+    document_id: uuid.UUID,
+    page: int,
+    scale: float = Query(default=2.0, ge=0.5, le=4.0),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    if page < 1:
+        raise HTTPException(status_code=400, detail="Page must be >= 1")
+
+    document = await db.get(Document, document_id)
+    if not document or document.status == DocumentStatus.deleting:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    storage = StorageService()
+    file_bytes = storage.download(document.object_key)
+    try:
+        rendered = render_page_png(file_bytes, document.name, page, scale=scale)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    ext = get_extension(document.name)
+    media_type = "image/png" if ext == ".pdf" else _document_media_type(document)
+    return Response(
+        content=rendered,
+        media_type=media_type,
+        headers={"Cache-Control": "public, max-age=86400"},
     )
 
 

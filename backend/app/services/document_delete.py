@@ -20,7 +20,9 @@ def remove_document_from_sessions(db: OrmSession, document_id: UUID) -> None:
 
 
 def delete_external_stores(document_id: UUID, object_key: str) -> None:
-    StorageService().delete(object_key)
+    storage = StorageService()
+    storage.delete(object_key)
+    storage.delete_prefix(f"{document_id}/assets/")
     VectorStore().delete_by_document(document_id)
     settings = get_settings()
     if settings.hybrid_enabled:

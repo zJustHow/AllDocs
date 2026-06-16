@@ -3,6 +3,7 @@ from threading import Lock
 from FlagEmbedding.bge_m3 import BGEM3FlagModel
 
 from app.config import Settings, get_settings
+from app.services.chunk_index import chunk_embedding_text as _chunk_embedding_text
 
 _lock = Lock()
 _model: BGEM3FlagModel | None = None
@@ -21,10 +22,19 @@ def _get_model(settings: Settings) -> BGEM3FlagModel:
     return _model
 
 
-def chunk_embedding_text(text: str, section: str | None) -> str:
-    if section:
-        return f"{section}\n{text}"
-    return text
+def chunk_embedding_text(
+    text: str,
+    section: str | None,
+    *,
+    caption: str | None = None,
+    asset_captions: list[str] | None = None,
+) -> str:
+    return _chunk_embedding_text(
+        text,
+        section,
+        caption=caption,
+        asset_captions=asset_captions,
+    )
 
 
 class EmbeddingService:

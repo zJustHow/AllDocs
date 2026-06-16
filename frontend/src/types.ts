@@ -20,6 +20,17 @@ export interface Citation {
   score?: number | null;
 }
 
+export interface MessageEmbed {
+  ref: number;
+  asset_id?: string | null;
+  document_id: string;
+  document_name?: string | null;
+  page: number;
+  type: "table" | "figure" | "page" | string;
+  url: string;
+  caption?: string | null;
+}
+
 export interface AgentStepEvent {
   step: number;
   thought: string;
@@ -34,6 +45,7 @@ export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
   citations?: Citation[];
+  embeds?: MessageEmbed[];
   streaming?: boolean;
   agentSteps?: AgentStepEvent[];
   agentRunning?: boolean;

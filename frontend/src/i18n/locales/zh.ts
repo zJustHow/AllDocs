@@ -98,6 +98,7 @@ const zh = {
     zoomIn: "放大",
     unsupported: "此格式暂不支持在线预览",
     download: "下载原文件",
+    openSource: "查看原文",
   },
   citation: {
     pdf: "文档",

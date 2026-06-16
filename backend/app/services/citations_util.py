@@ -49,6 +49,14 @@ def finalize_answer_citations(answer: str, context_chunks: list[dict]) -> tuple[
     return answer, public_citations(cited_chunks)
 
 
+def finalize_answer(answer: str, context_chunks: list[dict]) -> tuple[str, list[dict], list[dict]]:
+    from app.services.embeds_util import public_embeds, resolve_answer_embeds
+
+    answer, embeds = resolve_answer_embeds(answer, context_chunks)
+    answer, citations = finalize_answer_citations(answer, context_chunks)
+    return answer, citations, public_embeds(embeds)
+
+
 def public_citations(chunks: list[dict]) -> list[dict]:
     return [
         {

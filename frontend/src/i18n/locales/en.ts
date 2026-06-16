@@ -98,6 +98,7 @@ const en = {
     zoomIn: "Zoom in",
     unsupported: "Preview is not available for this format",
     download: "Download original file",
+    openSource: "Open source",
   },
   citation: {
     pdf: "Doc",

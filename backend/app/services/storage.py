@@ -45,11 +45,13 @@ class StorageService:
             response.close()
             response.release_conn()
 
-    def try_download(self, object_key: str) -> bytes | None:
-        try:
-            return self.download(object_key)
-        except Exception:
-            return None
-
     def delete(self, object_key: str) -> None:
         self.client.remove_object(self.settings.minio_bucket, object_key)
+
+    def delete_prefix(self, prefix: str) -> None:
+        for obj in self.client.list_objects(
+            self.settings.minio_bucket,
+            prefix=prefix,
+            recursive=True,
+        ):
+            self.client.remove_object(self.settings.minio_bucket, obj.object_name)

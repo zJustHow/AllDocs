@@ -33,39 +33,8 @@ _CHAPTER_TITLE_RE = re.compile(
     r"第[一二三四五六七八九十百千零两\d]+章|chapter\s+\d+",
     re.IGNORECASE,
 )
-_PROCEDURE_RE = re.compile(r"^(\d+[\.\)、．]|步骤\s*\d+|[①②③④⑤])")
-_ALARM_CODE_RE = re.compile(
-    r"(?:报警|错误|故障|alarm|error|fault|code)[^\w]{0,6}([A-Z]?\d{2,4})|"
-    r"\b(?:E|ERR|ALM)[-_]?\d{2,4}\b",
-    re.IGNORECASE,
-)
-
-_SYMPTOM_SECTION_RE = re.compile(
-    r"故障现象|报警代码|错误代码|故障代码|异常现象|alarm\s*code|fault\s*code|error\s*code",
-    re.IGNORECASE,
-)
-_CAUSE_SECTION_RE = re.compile(
-    r"故障原因|可能原因|原因分析|产生原因|alarm\s*cause|fault\s*cause|root\s*cause",
-    re.IGNORECASE,
-)
-_TROUBLESHOOTING_SECTION_RE = re.compile(
-    r"故障排除|故障处理|排查|维修指导|处理办法|排除方法|troubleshooting|trouble\s*shooting",
-    re.IGNORECASE,
-)
-_PRINCIPLE_SECTION_RE = re.compile(
-    r"工作原理|技术说明|系统概述|结构说明|功能说明|operating\s*principle|how\s*it\s*works",
-    re.IGNORECASE,
-)
-_CAUSE_TEXT_RE = re.compile(r"可能原因|产生原因|是由于|导致.*故障|because\s+of", re.IGNORECASE)
-_TROUBLESHOOTING_TEXT_RE = re.compile(
-    r"检查步骤|排除步骤|处理步骤|排查方法|解决方法|若.*仍.*无法",
-    re.IGNORECASE,
-)
-_PRINCIPLE_TEXT_RE = re.compile(
-    r"工作原理|触发条件|检测逻辑|控制逻辑|when.*trigger",
-    re.IGNORECASE,
-)
 _MD_HEADING_RE = re.compile(r"^(#{1,6})\s+(.+)$")
+_ASSET_CHUNK_TYPES = frozenset({"table"})
 
 
 @dataclass
@@ -74,9 +43,9 @@ class ParsedChunk:
     page: int | None
     section: str | None
     chunk_index: int
-    chunk_type: str
-    content_role: str | None = None
-    type_source: str = "heuristic"
+    chunk_type: str = "text"
+    asset_bbox: tuple[float, float, float, float] | None = None
+    asset_png: bytes | None = None
 
 
 @dataclass(frozen=True)
@@ -86,6 +55,16 @@ class TocEntry:
     start_page: int
     end_page: int
     path: str
+
+
+@dataclass(frozen=True)
+class TocAnchor:
+    level: int
+    title: str
+    path: str
+    page: int
+    y: float
+    has_y: bool = False
 
 
 @dataclass
@@ -137,42 +116,6 @@ def is_toc_text(text: str) -> bool:
             matched += 1
 
     return matched >= 2 and matched / len(lines) >= 0.4
-
-
-def _detect_chunk_type(text: str) -> str:
-    lines = [line.strip() for line in text.splitlines() if line.strip()]
-    if not lines:
-        return "text"
-    procedure_lines = sum(1 for line in lines if _PROCEDURE_RE.match(line))
-    if procedure_lines >= 2 or (len(lines) <= 5 and procedure_lines >= 1):
-        return "procedure"
-    if any(keyword in text for keyword in ("注意", "警告", "危险", "WARNING", "CAUTION")):
-        return "warning"
-    if "|" in text and text.count("|") >= 2:
-        return "table"
-    return "text"
-
-
-def _detect_content_role(section: str | None, text: str) -> str | None:
-    section_text = section or ""
-    if _SYMPTOM_SECTION_RE.search(section_text):
-        return "symptom"
-    if _CAUSE_SECTION_RE.search(section_text):
-        return "cause"
-    if _TROUBLESHOOTING_SECTION_RE.search(section_text):
-        return "troubleshooting"
-    if _PRINCIPLE_SECTION_RE.search(section_text):
-        return "principle"
-
-    if _ALARM_CODE_RE.search(text):
-        return "symptom"
-    if _CAUSE_TEXT_RE.search(text):
-        return "cause"
-    if _TROUBLESHOOTING_TEXT_RE.search(text):
-        return "troubleshooting"
-    if _PRINCIPLE_TEXT_RE.search(text):
-        return "principle"
-    return None
 
 
 def _split_text_with_offsets(
@@ -264,6 +207,53 @@ def _extract_native_page_text(page: fitz.Page) -> str:
     return page.get_text().strip()
 
 
+def _extract_page_text_blocks(
+    page: fitz.Page,
+    exclude_rects: list[fitz.Rect] | None = None,
+) -> list[tuple[float, float, str]]:
+    blocks = page.get_text("blocks")
+    extracted: list[tuple[float, float, str]] = []
+    for block in blocks:
+        if len(block) < 5:
+            continue
+        bbox = fitz.Rect(block[:4])
+        if exclude_rects and any(bbox.intersects(rect) for rect in exclude_rects):
+            continue
+        text = str(block[4]).strip()
+        if text:
+            extracted.append((float(bbox.y0), float(bbox.y1), text))
+    extracted.sort(key=lambda item: (item[0], item[1]))
+    return extracted
+
+
+def _segment_page_by_anchors(
+    anchors: list[TocAnchor],
+    page_number: int,
+    blocks: list[tuple[float, float, str]],
+    fallback_section: str | None,
+) -> list[tuple[str | None, str]]:
+    if not blocks:
+        return []
+
+    segments: list[tuple[str | None, list[str]]] = []
+    current_section: str | None = None
+    current_texts: list[str] = []
+
+    for y0, y1, text in blocks:
+        mid_y = (y0 + y1) / 2
+        section = section_at_position(anchors, page_number, mid_y) or fallback_section
+        if section != current_section and current_texts:
+            segments.append((current_section, current_texts))
+            current_texts = []
+        current_section = section
+        current_texts.append(text)
+
+    if current_texts:
+        segments.append((current_section, current_texts))
+
+    return [(section, "\n".join(texts)) for section, texts in segments if texts]
+
+
 def _page_needs_ocr(native_text: str, settings: Settings) -> bool:
     if not settings.ocr_enabled:
         return False
@@ -278,22 +268,97 @@ def _truncate_section_path(path: str) -> str:
     return path[: _SECTION_PATH_MAX_LEN - 1] + "…"
 
 
-def build_toc_entries(doc: fitz.Document) -> list[TocEntry]:
-    raw_toc = doc.get_toc()
+def _dest_to_page_y(page: fitz.Page, dest: dict) -> float | None:
+    """Convert a PDF bookmark destination to MuPDF top-left Y."""
+    to = dest.get("to")
+    if to is None:
+        return None
+    try:
+        if hasattr(to, "x"):
+            pdf_point = fitz.Point(float(to.x), float(to.y))
+        else:
+            pdf_point = fitz.Point(float(to[0]), float(to[1]))
+    except (TypeError, ValueError, IndexError):
+        return None
+    mupdf_point = pdf_point * page.transformation_matrix
+    return float(mupdf_point.y)
+
+
+def _parse_raw_toc(doc: fitz.Document) -> list[tuple[int, str, int, float | None]]:
+    raw_toc = doc.get_toc(simple=False)
     if not raw_toc:
+        return []
+
+    parsed: list[tuple[int, str, int, float | None]] = []
+    for row in raw_toc:
+        level = int(row[0])
+        title = str(row[1]).strip()
+        page = max(1, int(row[2]))
+        y: float | None = None
+        dest = row[3] if len(row) > 3 else None
+        if isinstance(dest, dict):
+            dest_page = dest.get("page")
+            if dest_page is not None and int(dest_page) >= 0:
+                page = int(dest_page) + 1
+            if 1 <= page <= doc.page_count:
+                y = _dest_to_page_y(doc[page - 1], dest)
+        parsed.append((level, title, page, y))
+    return parsed
+
+
+def _build_toc_paths(
+    parsed: list[tuple[int, str, int, float | None]],
+) -> list[tuple[int, str, int, float | None, str]]:
+    path_titles: list[str] = []
+    path_levels: list[int] = []
+    with_paths: list[tuple[int, str, int, float | None, str]] = []
+    for level, title, page, y in parsed:
+        while path_levels and path_levels[-1] >= level:
+            path_levels.pop()
+            path_titles.pop()
+        path_titles.append(title)
+        path_levels.append(level)
+        path = _truncate_section_path(_SECTION_PATH_SEPARATOR.join(path_titles))
+        with_paths.append((level, title, page, y, path))
+    return with_paths
+
+
+def build_toc_anchors(doc: fitz.Document) -> list[TocAnchor]:
+    parsed = _parse_raw_toc(doc)
+    if not parsed:
+        return []
+
+    anchors: list[TocAnchor] = []
+    for level, title, page, y, path in _build_toc_paths(parsed):
+        anchors.append(
+            TocAnchor(
+                level=level,
+                title=title,
+                path=path,
+                page=page,
+                y=y if y is not None else 0.0,
+                has_y=y is not None,
+            )
+        )
+    return sorted(anchors, key=lambda anchor: (anchor.page, anchor.y, anchor.level))
+
+
+def build_toc_entries(doc: fitz.Document) -> list[TocEntry]:
+    parsed = _parse_raw_toc(doc)
+    if not parsed:
         return []
 
     page_count = doc.page_count
     normalized: list[tuple[int, str, int, int]] = []
-    for index, (level, title, page) in enumerate(raw_toc):
+    for index, (level, title, page, _y) in enumerate(parsed):
         start_page = max(1, int(page))
         end_page = page_count
-        for next_index in range(index + 1, len(raw_toc)):
-            next_level, _, next_page = raw_toc[next_index]
+        for next_index in range(index + 1, len(parsed)):
+            next_level, _, next_page, _ = parsed[next_index]
             if next_level <= level:
                 end_page = max(start_page, int(next_page) - 1)
                 break
-        normalized.append((int(level), str(title).strip(), start_page, end_page))
+        normalized.append((int(level), title, start_page, end_page))
 
     path_titles: list[str] = []
     path_levels: list[int] = []
@@ -315,6 +380,22 @@ def build_toc_entries(doc: fitz.Document) -> list[TocEntry]:
             )
         )
     return entries
+
+
+def section_at_position(anchors: list[TocAnchor], page: int, y: float) -> str | None:
+    path_titles: list[str] = []
+    path_levels: list[int] = []
+    for anchor in anchors:
+        if (anchor.page, anchor.y) > (page, y):
+            break
+        while path_levels and path_levels[-1] >= anchor.level:
+            path_levels.pop()
+            path_titles.pop()
+        path_titles.append(anchor.title)
+        path_levels.append(anchor.level)
+    if not path_titles:
+        return None
+    return _truncate_section_path(_SECTION_PATH_SEPARATOR.join(path_titles))
 
 
 def section_for_page(entries: list[TocEntry], page: int) -> str | None:
@@ -435,10 +516,13 @@ def _parse_docx_pages(file_bytes: bytes) -> list[tuple[str | None, str, int]]:
 def _merge_pdf_highlight_chunks(
     highlight_regions: list[HighlightTypeRegion],
     page_chunks: list[ParsedChunk],
+    *,
+    region_pngs: list[bytes | None] | None = None,
 ) -> list[ParsedChunk]:
     ordered: list[tuple[int, float, int, ParsedChunk]] = []
+    pngs = region_pngs or [None] * len(highlight_regions)
 
-    for region in highlight_regions:
+    for region, png in zip(highlight_regions, pngs, strict=True):
         ordered.append(
             (
                 region.page,
@@ -450,9 +534,8 @@ def _merge_pdf_highlight_chunks(
                     section=region.section,
                     chunk_index=0,
                     chunk_type=region.chunk_type,
-                    content_role=region.content_role
-                    or _detect_content_role(region.section, region.text),
-                    type_source="pdf_highlight",
+                    asset_bbox=region.bbox if png else None,
+                    asset_png=png,
                 ),
             )
         )
@@ -487,13 +570,16 @@ def _build_chunks_from_pages(
                     page=_page_for_offset(page_spans, offset),
                     section=section,
                     chunk_index=chunk_index,
-                    chunk_type=_detect_chunk_type(piece),
-                    content_role=_detect_content_role(section, piece),
-                    type_source="heuristic",
                 )
             )
             chunk_index += 1
     return parsed_chunks
+
+
+def _render_region_png(page: fitz.Page, bbox: tuple[float, float, float, float], scale: float) -> bytes:
+    matrix = fitz.Matrix(scale, scale)
+    pixmap = page.get_pixmap(matrix=matrix, clip=fitz.Rect(bbox), alpha=False)
+    return pixmap.tobytes("png")
 
 
 class IngestionService:
@@ -522,14 +608,21 @@ class IngestionService:
         doc = fitz.open(stream=file_bytes, filetype="pdf")
         page_count = doc.page_count
         toc_entries = build_toc_entries(doc)
+        toc_anchors = build_toc_anchors(doc)
+        use_y_split = any(anchor.has_y for anchor in toc_anchors)
 
-        def _section_for_page(page_number: int) -> str | None:
+        def section_resolver(page_number: int, y: float | None = None) -> str | None:
+            if y is not None and use_y_split:
+                resolved = section_at_position(toc_anchors, page_number, y)
+                if resolved:
+                    return resolved
             return section_for_page(toc_entries, page_number)
 
         highlight_regions = extract_pdf_highlight_regions(
             doc,
-            section_for_page=_section_for_page,
+            section_resolver=section_resolver,
         )
+        has_highlights = bool(highlight_regions)
         pages: list[tuple[str | None, str, int]] = []
         ocr_pages = 0
 
@@ -539,10 +632,10 @@ class IngestionService:
             if should_skip_front_matter(page_number, toc_entries):
                 continue
 
-            section = _section_for_page(page_number)
-            page_highlights = [region for region in highlight_regions if region.page == page_number]
-            highlight_rects = highlight_rects_on_page(page) if page_highlights else []
-            if highlight_rects:
+            fallback_section = section_for_page(toc_entries, page_number)
+            highlight_rects = highlight_rects_on_page(page) if has_highlights else []
+
+            if has_highlights and highlight_rects:
                 page_text = extract_page_text_excluding_rects(page, highlight_rects)
                 used_ocr = False
             else:
@@ -554,7 +647,25 @@ class IngestionService:
                 continue
             if is_toc_text(page_text):
                 continue
-            pages.append((section, page_text.strip(), page_number))
+
+            if use_y_split and not used_ocr:
+                blocks = _extract_page_text_blocks(
+                    page,
+                    exclude_rects=highlight_rects or None,
+                )
+                if blocks:
+                    for section, segment_text in _segment_page_by_anchors(
+                        toc_anchors,
+                        page_number,
+                        blocks,
+                        fallback_section,
+                    ):
+                        if segment_text.strip():
+                            pages.append((section, segment_text.strip(), page_number))
+                else:
+                    pages.append((fallback_section, page_text.strip(), page_number))
+            else:
+                pages.append((fallback_section, page_text.strip(), page_number))
             if on_page_progress is not None:
                 on_page_progress(page_number, page_count)
 
@@ -563,8 +674,26 @@ class IngestionService:
             raise ValueError("No text extracted from PDF")
 
         page_chunks = _build_chunks_from_pages(pages, self.settings)
+        region_pngs: list[bytes | None] = []
+        for region in highlight_regions:
+            png: bytes | None = None
+            if (
+                region.chunk_type in _ASSET_CHUNK_TYPES
+                and region.bbox is not None
+            ):
+                png = _render_region_png(
+                    doc[region.page - 1],
+                    region.bbox,
+                    self.settings.ocr_render_scale,
+                )
+            region_pngs.append(png)
+
         parsed_chunks = (
-            _merge_pdf_highlight_chunks(highlight_regions, page_chunks)
+            _merge_pdf_highlight_chunks(
+                highlight_regions,
+                page_chunks,
+                region_pngs=region_pngs,
+            )
             if highlight_regions
             else page_chunks
         )

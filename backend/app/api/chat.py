@@ -11,8 +11,9 @@ from app.config import get_settings
 from app.db.models import Message, Session
 from app.db.session import get_db
 from app.services.agent import AgentRAGService
-from app.services.citations_util import finalize_answer_citations, public_citations
+from app.services.citations_util import finalize_answer, public_citations
 from app.services.rag import detect_language
+from app.services.vision_util import prepare_vision_images
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -103,15 +104,18 @@ async def chat(
                 refs = public_citations(result.evidence)
                 yield f"data: {json.dumps({'type': 'citations', 'citations': refs}, ensure_ascii=False)}\n\n"
 
+                vision_images = await prepare_vision_images(db, result.evidence, settings)
                 answer_parts: list[str] = []
                 async for delta in agent.iter_synthesis(
-                    payload.message, result.evidence, history
+                    payload.message, result.evidence, history, vision_images
                 ):
                     answer_parts.append(delta)
                     yield f"data: {json.dumps({'type': 'delta', 'content': delta}, ensure_ascii=False)}\n\n"
 
-                answer, refs = finalize_answer_citations("".join(answer_parts), result.evidence)
-                yield f"data: {json.dumps({'type': 'done', 'session_id': str(session.id), 'content': answer, 'citations': refs, 'language': lang}, ensure_ascii=False)}\n\n"
+                answer, refs, embeds = finalize_answer("".join(answer_parts), result.evidence)
+                if embeds:
+                    yield f"data: {json.dumps({'type': 'embeds', 'embeds': embeds}, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps({'type': 'done', 'session_id': str(session.id), 'content': answer, 'citations': refs, 'embeds': embeds, 'language': lang}, ensure_ascii=False)}\n\n"
                 db.add(Message(session_id=session.id, role="user", content=payload.message))
                 db.add(
                     Message(
@@ -119,6 +123,7 @@ async def chat(
                         role="assistant",
                         content=answer,
                         citations=refs,
+                        embeds=embeds,
                     )
                 )
                 await db.commit()
@@ -147,6 +152,7 @@ async def chat(
             role="assistant",
             content=result.answer,
             citations=result.citations,
+            embeds=result.embeds,
         )
     )
     await db.commit()
@@ -155,5 +161,6 @@ async def chat(
         session_id=session.id,
         answer=result.answer,
         citations=result.citations,
+        embeds=result.embeds,
         language=result.language,
     )

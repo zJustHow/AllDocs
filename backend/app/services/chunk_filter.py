@@ -7,7 +7,6 @@ from qdrant_client.http import models as qmodels
 class ChunkFilter(BaseModel):
     document_ids: list[UUID] | None = None
     chunk_types: list[str] | None = None
-    content_roles: list[str] | None = None
     page_gte: int | None = Field(default=None, ge=1)
     page_lte: int | None = Field(default=None, ge=1)
     section_prefix: str | None = None
@@ -47,7 +46,6 @@ class ChunkFilter(BaseModel):
             [
                 self.document_ids,
                 self.chunk_types,
-                self.content_roles,
                 self.page_gte is not None,
                 self.page_lte is not None,
                 self.section_prefix,
@@ -59,7 +57,6 @@ class ChunkFilter(BaseModel):
         return any(
             [
                 self.chunk_types,
-                self.content_roles,
                 self.page_gte is not None,
                 self.page_lte is not None,
                 self.section_prefix,
@@ -72,7 +69,6 @@ class ChunkFilter(BaseModel):
         return self.model_copy(
             update={
                 "chunk_types": None,
-                "content_roles": None,
                 "page_gte": None,
                 "page_lte": None,
                 "section_prefix": None,
@@ -100,13 +96,6 @@ def build_qdrant_filter(chunk_filter: ChunkFilter | None) -> qmodels.Filter | No
                 match=qmodels.MatchAny(any=chunk_filter.chunk_types),
             )
         )
-    if chunk_filter.content_roles:
-        must.append(
-            qmodels.FieldCondition(
-                key="content_role",
-                match=qmodels.MatchAny(any=chunk_filter.content_roles),
-            )
-        )
     if chunk_filter.page_gte is not None or chunk_filter.page_lte is not None:
         must.append(
             qmodels.FieldCondition(
@@ -131,8 +120,6 @@ def build_es_filters(chunk_filter: ChunkFilter | None) -> list[dict]:
         )
     if chunk_filter.chunk_types:
         filters.append({"terms": {"chunk_type": chunk_filter.chunk_types}})
-    if chunk_filter.content_roles:
-        filters.append({"terms": {"content_role": chunk_filter.content_roles}})
     if chunk_filter.page_gte is not None or chunk_filter.page_lte is not None:
         page_range: dict[str, int] = {}
         if chunk_filter.page_gte is not None:
@@ -154,11 +141,6 @@ def chunk_matches(chunk: dict, chunk_filter: ChunkFilter) -> bool:
 
     if chunk_filter.chunk_types and chunk.get("chunk_type") not in chunk_filter.chunk_types:
         return False
-
-    if chunk_filter.content_roles:
-        role = chunk.get("content_role")
-        if role not in chunk_filter.content_roles:
-            return False
 
     page = chunk.get("page")
     if chunk_filter.page_gte is not None and (page is None or page < chunk_filter.page_gte):

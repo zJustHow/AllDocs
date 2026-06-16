@@ -54,9 +54,30 @@ class Chunk(Base):
     chunk_index: Mapped[int] = mapped_column(Integer)
     chunk_type: Mapped[str] = mapped_column(String(64), default="text")
     content_role: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    caption: Mapped[str | None] = mapped_column(Text, nullable=True)
     qdrant_point_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     document: Mapped["Document"] = relationship(back_populates="chunks")
+    assets: Mapped[list["ChunkAsset"]] = relationship(
+        back_populates="chunk", cascade="all, delete-orphan"
+    )
+
+
+class ChunkAsset(Base):
+    __tablename__ = "chunk_assets"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    chunk_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("chunks.id", ondelete="CASCADE"))
+    document_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("documents.id", ondelete="CASCADE"))
+    asset_type: Mapped[str] = mapped_column(String(64), default="table")
+    page: Mapped[int] = mapped_column(Integer)
+    bbox: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    object_key: Mapped[str] = mapped_column(String(1024))
+    width: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    height: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    caption: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    chunk: Mapped["Chunk"] = relationship(back_populates="assets")
 
 
 class Session(Base):
@@ -79,6 +100,7 @@ class Message(Base):
     role: Mapped[str] = mapped_column(String(32))
     content: Mapped[str] = mapped_column(Text)
     citations: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    embeds: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     session: Mapped["Session"] = relationship(back_populates="messages")
