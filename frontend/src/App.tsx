@@ -8,6 +8,7 @@ import {
 } from "./api";
 import { type ViewerTarget } from "./citations";
 import DocumentViewer from "./DocumentViewer";
+import { useI18n, type Locale } from "./i18n";
 import {
   AllDocsIcon,
   DocIcon,
@@ -18,22 +19,9 @@ import {
   SendIcon,
   TrashIcon,
 } from "./icons";
+import AgentSteps from "./AgentSteps";
 import MessageContent from "./MessageContent";
-import type { ChatMessage, DocumentItem } from "./types";
-
-const STATUS_LABEL: Record<DocumentItem["status"], string> = {
-  pending: "等待处理",
-  processing: "索引中",
-  ready: "可用",
-  failed: "失败",
-};
-
-const SUGGESTIONS = [
-  "报警 E-204 怎么处理？",
-  "How do I power on the device?",
-  "设备日常维护需要注意什么？",
-  "What are the safety warnings?",
-];
+import type { AgentPlannerHint, AgentStepEvent, ChatMessage, DocumentItem } from "./types";
 
 function newId() {
   if (typeof crypto?.randomUUID === "function") {
@@ -43,6 +31,8 @@ function newId() {
 }
 
 export default function App() {
+  const { t, locale, setLocale, suggestions } = useI18n();
+
   const [documents, setDocuments] = useState<DocumentItem[]>([]);
   const [selectedDocIds, setSelectedDocIds] = useState<string[]>([]);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -69,6 +59,16 @@ export default function App() {
   const audioQueueRef = useRef<HTMLAudioElement[]>([]);
   const playingRef = useRef(false);
   const voiceDoneRef = useRef(false);
+
+  const statusLabel = useMemo(
+    (): Record<DocumentItem["status"], string> => ({
+      pending: t("doc.status.pending"),
+      processing: t("doc.status.processing"),
+      ready: t("doc.status.ready"),
+      failed: t("doc.status.failed"),
+    }),
+    [t],
+  );
 
   const readyDocs = useMemo(
     () => documents.filter((doc) => doc.status === "ready"),
@@ -198,7 +198,7 @@ export default function App() {
   };
 
   const handleDelete = async (docId: string) => {
-    if (!confirm("确定删除该文档？")) return;
+    if (!confirm(t("sidebar.deleteConfirm"))) return;
     await deleteDocument(docId);
     await refreshDocuments();
   };
@@ -216,14 +216,14 @@ export default function App() {
     const text = (textOverride ?? input).trim();
     if (!text || loading) return;
     if (selectedDocIds.length === 0) {
-      setError("请至少选择一份已就绪的说明书");
+      setError(t("chat.selectDocError"));
       return;
     }
 
     setError(null);
     setInput("");
     setLoading(true);
-    setChatStage("思考中...");
+    setChatStage(t("chat.thinking"));
 
     let assistantId: string | null = null;
     try {
@@ -233,12 +233,28 @@ export default function App() {
       setMessages((prev) => [
         ...prev,
         userMessage,
-        { id: assistantId!, role: "assistant", content: "", streaming: true },
+        { id: assistantId!, role: "assistant", content: "", streaming: true, agentSteps: [], agentRunning: true },
       ]);
 
       await streamChat(text, sessionId, selectedDocIds, {
         onStatus: (stage) => {
-          if (stage === "retrieving") setChatStage("检索文档...");
+          if (stage === "agent") setChatStage(t("chat.agentRunning"));
+        },
+        onAgentPlannerHint: (hint) => {
+          setMessages((prev) =>
+            prev.map((msg) =>
+              msg.id === assistantId ? { ...msg, agentPlannerHint: hint } : msg,
+            ),
+          );
+        },
+        onAgentStep: (step) => {
+          setMessages((prev) =>
+            prev.map((msg) =>
+              msg.id === assistantId
+                ? { ...msg, agentSteps: [...(msg.agentSteps ?? []), step] }
+                : msg,
+            ),
+          );
         },
         onCitations: (citations) => {
           setMessages((prev) =>
@@ -246,10 +262,12 @@ export default function App() {
           );
         },
         onDelta: (delta) => {
-          setChatStage("生成回答...");
+          setChatStage(t("chat.generating"));
           setMessages((prev) =>
             prev.map((msg) =>
-              msg.id === assistantId ? { ...msg, content: msg.content + delta } : msg,
+              msg.id === assistantId
+                ? { ...msg, content: msg.content + delta, agentRunning: false }
+                : msg,
             ),
           );
         },
@@ -263,6 +281,7 @@ export default function App() {
                 ? {
                     ...msg,
                     streaming: false,
+                    agentRunning: false,
                     content: content ?? msg.content,
                     citations,
                   }
@@ -276,7 +295,7 @@ export default function App() {
           setLoading(false);
           setMessages((prev) =>
             prev.map((msg) =>
-              msg.id === assistantId ? { ...msg, streaming: false } : msg,
+              msg.id === assistantId ? { ...msg, streaming: false, agentRunning: false } : msg,
             ),
           );
         },
@@ -302,12 +321,12 @@ export default function App() {
 
   const sendVoice = async (blob: Blob) => {
     if (selectedDocIds.length === 0) {
-      setError("请至少选择一份已就绪的说明书");
+      setError(t("chat.selectDocError"));
       return;
     }
 
     setLoading(true);
-    setVoiceStage("连接中...");
+    setVoiceStage(t("voice.connecting"));
     setError(null);
     audioQueueRef.current = [];
     voiceDoneRef.current = false;
@@ -336,11 +355,11 @@ export default function App() {
       const assistantId = newId();
 
       timeoutId = setTimeout(() => {
-        cleanup("语音处理超时，请重试");
+        cleanup(t("voice.timeout"));
       }, 300_000);
 
       ws.onopen = () => {
-        setVoiceStage("识别语音...");
+        setVoiceStage(t("voice.transcribing"));
         ws?.send(
           JSON.stringify({
             type: "audio",
@@ -357,25 +376,62 @@ export default function App() {
         try {
           payload = JSON.parse(event.data);
         } catch {
-          cleanup("语音响应解析失败");
+          cleanup(t("voice.parseFailed"));
           return;
         }
 
         if (payload.type === "status") {
           const stage = payload.stage as string;
-          if (stage === "transcribing") setVoiceStage("识别语音...");
-          if (stage === "answering") setVoiceStage("生成回答...");
-          if (stage === "speaking") setVoiceStage("合成语音...");
+          if (stage === "transcribing") setVoiceStage(t("voice.transcribing"));
+          if (stage === "agent") setVoiceStage(t("chat.agentRunning"));
+          if (stage === "answering") setVoiceStage(t("voice.generating"));
+          if (stage === "speaking") setVoiceStage(t("voice.synthesizing"));
+          return;
+        }
+        if (payload.type === "agent_planner_hint") {
+          setMessages((prev) =>
+            prev.map((msg) =>
+              msg.id === assistantId
+                ? { ...msg, agentPlannerHint: payload.hint as AgentPlannerHint }
+                : msg,
+            ),
+          );
+          return;
+        }
+        if (payload.type === "agent_step") {
+          const step: AgentStepEvent = {
+            step: payload.step as number,
+            thought: (payload.thought as string) ?? "",
+            action: (payload.action as string) ?? "",
+            action_input: (payload.action_input as Record<string, unknown>) ?? {},
+            observation: (payload.observation as string) ?? "",
+            evidence_count: payload.evidence_count as number | undefined,
+          };
+          setMessages((prev) =>
+            prev.map((msg) =>
+              msg.id === assistantId
+                ? { ...msg, agentSteps: [...(msg.agentSteps ?? []), step] }
+                : msg,
+            ),
+          );
           return;
         }
         if (payload.type === "transcript") {
-          setVoiceStage("生成回答...");
+          setVoiceStage(t("chat.agentRunning"));
           const userMessageId = newId();
           scrollUserMessageIdRef.current = userMessageId;
           setMessages((prev) => [
             ...prev,
             { id: userMessageId, role: "user", content: payload.text as string },
-            { id: assistantId, role: "assistant", content: "", streaming: true, citations: [] },
+            {
+              id: assistantId,
+              role: "assistant",
+              content: "",
+              streaming: true,
+              citations: [],
+              agentSteps: [],
+              agentRunning: true,
+            },
           ]);
         }
         if (payload.type === "citations") {
@@ -391,13 +447,17 @@ export default function App() {
           setMessages((prev) =>
             prev.map((msg) =>
               msg.id === assistantId
-                ? { ...msg, content: msg.content + (payload.content as string) }
+                ? {
+                    ...msg,
+                    content: msg.content + (payload.content as string),
+                    agentRunning: false,
+                  }
                 : msg,
             ),
           );
         }
         if (payload.type === "audio") {
-          setVoiceStage("播放语音...");
+          setVoiceStage(t("voice.playing"));
           enqueueAudio(payload.data as string);
         }
         if (payload.type === "done") {
@@ -408,6 +468,7 @@ export default function App() {
                 ? {
                     ...msg,
                     streaming: false,
+                    agentRunning: false,
                     content: (payload.content as string | undefined) ?? msg.content,
                     citations: (payload.citations as ChatMessage["citations"]) ?? [],
                   }
@@ -422,12 +483,12 @@ export default function App() {
       };
 
       ws.onerror = () => {
-        cleanup("语音连接失败");
+        cleanup(t("voice.connectionFailed"));
       };
 
       ws.onclose = () => {
         if (!voiceDoneRef.current) {
-          cleanup("语音连接已断开");
+          cleanup(t("voice.disconnected"));
         }
       };
     } catch (err) {
@@ -494,6 +555,10 @@ export default function App() {
   const activeStage = voiceStage ?? chatStage;
   const hasMessages = messages.length > 0;
 
+  const handleLocaleChange = (next: Locale) => {
+    if (next !== locale) setLocale(next);
+  };
+
   return (
     <div className={`app ${viewerTarget ? "with-viewer" : ""} ${viewerOpen ? "viewer-open" : ""}`}>
       <div
@@ -505,14 +570,14 @@ export default function App() {
       <aside className={`sidebar ${sidebarOpen ? "open" : "collapsed"}`}>
         <div className="sidebar-inner">
           <div className="sidebar-top">
-            <button className="icon-btn" onClick={toggleSidebar} aria-label="收起侧边栏">
+            <button className="icon-btn" onClick={toggleSidebar} aria-label={t("sidebar.collapse")}>
               <MenuIcon />
             </button>
           </div>
 
           <button className="new-chat-btn" onClick={clearChat}>
             <NewChatIcon />
-            新对话
+            {t("sidebar.newChat")}
           </button>
 
           <label className="upload-btn">
@@ -524,14 +589,16 @@ export default function App() {
               onChange={(e) => handleUpload(e.target.files?.[0] ?? null)}
             />
             <PlusIcon />
-            <span>{uploading ? "上传中..." : "上传 PDF 说明书"}</span>
+            <span>{uploading ? t("sidebar.uploading") : t("sidebar.uploadPdf")}</span>
           </label>
 
-          <div className="sidebar-section-label">文档库 · {readyDocs.length} 份可用</div>
+          <div className="sidebar-section-label">
+            {t("sidebar.docLibrary", { count: readyDocs.length })}
+          </div>
 
           <div className="doc-list">
             {documents.length === 0 && (
-              <p className="doc-list-empty">暂无文档，上传 PDF 开始</p>
+              <p className="doc-list-empty">{t("sidebar.emptyList")}</p>
             )}
             {documents.map((doc) => (
               <div key={doc.id} className={`doc-item ${doc.status}`}>
@@ -545,8 +612,10 @@ export default function App() {
                   <div className="doc-info">
                     <strong>{doc.name}</strong>
                     <div className="doc-meta">
-                      <span className={`status ${doc.status}`}>{STATUS_LABEL[doc.status]}</span>
-                      {doc.page_count ? <span className="muted">{doc.page_count} 页</span> : null}
+                      <span className={`status ${doc.status}`}>{statusLabel[doc.status]}</span>
+                      {doc.page_count ? (
+                        <span className="muted">{t("doc.pages", { count: doc.page_count })}</span>
+                      ) : null}
                       {doc.ocr_pages ? (
                         <span className="muted">OCR {doc.ocr_pages}</span>
                       ) : null}
@@ -561,7 +630,9 @@ export default function App() {
                         </div>
                         <span className="index-progress-label">
                           {doc.progress_message ??
-                            (doc.status === "pending" ? "等待处理" : "索引中...")}
+                            (doc.status === "pending"
+                              ? t("doc.status.pending")
+                              : t("doc.indexing"))}
                           {doc.status === "processing" ? ` ${doc.progress}%` : ""}
                         </span>
                       </div>
@@ -574,7 +645,7 @@ export default function App() {
                 <button
                   className="doc-delete"
                   onClick={() => handleDelete(doc.id)}
-                  aria-label="删除文档"
+                  aria-label={t("sidebar.deleteDoc")}
                 >
                   <TrashIcon />
                 </button>
@@ -583,7 +654,7 @@ export default function App() {
           </div>
 
           <div className="sidebar-foot">
-            <span>AllDocs · 说明书 RAG 问答</span>
+            <span>{t("app.tagline")}</span>
           </div>
         </div>
       </aside>
@@ -593,22 +664,35 @@ export default function App() {
           <button
             className={`icon-btn top-bar-menu ${sidebarOpen ? "hidden" : ""}`}
             onClick={toggleSidebar}
-            aria-label={sidebarOpen ? undefined : "打开侧边栏"}
+            aria-label={sidebarOpen ? undefined : t("sidebar.open")}
             aria-hidden={sidebarOpen}
             tabIndex={sidebarOpen ? -1 : 0}
           >
             <MenuIcon />
           </button>
-          <span className="top-bar-title">AllDocs</span>
+          <span className="top-bar-title">{t("app.brand")}</span>
           {selectedDocIds.length > 0 ? (
             <span className="top-bar-sub">
-              <DocIcon /> {selectedDocIds.length} 份文档已选
+              <DocIcon /> {t("topBar.docsSelected", { count: selectedDocIds.length })}
             </span>
           ) : (
             <span className="top-bar-sub top-bar-hint">
-              {readyDocs.length === 0 ? "请先上传 PDF 说明书" : "请在左侧选择文档"}
+              {readyDocs.length === 0 ? t("topBar.uploadFirst") : t("topBar.selectDocs")}
             </span>
           )}
+          <div className="lang-switch" role="group" aria-label={t("language.label")}>
+            {(["zh", "en"] as const).map((code) => (
+              <button
+                key={code}
+                type="button"
+                className={`lang-switch-btn ${locale === code ? "active" : ""}`}
+                onClick={() => handleLocaleChange(code)}
+                aria-pressed={locale === code}
+              >
+                {t(`language.${code}`)}
+              </button>
+            ))}
+          </div>
         </header>
 
         <div className="chat-area" ref={chatAreaRef}>
@@ -617,10 +701,10 @@ export default function App() {
               <div className="welcome-logo">
                 <AllDocsIcon size={48} />
               </div>
-              <h1>有什么可以帮你的？</h1>
-              <p className="welcome-sub">基于说明书智能问答 · 支持中英文 · 语音输入</p>
+              <h1>{t("welcome.title")}</h1>
+              <p className="welcome-sub">{t("welcome.subtitle")}</p>
               <div className="suggestions">
-                {SUGGESTIONS.map((s) => (
+                {suggestions.map((s) => (
                   <button
                     key={s}
                     className="suggestion-chip"
@@ -650,10 +734,18 @@ export default function App() {
                     {msg.role === "assistant" ? (
                       <AllDocsIcon size={28} />
                     ) : (
-                      "你"
+                      t("chat.userAvatar")
                     )}
                   </div>
                   <div className="message-body">
+                    {msg.role === "assistant" &&
+                    ((msg.agentSteps?.length ?? 0) > 0 || msg.agentPlannerHint || msg.agentRunning) ? (
+                      <AgentSteps
+                        steps={msg.agentSteps ?? []}
+                        plannerHint={msg.agentPlannerHint}
+                        running={msg.agentRunning}
+                      />
+                    ) : null}
                     <div className="message-content">
                       {msg.role === "assistant" ? (
                         <MessageContent
@@ -692,7 +784,7 @@ export default function App() {
             <textarea
               ref={textareaRef}
               value={input}
-              placeholder="询问说明书相关问题..."
+              placeholder={t("chat.placeholder")}
               rows={1}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => {
@@ -707,8 +799,8 @@ export default function App() {
                 className={`action-btn mic ${recording ? "active" : ""}`}
                 onClick={recording ? stopRecording : startRecording}
                 disabled={loading && !recording}
-                title="语音提问"
-                aria-label={recording ? "停止录音" : "语音提问"}
+                title={t("voice.ask")}
+                aria-label={recording ? t("voice.stopRecording") : t("voice.ask")}
               >
                 <MicIcon />
               </button>
@@ -716,14 +808,14 @@ export default function App() {
                 className="action-btn send"
                 onClick={() => sendText()}
                 disabled={loading || !input.trim()}
-                title="发送"
-                aria-label="发送"
+                title={t("composer.send")}
+                aria-label={t("composer.send")}
               >
                 <SendIcon />
               </button>
             </div>
           </div>
-          <p className="composer-disclaimer">AllDocs 可能出错，重要信息请以原始说明书为准</p>
+          <p className="composer-disclaimer">{t("app.disclaimer")}</p>
         </footer>
       </div>
 

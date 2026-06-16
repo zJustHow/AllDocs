@@ -49,6 +49,10 @@ def finalize_answer_citations(answer: str, citations: list[dict]) -> tuple[str, 
     return answer, public_citations(cited)
 
 
+def evidence_to_citations(evidence: list[dict]) -> list[dict]:
+    return [{key: value for key, value in item.items() if key != "evidence_id"} for item in evidence]
+
+
 def public_citations(citations: list[dict]) -> list[dict]:
     return [
         {

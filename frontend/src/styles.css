@@ -472,6 +472,40 @@ button {
   color: var(--warning);
 }
 
+.lang-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 12px;
+  padding: 2px;
+  border-radius: var(--radius-full);
+  background: var(--surface-muted);
+  border: 1px solid var(--line);
+  flex-shrink: 0;
+}
+
+.lang-switch-btn {
+  padding: 4px 10px;
+  border: none;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.lang-switch-btn:hover {
+  color: var(--text);
+}
+
+.lang-switch-btn.active {
+  background: var(--surface-elevated);
+  color: var(--text);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+
 .chat-area {
   flex: 1;
   min-height: 0;
@@ -631,6 +665,164 @@ button {
 
 .message.assistant .message-content {
   padding-top: 4px;
+}
+
+/* ── Agent steps ── */
+
+.agent-steps {
+  margin-bottom: 12px;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-muted);
+  backdrop-filter: blur(12px) saturate(var(--glass-saturate));
+  -webkit-backdrop-filter: blur(12px) saturate(var(--glass-saturate));
+  overflow: hidden;
+}
+
+.agent-steps.is-running {
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--glass-border));
+}
+
+.agent-steps-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  cursor: pointer;
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  user-select: none;
+  list-style: none;
+}
+
+.agent-steps-summary::-webkit-details-marker {
+  display: none;
+}
+
+.agent-steps-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--muted);
+  flex-shrink: 0;
+}
+
+.agent-steps.is-running .agent-steps-dot {
+  background: var(--accent);
+  animation: agent-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes agent-pulse {
+  50% {
+    opacity: 0.35;
+    transform: scale(0.85);
+  }
+}
+
+.agent-steps-body {
+  padding: 0 14px 12px;
+  display: grid;
+  gap: 10px;
+  border-top: 1px solid var(--glass-border);
+}
+
+.agent-planner-hint {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding-top: 10px;
+}
+
+.agent-intent-badge {
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
+}
+
+.agent-symptom {
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+}
+
+.agent-step {
+  padding-top: 10px;
+}
+
+.agent-step-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.agent-step-num {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.72rem;
+  font-weight: 600;
+  background: var(--surface-hover);
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.agent-tool-badge {
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: var(--surface-hover);
+  color: var(--text);
+  border: 1px solid var(--line);
+}
+
+.agent-evidence-count {
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+.agent-thought {
+  margin: 6px 0 0;
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.agent-action-input {
+  margin: 4px 0 0;
+  font-size: 0.8rem;
+  color: var(--muted);
+  font-style: italic;
+}
+
+.agent-observation {
+  margin: 6px 0 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--surface-hover);
+  border: 1px solid var(--line);
+  font-size: 0.78rem;
+  line-height: 1.45;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: inherit;
+  max-height: 120px;
+  overflow: auto;
+}
+
+.agent-steps-wait {
+  margin: 10px 0 0;
+  font-size: 0.82rem;
+  color: var(--muted);
 }
 
 .cursor {

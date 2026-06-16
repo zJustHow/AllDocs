@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 from uuid import UUID
@@ -9,12 +10,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import Settings, get_settings
 from app.db.models import Chunk, Document
 from app.services.chunk_filter import ChunkFilter, filter_citations
-from app.services.citations_util import finalize_answer_citations
 from app.services.embedding import EmbeddingService
-from app.services.filter_extractor import FilterExtractionService, extract_filters_heuristic
 from app.services.fulltext_store import FulltextStore
 from app.services.hybrid import reciprocal_rank_fusion
-from app.services.llm import LLMService
+from app.services.llm import LLMService, QueryIntent
+from app.services.query_plan import QueryPlan, QueryPlannerService, SubQuery
 from app.services.reranker import RerankerService
 from app.services.vector_store import VectorStore
 
@@ -36,6 +36,10 @@ def detect_language(text: str) -> str:
         return "zh"
 
 
+def not_found_message(lang: str) -> str:
+    return "Not found in the manual." if lang == "en" else "说明书中未找到相关信息。"
+
+
 class RAGService:
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
@@ -45,7 +49,7 @@ class RAGService:
             FulltextStore(self.settings) if self.settings.hybrid_enabled else None
         )
         self.llm = LLMService(self.settings)
-        self.filter_extractor = FilterExtractionService(self.settings, self.llm)
+        self.query_planner = QueryPlannerService(self.settings, self.llm)
         self.reranker = None
         if self.settings.rerank_enabled:
             if model_path_ready(self.settings.rerank_model):
@@ -86,6 +90,7 @@ class RAGService:
                     "page": chunk.page,
                     "section": chunk.section,
                     "chunk_type": chunk.chunk_type,
+                    "content_role": chunk.content_role,
                     "score": score_map.get(chunk_id, 0.0),
                     "snippet": chunk.text[:300],
                     "text": chunk.text,
@@ -93,124 +98,238 @@ class RAGService:
             )
         return citations
 
-    async def _retrieve_once(
+    async def _search_hybrid(
         self,
-        db: AsyncSession,
         question: str,
-        chunk_filter: ChunkFilter,
-    ) -> list[dict]:
-        use_extended_retrieval = self.reranker or self.settings.hybrid_enabled
-        retrieve_k = self.settings.rag_retrieve_k if use_extended_retrieval else self.settings.rag_top_k
+        query_vector: list[float],
+        retrieve_k: int,
+        effective_filter: ChunkFilter,
+    ) -> tuple[list[str], dict[str, float]]:
+        async def vector_search() -> list:
+            return await asyncio.to_thread(
+                self.vector_store.search,
+                query_vector,
+                retrieve_k,
+                effective_filter,
+            )
 
-        query_vector = self.embedding.embed_query(question)
-        vector_hits = self.vector_store.search(
-            query_vector=query_vector,
-            top_k=retrieve_k,
-            chunk_filter=chunk_filter,
-        )
+        async def bm25_search() -> list[tuple[str, float]]:
+            if not self.fulltext_store:
+                return []
+            try:
+                return await asyncio.to_thread(
+                    self.fulltext_store.search,
+                    question,
+                    retrieve_k,
+                    effective_filter,
+                )
+            except Exception:
+                return []
+
+        vector_hits, bm25_hits = await asyncio.gather(vector_search(), bm25_search())
+
         vector_ids = [str(hit.id) for hit in vector_hits]
         vector_score_map = {str(hit.id): float(hit.score) for hit in vector_hits}
 
-        bm25_ids: list[str] = []
-        if self.fulltext_store:
-            try:
-                bm25_hits = self.fulltext_store.search(question, retrieve_k, chunk_filter)
-                bm25_ids = [chunk_id for chunk_id, _ in bm25_hits]
-            except Exception:
-                bm25_ids = []
-
-        if bm25_ids:
+        if bm25_hits:
+            bm25_ids = [chunk_id for chunk_id, _ in bm25_hits]
             fused = reciprocal_rank_fusion(
                 [vector_ids, bm25_ids],
                 top_k=retrieve_k,
                 k=self.settings.hybrid_rrf_k,
             )
-            ranked_chunk_ids = [chunk_id for chunk_id, _ in fused]
-            score_map = {chunk_id: score for chunk_id, score in fused}
-        else:
-            ranked_chunk_ids = vector_ids
-            score_map = vector_score_map
+            return [chunk_id for chunk_id, _ in fused], dict(fused)
+
+        return vector_ids, vector_score_map
+
+    async def _retrieve_once(
+        self,
+        db: AsyncSession,
+        question: str,
+        chunk_filter: ChunkFilter,
+        *,
+        top_k: int | None = None,
+        skip_rerank: bool = False,
+        query_vector: list[float] | None = None,
+    ) -> list[dict]:
+        use_extended_retrieval = self.reranker or self.settings.hybrid_enabled
+        retrieve_k = self.settings.rag_retrieve_k if use_extended_retrieval else self.settings.rag_top_k
+        final_k = top_k or self.settings.rag_top_k
+
+        if query_vector is None:
+            query_vector = await asyncio.to_thread(self.embedding.embed_query, question)
+
+        ranked_chunk_ids, score_map = await self._search_hybrid(
+            question,
+            query_vector,
+            retrieve_k,
+            chunk_filter,
+        )
 
         citations = await self._load_citations(db, ranked_chunk_ids, score_map)
         citations = filter_citations(citations, chunk_filter)
         if not citations:
             return []
 
-        if self.reranker:
+        if self.reranker and not skip_rerank:
             citations = self.reranker.rerank(question, citations)
-        else:
-            citations = citations[: self.settings.rag_top_k]
+        return citations[:final_k]
 
-        return citations
+    def _merge_sub_query_filter(self, base: ChunkFilter, sub: SubQuery) -> ChunkFilter:
+        merged = base.model_copy(deep=True)
+        if sub.content_roles:
+            merged.content_roles = sub.content_roles
+        if sub.chunk_types:
+            merged.chunk_types = sub.chunk_types
+        if sub.section_hints:
+            merged.section_contains = sub.section_hints[0]
+        return merged
 
-    async def _resolve_chunk_filter(
-        self,
-        question: str,
-        doc_ids: list[UUID] | None,
-        explicit: ChunkFilter | None,
-    ) -> ChunkFilter:
-        inferred = None
-        if self.settings.rag_auto_filter_enabled:
-            if explicit and explicit.has_constraints():
-                inferred = extract_filters_heuristic(question)
-            else:
-                inferred = await self.filter_extractor.extract(question)
-            if inferred:
-                logger.info(
-                    "Inferred metadata filters from question: %s",
-                    inferred.model_dump(exclude_none=True),
-                )
-        return ChunkFilter.merge_sources(doc_ids, explicit, inferred)
-
-    async def retrieve(
+    async def _retrieve_with_relaxation(
         self,
         db: AsyncSession,
         question: str,
-        doc_ids: list[UUID] | None = None,
-        filters: ChunkFilter | None = None,
+        chunk_filter: ChunkFilter,
     ) -> list[dict]:
-        chunk_filter = await self._resolve_chunk_filter(question, doc_ids, filters)
+        if not chunk_filter.has_metadata_constraints():
+            return await self._retrieve_once(db, question, chunk_filter) or []
 
-        for attempt_filter in chunk_filter.relaxation_steps():
-            citations = await self._retrieve_once(db, question, attempt_filter)
-            if citations:
-                if attempt_filter.model_dump_json() != chunk_filter.model_dump_json():
-                    logger.info(
-                        "Metadata filter relaxed for query; original=%s relaxed=%s",
-                        chunk_filter.model_dump(exclude_none=True),
-                        attempt_filter.model_dump(exclude_none=True),
-                    )
-                return citations
+        query_vector = await asyncio.to_thread(self.embedding.embed_query, question)
+        broad_filter = chunk_filter.broad_filter()
+        broad_citations, strict_citations = await asyncio.gather(
+            self._retrieve_once(db, question, broad_filter, query_vector=query_vector),
+            self._retrieve_once(db, question, chunk_filter, query_vector=query_vector),
+        )
 
-        return []
+        if strict_citations:
+            if broad_citations and broad_filter.model_dump_json() != chunk_filter.model_dump_json():
+                logger.info(
+                    "Metadata filter applied; strict=%s",
+                    chunk_filter.model_dump(exclude_none=True),
+                )
+            return strict_citations
+
+        if broad_citations:
+            logger.info(
+                "Broad retrieval fallback after strict filter returned empty; original=%s",
+                chunk_filter.model_dump(exclude_none=True),
+            )
+        return broad_citations or []
+
+    async def _retrieve_troubleshooting_slot(
+        self,
+        db: AsyncSession,
+        sub: SubQuery,
+        base_filter: ChunkFilter,
+        *,
+        per_slot: int,
+    ) -> list[dict]:
+        slot_filter = self._merge_sub_query_filter(base_filter, sub)
+        slot_citations = await self._retrieve_once(
+            db,
+            sub.query,
+            slot_filter,
+            top_k=per_slot,
+            skip_rerank=True,
+        )
+        if slot_citations:
+            return slot_citations
+
+        broad_slot_filter = slot_filter.broad_filter()
+        return await self._retrieve_once(
+            db,
+            sub.query,
+            broad_slot_filter,
+            top_k=per_slot,
+            skip_rerank=True,
+        ) or []
+
+    async def _retrieve_troubleshooting(
+        self,
+        db: AsyncSession,
+        question: str,
+        plan: QueryPlan,
+        base_filter: ChunkFilter,
+    ) -> list[dict]:
+        per_slot = min(
+            plan.top_k_per_slot,
+            self.settings.rag_troubleshooting_top_k_per_slot,
+        )
+        max_total = self.settings.rag_troubleshooting_max_total
+        collected: list[dict] = []
+        seen: set[str] = set()
+
+        slot_results = await asyncio.gather(
+            *[
+                self._retrieve_troubleshooting_slot(
+                    db,
+                    sub,
+                    base_filter,
+                    per_slot=per_slot,
+                )
+                for sub in plan.sub_queries
+            ]
+        )
+
+        for sub, slot_citations in zip(plan.sub_queries, slot_results, strict=True):
+            for citation in slot_citations:
+                chunk_id = citation["chunk_id"]
+                if chunk_id in seen:
+                    continue
+                seen.add(chunk_id)
+                enriched = dict(citation)
+                enriched["slot"] = sub.slot
+                collected.append(enriched)
+
+        if not collected:
+            logger.info("Troubleshooting slot retrieval empty; falling back to broad retrieval")
+            return await self._retrieve_with_relaxation(db, question, base_filter)
+
+        if self.reranker:
+            collected = self.reranker.rerank(question, collected)
+        return collected[:max_total]
+
+    async def search_chunks(
+        self,
+        db: AsyncSession,
+        question: str,
+        chunk_filter: ChunkFilter,
+        *,
+        top_k: int | None = None,
+    ) -> list[dict]:
+        if chunk_filter.has_metadata_constraints():
+            return await self._retrieve_with_relaxation(db, question, chunk_filter)
+        return await self._retrieve_once(db, question, chunk_filter, top_k=top_k) or []
+
+    async def search_troubleshooting(
+        self,
+        db: AsyncSession,
+        question: str,
+        base_filter: ChunkFilter,
+    ) -> tuple[list[dict], QueryIntent]:
+        plan = await self.query_planner.plan(question)
+        citations = await self._retrieve_troubleshooting(db, question, plan, base_filter)
+        return citations, plan.intent
+
+    async def read_chunks(
+        self,
+        db: AsyncSession,
+        chunk_ids: list[str],
+    ) -> list[dict]:
+        score_map = {chunk_id: 1.0 for chunk_id in chunk_ids}
+        return await self._load_citations(db, chunk_ids, score_map)
 
     def build_context(self, citations: list[dict]) -> str:
         parts: list[str] = []
         for index, item in enumerate(citations, start=1):
             header = f"[{index}] {item['document_name']}"
+            if item.get("slot"):
+                header += f" slot={item['slot']}"
+            if item.get("content_role"):
+                header += f" role={item['content_role']}"
             if item.get("page"):
                 header += f" p.{item['page']}"
             if item.get("section"):
                 header += f" §{item['section']}"
             parts.append(f"{header}\n{item['text']}")
         return "\n\n---\n\n".join(parts)
-
-    async def answer(
-        self,
-        db: AsyncSession,
-        question: str,
-        doc_ids: list[UUID] | None = None,
-        chat_history: list[dict[str, str]] | None = None,
-        filters: ChunkFilter | None = None,
-    ) -> tuple[str, list[dict], str]:
-        citations = await self.retrieve(db, question, doc_ids, filters)
-        lang = detect_language(question)
-        if not citations:
-            if lang == "en":
-                return "Not found in the manual.", [], lang
-            return "说明书中未找到相关信息。", [], lang
-
-        context = self.build_context(citations)
-        answer = await self.llm.chat(question, context, chat_history)
-        answer, public_citations = finalize_answer_citations(answer, citations)
-        return answer, public_citations, lang

@@ -7,6 +7,7 @@ from qdrant_client.http import models as qmodels
 class ChunkFilter(BaseModel):
     document_ids: list[UUID] | None = None
     chunk_types: list[str] | None = None
+    content_roles: list[str] | None = None
     page_gte: int | None = Field(default=None, ge=1)
     page_lte: int | None = Field(default=None, ge=1)
     section_prefix: str | None = None
@@ -29,21 +30,6 @@ class ChunkFilter(BaseModel):
         return merged
 
     @classmethod
-    def merge_inferred(
-        cls,
-        primary: "ChunkFilter | None",
-        secondary: "ChunkFilter | None",
-    ) -> "ChunkFilter | None":
-        """Merge inferred filters; primary wins on field conflicts."""
-        if not primary and not secondary:
-            return None
-        merged = secondary.model_copy(deep=True) if secondary else cls()
-        if primary:
-            for key, value in primary.model_dump(exclude_none=True).items():
-                setattr(merged, key, value)
-        return merged if merged.has_constraints() else None
-
-    @classmethod
     def merge_sources(
         cls,
         doc_ids: list[UUID] | None,
@@ -61,6 +47,7 @@ class ChunkFilter(BaseModel):
             [
                 self.document_ids,
                 self.chunk_types,
+                self.content_roles,
                 self.page_gte is not None,
                 self.page_lte is not None,
                 self.section_prefix,
@@ -68,31 +55,30 @@ class ChunkFilter(BaseModel):
             ]
         )
 
-    def relaxation_steps(self) -> list["ChunkFilter"]:
-        steps: list[ChunkFilter] = [self]
+    def has_metadata_constraints(self) -> bool:
+        return any(
+            [
+                self.chunk_types,
+                self.content_roles,
+                self.page_gte is not None,
+                self.page_lte is not None,
+                self.section_prefix,
+                self.section_contains,
+            ]
+        )
 
-        if self.section_prefix or self.section_contains:
-            steps.append(
-                self.model_copy(update={"section_prefix": None, "section_contains": None})
-            )
-
-        latest = steps[-1]
-        if latest.chunk_types:
-            steps.append(latest.model_copy(update={"chunk_types": None}))
-
-        latest = steps[-1]
-        if latest.page_gte is not None or latest.page_lte is not None:
-            steps.append(latest.model_copy(update={"page_gte": None, "page_lte": None}))
-
-        unique: list[ChunkFilter] = []
-        seen: set[str] = set()
-        for step in steps:
-            key = step.model_dump_json()
-            if key in seen:
-                continue
-            seen.add(key)
-            unique.append(step)
-        return unique
+    def broad_filter(self) -> "ChunkFilter":
+        """Keep document scope only; drop narrow metadata constraints."""
+        return self.model_copy(
+            update={
+                "chunk_types": None,
+                "content_roles": None,
+                "page_gte": None,
+                "page_lte": None,
+                "section_prefix": None,
+                "section_contains": None,
+            }
+        )
 
 
 def build_qdrant_filter(chunk_filter: ChunkFilter | None) -> qmodels.Filter | None:
@@ -112,6 +98,13 @@ def build_qdrant_filter(chunk_filter: ChunkFilter | None) -> qmodels.Filter | No
             qmodels.FieldCondition(
                 key="chunk_type",
                 match=qmodels.MatchAny(any=chunk_filter.chunk_types),
+            )
+        )
+    if chunk_filter.content_roles:
+        must.append(
+            qmodels.FieldCondition(
+                key="content_role",
+                match=qmodels.MatchAny(any=chunk_filter.content_roles),
             )
         )
     if chunk_filter.page_gte is not None or chunk_filter.page_lte is not None:
@@ -138,6 +131,8 @@ def build_es_filters(chunk_filter: ChunkFilter | None) -> list[dict]:
         )
     if chunk_filter.chunk_types:
         filters.append({"terms": {"chunk_type": chunk_filter.chunk_types}})
+    if chunk_filter.content_roles:
+        filters.append({"terms": {"content_role": chunk_filter.content_roles}})
     if chunk_filter.page_gte is not None or chunk_filter.page_lte is not None:
         page_range: dict[str, int] = {}
         if chunk_filter.page_gte is not None:
@@ -159,6 +154,11 @@ def citation_matches(citation: dict, chunk_filter: ChunkFilter) -> bool:
 
     if chunk_filter.chunk_types and citation.get("chunk_type") not in chunk_filter.chunk_types:
         return False
+
+    if chunk_filter.content_roles:
+        role = citation.get("content_role")
+        if role not in chunk_filter.content_roles:
+            return False
 
     page = citation.get("page")
     if chunk_filter.page_gte is not None and (page is None or page < chunk_filter.page_gte):

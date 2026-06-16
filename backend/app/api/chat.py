@@ -7,10 +7,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.schemas import ChatRequest, ChatResponse
+from app.config import get_settings
 from app.db.models import Message, Session
 from app.db.session import get_db
-from app.services.citations_util import finalize_answer_citations, public_citations
-from app.services.rag import RAGService, detect_language
+from app.services.agent import AgentRAGService
+from app.services.citations_util import evidence_to_citations, finalize_answer_citations, public_citations
+from app.services.chat_runner import run_agent_answer
+from app.services.rag import detect_language, not_found_message
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -44,6 +47,7 @@ async def chat(
     payload: ChatRequest,
     db: AsyncSession = Depends(get_db),
 ):
+    settings = get_settings()
     session = await _get_or_create_session(db, payload.session_id, payload.doc_ids)
     await db.commit()
     history_result = await db.execute(
@@ -54,7 +58,6 @@ async def chat(
         for message in history_result.scalars().all()
     ]
 
-    rag = RAGService()
     doc_ids = payload.doc_ids or [uuid.UUID(doc_id) for doc_id in session.doc_ids]
     chunk_filters = payload.filters
 
@@ -63,19 +66,30 @@ async def chat(
 
         async def event_stream():
             try:
-                yield f"data: {json.dumps({'type': 'status', 'stage': 'retrieving'}, ensure_ascii=False)}\n\n"
-                citations = await rag.retrieve(
-                    db, payload.message, doc_ids or None, chunk_filters
-                )
+                yield f"data: {json.dumps({'type': 'status', 'stage': 'agent'}, ensure_ascii=False)}\n\n"
+                agent = AgentRAGService(settings)
+                step_events: list[dict] = []
 
-                if not citations:
-                    fallback = (
-                        "Not found in the manual."
-                        if lang == "en"
-                        else "说明书中未找到相关信息。"
-                    )
+                async def on_step(event: dict) -> None:
+                    step_events.append(event)
+
+                result = await run_agent_answer(
+                    db,
+                    payload.message,
+                    doc_ids or None,
+                    chunk_filters,
+                    history,
+                    agent=agent,
+                    on_step=on_step,
+                    skip_synthesis=True,
+                )
+                for event in step_events:
+                    yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+
+                if not result.evidence:
+                    fallback = not_found_message(lang)
                     yield f"data: {json.dumps({'type': 'delta', 'content': fallback}, ensure_ascii=False)}\n\n"
-                    yield f"data: {json.dumps({'type': 'done', 'session_id': str(session.id), 'citations': [], 'language': lang}, ensure_ascii=False)}\n\n"
+                    yield f"data: {json.dumps({'type': 'done', 'session_id': str(session.id), 'citations': [], 'language': lang, 'agent_steps': len(result.steps)}, ensure_ascii=False)}\n\n"
                     db.add(Message(session_id=session.id, role="user", content=payload.message))
                     db.add(
                         Message(
@@ -88,17 +102,19 @@ async def chat(
                     await db.commit()
                     return
 
-                context = rag.build_context(citations)
-                refs = public_citations(citations)
+                full_citations = evidence_to_citations(result.evidence)
+                refs = public_citations(full_citations)
                 yield f"data: {json.dumps({'type': 'citations', 'citations': refs}, ensure_ascii=False)}\n\n"
 
                 answer_parts: list[str] = []
-                async for delta in rag.llm.chat_stream(payload.message, context, history):
+                async for delta in agent.iter_synthesis(
+                    payload.message, result.evidence, history, intent=result.intent
+                ):
                     answer_parts.append(delta)
                     yield f"data: {json.dumps({'type': 'delta', 'content': delta}, ensure_ascii=False)}\n\n"
 
-                answer, refs = finalize_answer_citations("".join(answer_parts), citations)
-                yield f"data: {json.dumps({'type': 'done', 'session_id': str(session.id), 'content': answer, 'citations': refs, 'language': lang}, ensure_ascii=False)}\n\n"
+                answer, refs = finalize_answer_citations("".join(answer_parts), full_citations)
+                yield f"data: {json.dumps({'type': 'done', 'session_id': str(session.id), 'content': answer, 'citations': refs, 'language': lang, 'agent_steps': len(result.steps)}, ensure_ascii=False)}\n\n"
                 db.add(Message(session_id=session.id, role="user", content=payload.message))
                 db.add(
                     Message(
@@ -119,23 +135,28 @@ async def chat(
             headers=STREAM_HEADERS,
         )
 
-    answer, citations, lang = await rag.answer(
-        db, payload.message, doc_ids or None, history, chunk_filters
+    result = await run_agent_answer(
+        db,
+        payload.message,
+        doc_ids or None,
+        chunk_filters,
+        history,
+        settings=settings,
     )
     db.add(Message(session_id=session.id, role="user", content=payload.message))
     db.add(
         Message(
             session_id=session.id,
             role="assistant",
-            content=answer,
-            citations=citations,
+            content=result.answer,
+            citations=result.citations,
         )
     )
     await db.commit()
 
     return ChatResponse(
         session_id=session.id,
-        answer=answer,
-        citations=citations,
-        language=lang,
+        answer=result.answer,
+        citations=result.citations,
+        language=result.language,
     )

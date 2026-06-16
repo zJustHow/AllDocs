@@ -37,6 +37,7 @@ INDEX_BODY = {
             "page": {"type": "integer"},
             "section": {"type": "keyword"},
             "chunk_type": {"type": "keyword"},
+            "content_role": {"type": "keyword"},
             "chunk_index": {"type": "integer"},
         }
     },

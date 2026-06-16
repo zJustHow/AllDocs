@@ -8,10 +8,13 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from sqlalchemy import select
 
 from app.api.schemas import ChunkFilter
+from app.config import get_settings
 from app.db.models import Message, Session
 from app.db.session import async_session_factory
-from app.services.citations_util import finalize_answer_citations, public_citations
-from app.services.rag import RAGService, detect_language
+from app.services.agent import AgentRAGService
+from app.services.citations_util import evidence_to_citations, finalize_answer_citations, public_citations
+from app.services.chat_runner import run_agent_answer
+from app.services.rag import detect_language, not_found_message
 from app.services.speech import SpeechService
 
 router = APIRouter(tags=["voice-ws"])
@@ -42,7 +45,8 @@ async def _send_json(websocket: WebSocket, payload: dict) -> None:
 async def voice_websocket(websocket: WebSocket) -> None:
     await websocket.accept()
     speech = SpeechService()
-    rag = RAGService()
+    settings = get_settings()
+    agent = AgentRAGService(settings)
 
     try:
         while True:
@@ -107,12 +111,28 @@ async def voice_websocket(websocket: WebSocket) -> None:
                 ]
 
                 effective_doc_ids = parsed_doc_ids or [uuid.UUID(doc_id) for doc_id in session.doc_ids]
-                citations = await rag.retrieve(
-                    db, question, effective_doc_ids or None, chunk_filters
-                )
 
-                if not citations:
-                    fallback = "Not found in the manual." if lang == "en" else "说明书中未找到相关信息。"
+                await _send_json(websocket, {"type": "status", "stage": "agent"})
+                step_events: list[dict] = []
+
+                async def on_step(event: dict) -> None:
+                    step_events.append(event)
+
+                result = await run_agent_answer(
+                    db,
+                    question,
+                    effective_doc_ids or None,
+                    chunk_filters,
+                    history,
+                    agent=agent,
+                    on_step=on_step,
+                    skip_synthesis=True,
+                )
+                for event in step_events:
+                    await _send_json(websocket, event)
+
+                if not result.evidence:
+                    fallback = not_found_message(lang)
                     await _send_json(websocket, {"type": "answer_delta", "content": fallback})
                     if with_audio:
                         audio_wav = await asyncio.to_thread(speech.synthesize, fallback, lang)
@@ -137,23 +157,25 @@ async def voice_websocket(websocket: WebSocket) -> None:
                             "session_id": str(session.id),
                             "citations": [],
                             "language": lang,
+                            "agent_steps": len(result.steps),
                         },
                     )
                     continue
 
-                context = rag.build_context(citations)
-                refs = public_citations(citations)
+                full_citations = evidence_to_citations(result.evidence)
+                refs = public_citations(full_citations)
                 await _send_json(websocket, {"type": "citations", "citations": refs})
+
                 answer_parts: list[str] = []
                 pending_tts = ""
-
                 await _send_json(websocket, {"type": "status", "stage": "answering"})
 
-                async for delta in rag.llm.chat_stream(question, context, history):
+                async for delta in agent.iter_synthesis(
+                    question, result.evidence, history, intent=result.intent
+                ):
                     answer_parts.append(delta)
                     pending_tts += delta
                     await _send_json(websocket, {"type": "answer_delta", "content": delta})
-
                     if with_audio:
                         complete, pending_tts = _split_sentences(pending_tts)
                         for sentence in complete:
@@ -177,8 +199,7 @@ async def voice_websocket(websocket: WebSocket) -> None:
                             {"type": "audio", "data": base64.b64encode(audio_wav).decode("ascii")},
                         )
 
-                answer, refs = finalize_answer_citations("".join(answer_parts), citations)
-
+                answer, refs = finalize_answer_citations("".join(answer_parts), full_citations)
                 db.add(Message(session_id=session.id, role="user", content=question))
                 db.add(
                     Message(
@@ -189,7 +210,6 @@ async def voice_websocket(websocket: WebSocket) -> None:
                     )
                 )
                 await db.commit()
-
                 await _send_json(
                     websocket,
                     {
@@ -198,6 +218,7 @@ async def voice_websocket(websocket: WebSocket) -> None:
                         "content": answer,
                         "citations": refs,
                         "language": lang,
+                        "agent_steps": len(result.steps),
                     },
                 )
     except WebSocketDisconnect:

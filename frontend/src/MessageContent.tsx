@@ -5,6 +5,7 @@ import {
   splitMessageWithCitations,
 } from "./citations";
 import type { ViewerTarget } from "./citations";
+import { useI18n } from "./i18n";
 import { PdfBadgeIcon } from "./icons";
 import type { Citation } from "./types";
 
@@ -19,6 +20,7 @@ export default function MessageContent({
   citations = [],
   onOpenDocument,
 }: MessageContentProps) {
+  const { t } = useI18n();
   const segments = splitMessageWithCitations(content, citations);
 
   return (
@@ -28,7 +30,9 @@ export default function MessageContent({
           return <span key={index}>{segment.value}</span>;
         }
 
-        const pageHint = segment.citation.page ? ` · 第 ${segment.citation.page} 页` : "";
+        const pageHint = segment.citation.page
+          ? t("viewer.pageHint", { page: segment.citation.page })
+          : "";
 
         const citationIndex = getCitationIndex(segment.citation, citations);
         const label =
@@ -47,7 +51,7 @@ export default function MessageContent({
             onClick={() => onOpenDocument(citationToViewerTarget(segment.citation))}
           >
             <PdfBadgeIcon />
-            PDF {label}
+            {t("citation.pdf")} {label}
           </button>
         );
       })}

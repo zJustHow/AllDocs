@@ -71,18 +71,29 @@ install_docker() {
 }
 
 configure_docker_mirror() {
-  local mirror="${DOCKER_MIRROR:-docker.m.daocloud.io}"
+  local primary="${DOCKER_MIRROR:-docker.m.daocloud.io}"
+  local mirrors=(
+    "$primary"
+    docker.1ms.run
+    docker.xuanyuan.me
+  )
   mkdir -p /etc/docker
 
-  if [[ -f /etc/docker/daemon.json ]] && grep -q "$mirror" /etc/docker/daemon.json 2>/dev/null; then
-    info "Docker 镜像加速已配置 ($mirror)"
+  if [[ -f /etc/docker/daemon.json ]] && grep -q "$primary" /etc/docker/daemon.json 2>/dev/null; then
+    info "Docker 镜像加速已配置 ($primary 等)"
     return
   fi
 
-  warn "配置 Docker 镜像加速 ($mirror)，解决国内拉取 docker.io 超时..."
+  warn "配置 Docker 镜像加速（${primary} 等），解决国内拉取 docker.io 超时..."
+  local json_mirrors=""
+  local m
+  for m in "${mirrors[@]}"; do
+    [[ -n "$json_mirrors" ]] && json_mirrors+=", "
+    json_mirrors+="\"https://${m}\""
+  done
   cat >/etc/docker/daemon.json <<EOF
 {
-  "registry-mirrors": ["https://${mirror}"]
+  "registry-mirrors": [${json_mirrors}]
 }
 EOF
   systemctl restart docker
@@ -186,6 +197,7 @@ start_stack() {
   fi
 
   info "构建并启动生产环境（首次可能需 20–40 分钟）..."
+  bash "$ROOT/scripts/pull_docker_images.sh"
   docker compose -f docker-compose.prod.yml up -d --build
   info "服务已启动，访问 http://<服务器IP>（默认 80 端口）"
 }

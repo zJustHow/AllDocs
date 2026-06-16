@@ -1,10 +1,11 @@
-import type { Citation, DocumentItem } from "./types";
+import type { AgentPlannerHint, AgentStepEvent, Citation, DocumentItem } from "./types";
+import { t } from "./i18n";
 
 const API_BASE = "";
 
 export async function listDocuments(): Promise<DocumentItem[]> {
   const res = await fetch(`${API_BASE}/api/v1/documents`);
-  if (!res.ok) throw new Error("Failed to load documents");
+  if (!res.ok) throw new Error(t("errors.loadDocumentsFailed"));
   return res.json();
 }
 
@@ -17,25 +18,27 @@ export async function uploadDocument(file: File): Promise<DocumentItem> {
   });
   if (!res.ok) {
     const detail = await res.text();
-    throw new Error(detail || "Upload failed");
+    throw new Error(detail || t("errors.uploadFailed"));
   }
   return res.json();
 }
 
 export async function deleteDocument(id: string): Promise<void> {
   const res = await fetch(`${API_BASE}/api/v1/documents/${id}`, { method: "DELETE" });
-  if (!res.ok) throw new Error("Delete failed");
+  if (!res.ok) throw new Error(t("errors.deleteFailed"));
 }
 
 export async function getDocumentFileUrl(documentId: string): Promise<string> {
   const res = await fetch(`${API_BASE}/api/v1/documents/${documentId}/file`);
-  if (!res.ok) throw new Error("无法加载文档");
+  if (!res.ok) throw new Error(t("errors.loadDocumentFailed"));
   const blob = await res.blob();
   return URL.createObjectURL(blob);
 }
 
 export interface StreamHandlers {
   onStatus?: (stage: string) => void;
+  onAgentPlannerHint?: (hint: AgentPlannerHint) => void;
+  onAgentStep?: (step: AgentStepEvent) => void;
   onCitations?: (citations: Citation[]) => void;
   onDelta: (text: string) => void;
   onDone: (payload: {
@@ -43,6 +46,7 @@ export interface StreamHandlers {
     content?: string;
     citations: Citation[];
     language: string;
+    agentSteps?: number;
   }) => void;
   onError: (message: string) => void;
 }
@@ -65,7 +69,7 @@ export async function streamChat(
   });
 
   if (!res.ok || !res.body) {
-    throw new Error("Chat request failed");
+    throw new Error(t("errors.chatRequestFailed"));
   }
 
   const reader = res.body.getReader();
@@ -89,6 +93,19 @@ export async function streamChat(
         continue;
       }
       if (payload.type === "status") handlers.onStatus?.(payload.stage as string);
+      if (payload.type === "agent_planner_hint") {
+        handlers.onAgentPlannerHint?.((payload.hint as AgentPlannerHint) ?? {});
+      }
+      if (payload.type === "agent_step") {
+        handlers.onAgentStep?.({
+          step: payload.step as number,
+          thought: (payload.thought as string) ?? "",
+          action: (payload.action as string) ?? "",
+          action_input: (payload.action_input as Record<string, unknown>) ?? {},
+          observation: (payload.observation as string) ?? "",
+          evidence_count: payload.evidence_count as number | undefined,
+        });
+      }
       if (payload.type === "citations") {
         handlers.onCitations?.((payload.citations as Citation[]) ?? []);
       }
@@ -100,17 +117,18 @@ export async function streamChat(
           content: payload.content as string | undefined,
           citations: (payload.citations as Citation[]) ?? [],
           language: payload.language as string,
+          agentSteps: payload.agent_steps as number | undefined,
         });
       }
       if (payload.type === "error") {
         finished = true;
-        handlers.onError((payload.message as string) ?? "Chat failed");
+        handlers.onError((payload.message as string) ?? t("errors.chatFailed"));
       }
     }
   }
 
   if (!finished) {
-    handlers.onError("回答未完成，请重试");
+    handlers.onError(t("errors.chatIncomplete"));
   }
 }
 

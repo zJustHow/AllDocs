@@ -7,7 +7,7 @@ from app.config import get_settings
 from app.db.models import Chunk, Document, DocumentStatus
 from app.services.embedding import EmbeddingService, chunk_embedding_text
 from app.services.fulltext_store import FulltextStore
-from app.services.ingestion import IngestionService
+from app.services.ingestion import IngestionService, toc_entry_to_dict
 from app.services.storage import StorageService
 from app.services.vector_store import VectorStore
 from app.workers.celery_app import celery_app
@@ -71,6 +71,7 @@ def process_document(document_id: str) -> None:
                     section=parsed.section,
                     chunk_index=parsed.chunk_index,
                     chunk_type=parsed.chunk_type,
+                    content_role=parsed.content_role,
                 )
                 db.add(chunk)
                 chunk_rows.append(chunk)
@@ -87,6 +88,7 @@ def process_document(document_id: str) -> None:
                     "page": chunk.page,
                     "section": chunk.section,
                     "chunk_type": chunk.chunk_type,
+                    "content_role": chunk.content_role,
                     "chunk_index": chunk.chunk_index,
                 }
                 for chunk in chunk_rows
@@ -117,6 +119,9 @@ def process_document(document_id: str) -> None:
             document.status = DocumentStatus.ready
             document.page_count = page_count
             document.ocr_pages = parse_result.ocr_pages
+            document.toc_entries = [
+                toc_entry_to_dict(entry) for entry in parse_result.toc_entries
+            ] or None
             document.error_message = None
             _set_progress(db, document, 100, "完成")
             db.commit()

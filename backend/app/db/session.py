@@ -30,3 +30,9 @@ async def init_db() -> None:
                 "ALTER TABLE documents ADD COLUMN IF NOT EXISTS progress_message VARCHAR(256)"
             )
         )
+        await conn.execute(
+            text("ALTER TABLE chunks ADD COLUMN IF NOT EXISTS content_role VARCHAR(64)")
+        )
+        await conn.execute(
+            text("ALTER TABLE documents ADD COLUMN IF NOT EXISTS toc_entries JSONB")
+        )

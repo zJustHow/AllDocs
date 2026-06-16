@@ -1,4 +1,3 @@
-from functools import lru_cache
 from threading import Lock
 
 from FlagEmbedding.bge_m3 import BGEM3FlagModel
@@ -20,11 +19,6 @@ def _get_model(settings: Settings) -> BGEM3FlagModel:
                     device=settings.embedding_device,
                 )
     return _model
-
-
-@lru_cache
-def _query_instruction() -> str:
-    return ""
 
 
 def chunk_embedding_text(text: str, section: str | None) -> str:

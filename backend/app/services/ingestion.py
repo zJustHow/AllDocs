@@ -10,7 +10,52 @@ from app.services.ocr import OCRService
 _SECTION_PATH_MAX_LEN = 512
 _SECTION_PATH_SEPARATOR = " > "
 _PAGE_SEPARATOR = "\n\n"
+_TOC_LEADER_RE = re.compile(r"\.{4,}|…{2,}|·{4,}")
+_TOC_ENTRY_RE = re.compile(
+    r"^(?:\d+(?:\.\d+)*)?\s*.+?"
+    r"(?:\.{3,}|…{2,}|·{4,}|\s{2,})"
+    r"\s*\d+\s*$"
+)
+_CHAPTER_ONE_RE = re.compile(
+    r"第[一1壹]章|chapter\s*1\b",
+    re.IGNORECASE,
+)
+_CHAPTER_TITLE_RE = re.compile(
+    r"第[一二三四五六七八九十百千零两\d]+章|chapter\s+\d+",
+    re.IGNORECASE,
+)
 _PROCEDURE_RE = re.compile(r"^(\d+[\.\)、．]|步骤\s*\d+|[①②③④⑤])")
+_ALARM_CODE_RE = re.compile(
+    r"(?:报警|错误|故障|alarm|error|fault|code)[^\w]{0,6}([A-Z]?\d{2,4})|"
+    r"\b(?:E|ERR|ALM)[-_]?\d{2,4}\b",
+    re.IGNORECASE,
+)
+
+_SYMPTOM_SECTION_RE = re.compile(
+    r"故障现象|报警代码|错误代码|故障代码|异常现象|alarm\s*code|fault\s*code|error\s*code",
+    re.IGNORECASE,
+)
+_CAUSE_SECTION_RE = re.compile(
+    r"故障原因|可能原因|原因分析|产生原因|alarm\s*cause|fault\s*cause|root\s*cause",
+    re.IGNORECASE,
+)
+_TROUBLESHOOTING_SECTION_RE = re.compile(
+    r"故障排除|故障处理|排查|维修指导|处理办法|排除方法|troubleshooting|trouble\s*shooting",
+    re.IGNORECASE,
+)
+_PRINCIPLE_SECTION_RE = re.compile(
+    r"工作原理|技术说明|系统概述|结构说明|功能说明|operating\s*principle|how\s*it\s*works",
+    re.IGNORECASE,
+)
+_CAUSE_TEXT_RE = re.compile(r"可能原因|产生原因|是由于|导致.*故障|because\s+of", re.IGNORECASE)
+_TROUBLESHOOTING_TEXT_RE = re.compile(
+    r"检查步骤|排除步骤|处理步骤|排查方法|解决方法|若.*仍.*无法",
+    re.IGNORECASE,
+)
+_PRINCIPLE_TEXT_RE = re.compile(
+    r"工作原理|触发条件|检测逻辑|控制逻辑|when.*trigger",
+    re.IGNORECASE,
+)
 
 
 @dataclass
@@ -20,6 +65,7 @@ class ParsedChunk:
     section: str | None
     chunk_index: int
     chunk_type: str
+    content_role: str | None = None
 
 
 @dataclass
@@ -27,6 +73,30 @@ class ParseResult:
     chunks: list[ParsedChunk]
     page_count: int
     ocr_pages: int
+    toc_entries: list[TocEntry]
+
+
+def toc_entry_to_dict(entry: TocEntry) -> dict:
+    return {
+        "level": entry.level,
+        "title": entry.title,
+        "start_page": entry.start_page,
+        "end_page": entry.end_page,
+        "path": entry.path,
+    }
+
+
+def toc_entries_from_dicts(items: list[dict]) -> list[TocEntry]:
+    return [
+        TocEntry(
+            level=int(item["level"]),
+            title=str(item["title"]),
+            start_page=int(item["start_page"]),
+            end_page=int(item["end_page"]),
+            path=str(item["path"]),
+        )
+        for item in items
+    ]
 
 
 @dataclass(frozen=True)
@@ -36,6 +106,26 @@ class TocEntry:
     start_page: int
     end_page: int
     path: str
+
+
+def is_toc_text(text: str) -> bool:
+    """Detect table-of-contents style text (section title + dot leaders + page number)."""
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if len(lines) < 2:
+        return False
+
+    matched = 0
+    for line in lines:
+        if _TOC_ENTRY_RE.match(line):
+            matched += 1
+            continue
+        if _TOC_LEADER_RE.search(line) and re.search(r"\d+\s*$", line):
+            matched += 1
+            continue
+        if re.fullmatch(r"[\.\s·…]{4,}\s*\d+", line):
+            matched += 1
+
+    return matched >= 2 and matched / len(lines) >= 0.4
 
 
 def _detect_chunk_type(text: str) -> str:
@@ -50,6 +140,28 @@ def _detect_chunk_type(text: str) -> str:
     if "|" in text and text.count("|") >= 2:
         return "table"
     return "text"
+
+
+def _detect_content_role(section: str | None, text: str) -> str | None:
+    section_text = section or ""
+    if _SYMPTOM_SECTION_RE.search(section_text):
+        return "symptom"
+    if _CAUSE_SECTION_RE.search(section_text):
+        return "cause"
+    if _TROUBLESHOOTING_SECTION_RE.search(section_text):
+        return "troubleshooting"
+    if _PRINCIPLE_SECTION_RE.search(section_text):
+        return "principle"
+
+    if _ALARM_CODE_RE.search(text):
+        return "symptom"
+    if _CAUSE_TEXT_RE.search(text):
+        return "cause"
+    if _TROUBLESHOOTING_TEXT_RE.search(text):
+        return "troubleshooting"
+    if _PRINCIPLE_TEXT_RE.search(text):
+        return "principle"
+    return None
 
 
 def _split_text_with_offsets(
@@ -201,6 +313,31 @@ def section_for_page(entries: list[TocEntry], page: int) -> str | None:
     return max(matches, key=lambda entry: entry.level).path
 
 
+def first_chapter_start_page(entries: list[TocEntry]) -> int | None:
+    """Return the PDF page where the first chapter begins, based on bookmarks."""
+    if not entries:
+        return None
+
+    for entry in entries:
+        if _CHAPTER_ONE_RE.search(entry.title) or _CHAPTER_ONE_RE.search(entry.path):
+            return entry.start_page
+
+    level_one = [entry for entry in entries if entry.level == 1]
+    for entry in level_one:
+        if _CHAPTER_TITLE_RE.search(entry.title):
+            return entry.start_page
+
+    if level_one:
+        return min(entry.start_page for entry in level_one)
+
+    return min(entry.start_page for entry in entries)
+
+
+def should_skip_front_matter(page: int, toc_entries: list[TocEntry]) -> bool:
+    content_start = first_chapter_start_page(toc_entries)
+    return content_start is not None and page < content_start
+
+
 class IngestionService:
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
@@ -238,6 +375,10 @@ class IngestionService:
                 ocr_pages += 1
             if not page_text.strip():
                 continue
+            if should_skip_front_matter(page_number, toc_entries):
+                continue
+            if is_toc_text(page_text):
+                continue
             section = section_for_page(toc_entries, page_number)
             pages.append((section, page_text.strip(), page_number))
             if on_page_progress is not None:
@@ -262,9 +403,15 @@ class IngestionService:
                         section=section,
                         chunk_index=chunk_index,
                         chunk_type=_detect_chunk_type(piece),
+                        content_role=_detect_content_role(section, piece),
                     )
                 )
                 chunk_index += 1
 
         doc.close()
-        return ParseResult(chunks=parsed_chunks, page_count=page_count, ocr_pages=ocr_pages)
+        return ParseResult(
+            chunks=parsed_chunks,
+            page_count=page_count,
+            ocr_pages=ocr_pages,
+            toc_entries=toc_entries,
+        )

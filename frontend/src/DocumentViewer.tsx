@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { getDocumentFileUrl } from "./api";
 import type { ViewerTarget } from "./citations";
+import { useI18n } from "./i18n";
 import { CloseIcon, ZoomInIcon, ZoomOutIcon } from "./icons";
 
 interface DocumentViewerProps {
@@ -15,6 +16,7 @@ const ZOOM_STEP = 25;
 const pdfUrlCache = new Map<string, string>();
 
 export default function DocumentViewer({ target, onClose }: DocumentViewerProps) {
+  const { t } = useI18n();
   const [pdfUrl, setPdfUrl] = useState<string | null>(
     () => pdfUrlCache.get(target.documentId) ?? null,
   );
@@ -86,7 +88,7 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
           <span className="doc-viewer-name">{target.documentName}</span>
           {target.section ? <span className="doc-viewer-section">{target.section}</span> : null}
         </div>
-        <button className="doc-viewer-close" onClick={onClose} aria-label="关闭文档预览">
+        <button className="doc-viewer-close" onClick={onClose} aria-label={t("viewer.close")}>
           <CloseIcon />
         </button>
       </div>
@@ -94,7 +96,7 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
       <div className="doc-viewer-shell">
         <div className="doc-viewer-stage">
           <div className="doc-viewer-canvas" style={{ transform: `scale(${zoom / 100})` }}>
-            {loading && !pdfUrl && <p className="doc-viewer-status">加载文档中...</p>}
+            {loading && !pdfUrl && <p className="doc-viewer-status">{t("viewer.loading")}</p>}
             {error && <p className="doc-viewer-status error-text">{error}</p>}
             {iframeSrc && !error && (
               <iframe
@@ -108,7 +110,7 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
 
           {!loading && !error && pdfUrl && (
             <div className="doc-viewer-toolbar">
-              <span className="doc-viewer-toolbar-label">Page</span>
+              <span className="doc-viewer-toolbar-label">{t("viewer.pageLabel")}</span>
               <input
                 className="doc-viewer-page-input"
                 type="text"
@@ -123,7 +125,7 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
                     (e.target as HTMLInputElement).blur();
                   }
                 }}
-                aria-label="页码"
+                aria-label={t("viewer.page")}
               />
               <span className="doc-viewer-page-total">/ {pageCount ?? "—"}</span>
               <span className="doc-viewer-toolbar-divider" aria-hidden="true" />
@@ -132,7 +134,7 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
                 className="doc-viewer-toolbar-btn"
                 onClick={() => adjustZoom(-ZOOM_STEP)}
                 disabled={zoom <= ZOOM_MIN}
-                aria-label="缩小"
+                aria-label={t("viewer.zoomOut")}
               >
                 <ZoomOutIcon />
               </button>
@@ -142,7 +144,7 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
                 className="doc-viewer-toolbar-btn"
                 onClick={() => adjustZoom(ZOOM_STEP)}
                 disabled={zoom >= ZOOM_MAX}
-                aria-label="放大"
+                aria-label={t("viewer.zoomIn")}
               >
                 <ZoomInIcon />
               </button>

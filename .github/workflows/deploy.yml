@@ -95,8 +95,20 @@ jobs:
           ECS_DEPLOY_PATH: ${{ vars.ECS_DEPLOY_PATH || '/opt/alldocs' }}
         run: |
           set -euo pipefail
-          ssh -p "$ECS_SSH_PORT" "${ECS_USER}@${ECS_HOST}" \
-            "set -euo pipefail && cd '${ECS_DEPLOY_PATH}' && docker compose -f docker-compose.prod.yml up -d --build"
+          ssh -p "$ECS_SSH_PORT" "${ECS_USER}@${ECS_HOST}" bash -s <<EOF
+          set -euo pipefail
+          cd '${ECS_DEPLOY_PATH}'
+          bash scripts/pull_docker_images.sh
+          for attempt in 1 2 3; do
+            if docker compose -f docker-compose.prod.yml up -d --build; then
+              exit 0
+            fi
+            echo "docker compose build failed (attempt \${attempt}/3), retrying in 30s ..."
+            bash scripts/pull_docker_images.sh
+            sleep 30
+          done
+          exit 1
+          EOF
 
       - name: Verify API health
         env:

@@ -30,6 +30,7 @@ class Document(Base):
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     page_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     ocr_pages: Mapped[int | None] = mapped_column(Integer, nullable=True, default=0)
+    toc_entries: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     progress: Mapped[int] = mapped_column(Integer, default=0)
     progress_message: Mapped[str | None] = mapped_column(String(256), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -50,6 +51,7 @@ class Chunk(Base):
     section: Mapped[str | None] = mapped_column(String(512), nullable=True)
     chunk_index: Mapped[int] = mapped_column(Integer)
     chunk_type: Mapped[str] = mapped_column(String(64), default="text")
+    content_role: Mapped[str | None] = mapped_column(String(64), nullable=True)
     qdrant_point_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     document: Mapped["Document"] = relationship(back_populates="chunks")

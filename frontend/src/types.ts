@@ -19,10 +19,35 @@ export interface Citation {
   score?: number | null;
 }
 
+export interface AgentPlannerHint {
+  intent?: string;
+  symptom?: string | null;
+  apply_metadata_filters?: boolean;
+  filters?: Record<string, unknown> | null;
+  sub_queries?: Array<{
+    slot: string;
+    query: string;
+    content_roles?: string[] | null;
+    chunk_types?: string[] | null;
+  }>;
+}
+
+export interface AgentStepEvent {
+  step: number;
+  thought: string;
+  action: string;
+  action_input: Record<string, unknown>;
+  observation: string;
+  evidence_count?: number;
+}
+
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant";
   content: string;
   citations?: Citation[];
   streaming?: boolean;
+  agentSteps?: AgentStepEvent[];
+  agentPlannerHint?: AgentPlannerHint | null;
+  agentRunning?: boolean;
 }
