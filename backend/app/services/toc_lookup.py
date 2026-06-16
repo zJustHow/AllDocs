@@ -124,6 +124,62 @@ def _score_entry(
     return score
 
 
+def format_document_outline(document: Document) -> str | None:
+    if not document.toc_entries:
+        return None
+    entries = toc_entries_from_dicts(document.toc_entries)
+    lines = [f"《{document.name}》章节树："]
+    for entry in entries[:80]:
+        indent = "  " * max(entry.level - 1, 0)
+        lines.append(
+            f"{indent}- {entry.title} (p.{entry.start_page}-p.{entry.end_page})"
+        )
+    if len(entries) > 80:
+        lines.append(f"  ... 共 {len(entries)} 条，已截断")
+    return "\n".join(lines)
+
+
+def format_documents_outline(documents: list[Document]) -> str:
+    if not documents:
+        return "未找到可用文档目录（可能 PDF 无书签，需重新处理文档）。"
+    parts: list[str] = []
+    for document in documents:
+        outline = format_document_outline(document)
+        if outline:
+            parts.append(outline)
+        else:
+            parts.append(f"《{document.name}》：无书签目录")
+    return "\n\n".join(parts)
+
+
+def document_outline_to_chunk(document: Document) -> dict | None:
+    text = format_document_outline(document)
+    if not text:
+        return None
+    entries = toc_entries_from_dicts(document.toc_entries)
+    start_page = entries[0].start_page if entries else 1
+    return {
+        "chunk_id": f"toc-outline:{document.id}",
+        "document_id": str(document.id),
+        "document_name": document.name,
+        "page": start_page,
+        "section": "目录",
+        "content_role": None,
+        "score": 1.0,
+        "snippet": f"文档目录 · {document.name}",
+        "text": text,
+    }
+
+
+def outline_to_chunks(documents: list[Document]) -> list[dict]:
+    chunks: list[dict] = []
+    for document in documents:
+        chunk = document_outline_to_chunk(document)
+        if chunk is not None:
+            chunks.append(chunk)
+    return chunks
+
+
 def _entry_to_chunk(document: Document, entry: TocEntry, index: int, score: float) -> dict:
     text = (
         f"章节：{entry.path}\n"

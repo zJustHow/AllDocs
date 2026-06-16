@@ -10,20 +10,22 @@ RUN sed -i 's|http://deb.debian.org|https://mirrors.tuna.tsinghua.edu.cn|g' /etc
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir --default-timeout=600 \
+# torch CPU wheels live on pytorch.org; install once before the PyPI mirror pass.
+RUN pip install --no-cache-dir --default-timeout=600 --retries 5 \
         --index-url https://download.pytorch.org/whl/cpu \
-        "torch>=2.1.0" \
-    && pip install --no-cache-dir --default-timeout=600 \
+        "torch==2.12.0+cpu" \
+    && grep -v '^torch' requirements.txt > /tmp/requirements.docker.txt \
+    && pip install --no-cache-dir --default-timeout=600 --retries 5 \
         -i https://pypi.tuna.tsinghua.edu.cn/simple \
         --trusted-host pypi.tuna.tsinghua.edu.cn \
-        -r requirements.txt
+        -r /tmp/requirements.docker.txt
 
-RUN pip install --no-cache-dir --default-timeout=600 \
+RUN pip install --no-cache-dir --default-timeout=600 --retries 5 \
         -i https://pypi.tuna.tsinghua.edu.cn/simple \
         --trusted-host pypi.tuna.tsinghua.edu.cn \
         "peft>=0.10.0"
 
-RUN pip install --no-cache-dir --default-timeout=600 \
+RUN pip install --no-cache-dir --default-timeout=600 --retries 5 \
         -i https://www.paddlepaddle.org.cn/packages/stable/cpu/ \
         "paddlepaddle==3.0.0"
 

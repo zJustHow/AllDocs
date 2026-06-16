@@ -8,9 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Document
 from app.services.chunk_filter import ChunkFilter
-from app.services.ingestion import toc_entries_from_dicts
 from app.services.rag import RAGService, parse_chunk_uuids
-from app.services.toc_lookup import lookup_toc
+from app.services.toc_lookup import format_documents_outline, lookup_toc, outline_to_chunks
 
 RETRIEVAL_TOOLS = frozenset(
     {"list_outline", "lookup_toc", "search_chunks", "search_chunks_batch", "read_chunks"}
@@ -26,28 +25,6 @@ def _evidence_key(chunk: dict) -> str:
         f"{chunk.get('document_id')}:{chunk.get('page')}:"
         f"{chunk.get('section') or ''}"
     )
-
-
-def _format_outline(documents: list[Document]) -> str:
-    if not documents:
-        return "未找到可用文档目录（可能 PDF 无书签，需重新处理文档）。"
-
-    parts: list[str] = []
-    for document in documents:
-        if not document.toc_entries:
-            parts.append(f"《{document.name}》：无书签目录")
-            continue
-        entries = toc_entries_from_dicts(document.toc_entries)
-        lines = [f"《{document.name}》章节树："]
-        for entry in entries[:80]:
-            indent = "  " * max(entry.level - 1, 0)
-            lines.append(
-                f"{indent}- {entry.title} (p.{entry.start_page}-p.{entry.end_page})"
-            )
-        if len(entries) > 80:
-            lines.append(f"  ... 共 {len(entries)} 条，已截断")
-        parts.append("\n".join(lines))
-    return "\n\n".join(parts)
 
 
 def _format_chunks(chunks: list[dict], *, source_tool: str) -> str:
@@ -213,7 +190,7 @@ class AgentToolRegistry:
                 stmt = stmt.where(Document.id.in_(doc_ids))
             result = await db.execute(stmt)
             documents = list(result.scalars().all())
-            return _format_outline(documents), [], 1
+            return format_documents_outline(documents), outline_to_chunks(documents), 1
 
         if action == "lookup_toc":
             lookup_question = str(action_input.get("question") or question)

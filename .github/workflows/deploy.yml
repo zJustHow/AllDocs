@@ -64,7 +64,7 @@ jobs:
           fi
 
           echo "Fetching host key from ${ECS_HOST}:${ECS_SSH_PORT} ..."
-          if ! ssh-keyscan -T 15 -H -p "$ECS_SSH_PORT" "$ECS_HOST" >> ~/.ssh/known_hosts 2>&1; then
+          if ! ssh-keyscan -T 30 -H -p "$ECS_SSH_PORT" "$ECS_HOST" >> ~/.ssh/known_hosts 2>&1; then
             echo "::error::Could not reach SSH on ${ECS_HOST}:${ECS_SSH_PORT}."
             echo "Check: ECS security group allows inbound TCP ${ECS_SSH_PORT} from 0.0.0.0/0 (or GitHub Actions IPs), sshd is running, and ECS_HOST is the public IP/domain."
             exit 1
@@ -78,13 +78,14 @@ jobs:
           ECS_DEPLOY_PATH: ${{ vars.ECS_DEPLOY_PATH || '/opt/alldocs' }}
         run: |
           set -euo pipefail
+          SSH_OPTS="-o ServerAliveInterval=30 -o ServerAliveCountMax=120 -o TCPKeepAlive=yes"
           rsync -avz --delete \
             --exclude '.git/' \
             --exclude '.env' \
             --exclude 'node_modules/' \
             --exclude 'frontend/node_modules/' \
             --exclude 'models/' \
-            -e "ssh -p ${ECS_SSH_PORT}" \
+            -e "ssh -p ${ECS_SSH_PORT} ${SSH_OPTS}" \
             ./ "${ECS_USER}@${ECS_HOST}:${ECS_DEPLOY_PATH}/"
 
       - name: Build and start containers
@@ -95,20 +96,49 @@ jobs:
           ECS_DEPLOY_PATH: ${{ vars.ECS_DEPLOY_PATH || '/opt/alldocs' }}
         run: |
           set -euo pipefail
-          ssh -p "$ECS_SSH_PORT" "${ECS_USER}@${ECS_HOST}" bash -s <<EOF
-          set -euo pipefail
-          cd '${ECS_DEPLOY_PATH}'
-          bash scripts/pull_docker_images.sh
+          SSH_OPTS="-o ServerAliveInterval=30 -o ServerAliveCountMax=120 -o TCPKeepAlive=yes"
+          SSH_TARGET="${ECS_USER}@${ECS_HOST}"
+          DEPLOY_SCRIPT="${ECS_DEPLOY_PATH}/scripts/remote_compose_deploy.sh"
+
           for attempt in 1 2 3; do
-            if docker compose -f docker-compose.prod.yml up -d --build; then
-              exit 0
-            fi
-            echo "docker compose build failed (attempt \${attempt}/3), retrying in 30s ..."
-            bash scripts/pull_docker_images.sh
+            ssh -p "$ECS_SSH_PORT" $SSH_OPTS "$SSH_TARGET" \
+              "chmod +x '${DEPLOY_SCRIPT}' && bash '${DEPLOY_SCRIPT}' start"
+
+            for poll in $(seq 1 120); do
+              status="$(ssh -p "$ECS_SSH_PORT" $SSH_OPTS "$SSH_TARGET" \
+                "bash '${DEPLOY_SCRIPT}' status" 2>/dev/null || true)"
+              case "$status" in
+                running)
+                  if (( poll % 4 == 0 )); then
+                    echo "--- deploy log (tail) ---"
+                    ssh -p "$ECS_SSH_PORT" $SSH_OPTS "$SSH_TARGET" \
+                      "bash '${DEPLOY_SCRIPT}' log 25" || true
+                  fi
+                  sleep 30
+                  ;;
+                succeeded)
+                  echo "docker compose build and start succeeded"
+                  exit 0
+                  ;;
+                failed)
+                  echo "docker compose build failed (attempt ${attempt}/3)"
+                  ssh -p "$ECS_SSH_PORT" $SSH_OPTS "$SSH_TARGET" \
+                    "bash '${DEPLOY_SCRIPT}' log 80" || true
+                  break
+                  ;;
+                *)
+                  echo "unexpected deploy status: ${status:-<empty>}"
+                  ssh -p "$ECS_SSH_PORT" $SSH_OPTS "$SSH_TARGET" \
+                    "bash '${DEPLOY_SCRIPT}' log 80" || true
+                  break
+                  ;;
+              esac
+            done
+
+            echo "retrying deploy in 30s ..."
             sleep 30
           done
           exit 1
-          EOF
 
       - name: Verify API health
         env:
@@ -118,7 +148,8 @@ jobs:
           ECS_DEPLOY_PATH: ${{ vars.ECS_DEPLOY_PATH || '/opt/alldocs' }}
         run: |
           set -euo pipefail
-          ssh -p "$ECS_SSH_PORT" "${ECS_USER}@${ECS_HOST}" bash -s <<EOF
+          SSH_OPTS="-o ServerAliveInterval=30 -o ServerAliveCountMax=120 -o TCPKeepAlive=yes"
+          ssh -p "$ECS_SSH_PORT" $SSH_OPTS "${ECS_USER}@${ECS_HOST}" bash -s <<EOF
           set -euo pipefail
           cd '${ECS_DEPLOY_PATH}'
           for i in \$(seq 1 60); do
