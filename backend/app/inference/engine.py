@@ -25,8 +25,14 @@ class InferenceEngine:
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
         if not texts:
             return []
-        with self._lock:
-            return self._embedding.embed_documents(texts)
+        batch_size = self.settings.embedding_batch_size
+        vectors: list[list[float]] = []
+        for start in range(0, len(texts), batch_size):
+            with self._lock:
+                vectors.extend(
+                    self._embedding.embed_documents(texts[start : start + batch_size])
+                )
+        return vectors
 
     def rerank(
         self,

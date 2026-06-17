@@ -281,17 +281,35 @@ def process_document(document_id: str) -> None:
             if _abort_if_deleting(db, document):
                 db.rollback()
                 return
-            vectors = get_embedding_service(settings).embed_documents(
-                [
-                    chunk_embedding_text(
-                        chunk.text,
-                        chunk.section,
-                        caption=chunk.caption,
-                        asset_captions=_asset_captions(chunk.id),
+            embedding_texts = [
+                chunk_embedding_text(
+                    chunk.text,
+                    chunk.section,
+                    caption=chunk.caption,
+                    asset_captions=_asset_captions(chunk.id),
+                )
+                for chunk in chunk_rows
+            ]
+            embedding_service = get_embedding_service(settings)
+            embed_batch_size = settings.embedding_batch_size
+            vectors: list[list[float]] = []
+            total_batches = (len(embedding_texts) + embed_batch_size - 1) // embed_batch_size
+            for batch_index, start in enumerate(
+                range(0, len(embedding_texts), embed_batch_size), start=1
+            ):
+                batch = embedding_texts[start : start + embed_batch_size]
+                vectors.extend(embedding_service.embed_documents(batch))
+                if total_batches > 1:
+                    pct = 65 + int(14 * batch_index / total_batches)
+                    _set_progress(
+                        db,
+                        document,
+                        pct,
+                        f"生成向量 {batch_index}/{total_batches}",
                     )
-                    for chunk in chunk_rows
-                ]
-            )
+                if _abort_if_deleting(db, document):
+                    db.rollback()
+                    return
             payloads = [
                 {
                     "document_id": str(doc_uuid),

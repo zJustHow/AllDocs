@@ -15,6 +15,7 @@ from app.db.session import async_session_factory
 from app.db.models import Document
 from app.services.page_render import render_page_png
 from app.services.storage import StorageService
+from app.services.visual_asset_util import primary_visual_asset
 
 logger = logging.getLogger(__name__)
 
@@ -50,17 +51,6 @@ def _chunk_qualifies_for_vision(chunk: dict) -> bool:
     return False
 
 
-def _primary_visual_asset(chunk: dict) -> dict | None:
-    assets = chunk.get("assets") or []
-    for asset in assets:
-        if not asset.get("asset_id"):
-            continue
-        asset_type = asset.get("type") or "figure"
-        if asset_type in {"table", "figure"}:
-            return asset
-    return None
-
-
 def select_evidence_for_vision(
     evidence: list[dict],
     max_images: int,
@@ -72,7 +62,7 @@ def select_evidence_for_vision(
     for index, chunk in enumerate(evidence, start=1):
         if not _chunk_qualifies_for_vision(chunk):
             continue
-        asset = _primary_visual_asset(chunk)
+        asset = primary_visual_asset(chunk)
         if asset is None:
             continue
         dedupe_key = f"asset:{asset['asset_id']}"
@@ -96,7 +86,7 @@ def _load_png_bytes(
 ) -> tuple[bytes, str]:
     document_id = str(chunk["document_id"])
     page = int(chunk["page"]) if chunk.get("page") else 1
-    asset = _primary_visual_asset(chunk)
+    asset = primary_visual_asset(chunk)
 
     if asset and asset.get("object_key"):
         return storage.download(asset["object_key"]), "image/png"
@@ -122,7 +112,7 @@ async def _render_vision_image(
 ) -> VisionImage | None:
     document_id = str(chunk["document_id"])
     page = int(chunk["page"]) if chunk.get("page") else 1
-    asset = _primary_visual_asset(chunk)
+    asset = primary_visual_asset(chunk)
     needs_document = not (asset and asset.get("object_key"))
     if needs_document and document_id not in file_cache:
         return None
@@ -174,7 +164,7 @@ async def prepare_vision_images(
 
     doc_ids_to_load: set[str] = set()
     for _, chunk in selected:
-        asset = _primary_visual_asset(chunk)
+        asset = primary_visual_asset(chunk)
         if not (asset and asset.get("object_key")):
             doc_ids_to_load.add(str(chunk["document_id"]))
 

@@ -5,39 +5,63 @@ from __future__ import annotations
 import re
 
 from app.services.asset_urls import asset_url
+from app.services.shared_contract import (
+    citation_ref_pattern,
+    embed_dedupe_key,
+    embed_marker_pattern,
+    format_embed_marker,
+)
+from app.services.visual_asset_util import VISUAL_ASSET_TYPES, primary_visual_asset
 
-EMBED_MARKER = re.compile(r"\{\{\s*embed\s*:\s*(\d+)\s*\}\}")
+EMBED_MARKER = embed_marker_pattern()
 _EXTRA_BLANK_LINES = re.compile(r"\n{3,}")
-_VISUAL_ASSET_TYPES = frozenset({"table", "figure"})
+
+
+def _paragraph_at_position(answer: str, pos: int) -> str:
+    start = answer.rfind("\n\n", 0, pos)
+    start = 0 if start < 0 else start + 2
+    end = answer.find("\n\n", pos)
+    end = len(answer) if end < 0 else end
+    return answer[start:end]
+
+
+def _best_citation_insert_at(answer: str, ref: int, chunk: dict) -> int | None:
+    matches = list(citation_ref_pattern(ref).finditer(answer))
+    if not matches:
+        return None
+
+    chunk_section = (chunk.get("section") or chunk.get("caption") or "").strip()
+    if chunk_section:
+        for match in reversed(matches):
+            paragraph = _paragraph_at_position(answer, match.start())
+            first_line = paragraph.split("\n", 1)[0].strip().lstrip("*").rstrip("*")
+            if (
+                chunk_section in paragraph
+                or first_line in chunk_section
+                or chunk_section in first_line
+            ):
+                return match.start()
+
+    return matches[-1].start()
 
 
 def embed_render_url(document_id: str, page: int) -> str:
     return f"/api/v1/documents/{document_id}/pages/{page}/render"
 
 
-def _primary_visual_asset(chunk: dict) -> dict | None:
-    for asset in chunk.get("assets") or []:
-        if not asset.get("asset_id"):
-            continue
-        asset_type = asset.get("type") or "figure"
-        if asset_type in _VISUAL_ASSET_TYPES:
-            return asset
-    return None
-
-
 def _visual_asset_type(chunk: dict) -> str | None:
-    asset = _primary_visual_asset(chunk)
+    asset = primary_visual_asset(chunk)
     if asset is None:
         return None
     asset_type = asset.get("type") or "figure"
-    if asset_type in _VISUAL_ASSET_TYPES:
+    if asset_type in VISUAL_ASSET_TYPES:
         return asset_type
     return None
 
 
 def _chunk_should_embed(chunk: dict) -> bool:
     """Chunks with a stored table/figure crop asset may appear in answers."""
-    return _primary_visual_asset(chunk) is not None
+    return primary_visual_asset(chunk) is not None
 
 
 def _embed_display_caption(chunk: dict, asset: dict | None = None) -> str | None:
@@ -64,7 +88,7 @@ def _embed_for_chunk(chunk: dict) -> dict | None:
     if not page or not document_id:
         return None
 
-    asset = _primary_visual_asset(chunk)
+    asset = primary_visual_asset(chunk)
     if asset and asset.get("asset_id"):
         caption = _embed_display_caption(chunk, asset)
         asset_type = asset.get("type") or visual_type
@@ -92,39 +116,6 @@ def _embed_for_chunk(chunk: dict) -> dict | None:
     }
 
 
-def _normalized_bbox_key(bbox: list | tuple | None) -> str | None:
-    if not bbox or len(bbox) != 4:
-        return None
-    return ",".join(str(round(float(value), 1)) for value in bbox)
-
-
-def _embed_dedupe_key(payload: dict) -> str:
-    asset_id = payload.get("asset_id")
-    if asset_id:
-        return f"asset:{asset_id}"
-
-    embed_type = payload.get("type") or "figure"
-    document_id = payload.get("document_id")
-    page = payload.get("page")
-    bbox_key = _normalized_bbox_key(payload.get("bbox"))
-
-    if embed_type == "figure" and document_id and page is not None:
-        if bbox_key:
-            return f"figure:{document_id}:{page}:{bbox_key}"
-        return f"figure:{document_id}:{page}"
-
-    if embed_type == "table" and document_id and page is not None and bbox_key:
-        return f"table:{document_id}:{page}:{bbox_key}"
-
-    url = payload.get("url")
-    if url:
-        return f"url:{url}"
-
-    if document_id and page is not None:
-        return f"page:{document_id}:{page}"
-    return f"embed:{id(payload)}"
-
-
 def _collapse_extra_blank_lines(text: str) -> str:
     return _EXTRA_BLANK_LINES.sub("\n\n", text).strip()
 
@@ -143,7 +134,7 @@ def auto_insert_embed_markers(answer: str, cited_chunks: list[dict]) -> str:
             continue
         payload = _embed_for_chunk(cited_chunks[index])
         if payload is not None:
-            seen_keys.add(_embed_dedupe_key(payload))
+            seen_keys.add(embed_dedupe_key(payload))
 
     inserts: list[tuple[int, str]] = []
 
@@ -153,15 +144,13 @@ def auto_insert_embed_markers(answer: str, cited_chunks: list[dict]) -> str:
         payload = _embed_for_chunk(chunk)
         if payload is None:
             continue
-        dedupe_key = _embed_dedupe_key(payload)
+        dedupe_key = embed_dedupe_key(payload)
         if dedupe_key in seen_keys:
             continue
-        marker = f"{{{{embed:{ref}}}}}"
-        citation_pat = re.compile(rf"\[\s*{ref}\s*\]|【\s*{ref}\s*】")
-        match = citation_pat.search(answer)
-        if not match:
+        marker = format_embed_marker(ref)
+        insert_at = _best_citation_insert_at(answer, ref, chunk)
+        if insert_at is None:
             continue
-        insert_at = match.start()
         inserts.append((insert_at, f"\n\n{marker}\n\n"))
         seen_keys.add(dedupe_key)
         existing_refs.add(ref)
@@ -181,7 +170,7 @@ def renumber_embed_markers(answer: str, old_to_new: dict[int, int]) -> str:
         new_ref = old_to_new.get(old_ref)
         if new_ref is None:
             return match.group(0)
-        return f"{{{{embed:{new_ref}}}}}"
+        return format_embed_marker(new_ref)
 
     return EMBED_MARKER.sub(replace, answer)
 
@@ -205,7 +194,7 @@ def dedupe_answer_embed_markers(
         payload = _embed_for_chunk(chunk)
         if payload is None:
             return ""
-        payload_key = _embed_dedupe_key(payload)
+        payload_key = embed_dedupe_key(payload)
         if payload_key in seen_payload_keys:
             return ""
         seen_payload_keys.add(payload_key)

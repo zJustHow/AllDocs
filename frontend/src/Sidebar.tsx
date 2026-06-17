@@ -1,5 +1,5 @@
 import { memo } from "react";
-import { UPLOAD_ACCEPT } from "./fileTypes";
+import { getUploadAccept } from "./fileTypes";
 import { useI18n } from "./i18n";
 import {
   MenuIcon,
@@ -62,7 +62,7 @@ function Sidebar({
         <label className="upload-btn">
           <input
             type="file"
-            accept={UPLOAD_ACCEPT}
+            accept={getUploadAccept()}
             hidden
             disabled={uploading}
             onChange={(e) => onUpload(e.target.files?.[0] ?? null)}

@@ -98,7 +98,32 @@ class AgentRAGService:
                 },
             )
 
-            action_payload = await self.llm.decide_agent_action(question, state.steps)
+            action_payload: dict | None = None
+            async for stream_event in self.llm.decide_agent_action_stream(
+                question, state.steps
+            ):
+                if stream_event["type"] == "delta":
+                    await self._emit_step(
+                        on_step,
+                        {
+                            "type": "agent_thought_delta",
+                            "step": step_num,
+                            "delta": stream_event["delta"],
+                            "field": stream_event["field"],
+                        },
+                    )
+                    continue
+                if stream_event["type"] == "result":
+                    action_payload = stream_event["payload"]
+
+            if action_payload is None:
+                action_payload = {
+                    "thought": "fallback",
+                    "reasoning_content": "",
+                    "action": "finish",
+                    "action_input": {"reason": "no agent response"},
+                }
+
             thought = str(action_payload.get("thought") or "")
             reasoning_content = str(action_payload.get("reasoning_content") or "")
             action = str(action_payload.get("action") or "finish").strip()
@@ -112,6 +137,7 @@ class AgentRAGService:
                     "type": "agent_step_start",
                     "step": step_num,
                     "thought": thought,
+                    "reasoning": reasoning_content,
                     "action": action,
                     "action_input": action_input,
                 },
@@ -134,6 +160,7 @@ class AgentRAGService:
                         "type": "agent_step",
                         "step": step.step,
                         "thought": step.thought,
+                        "reasoning": step.reasoning_content,
                         "action": step.action,
                         "action_input": step.action_input,
                         "observation": step.observation,
@@ -225,6 +252,7 @@ class AgentRAGService:
                     "type": "agent_step",
                     "step": step.step,
                     "thought": step.thought,
+                    "reasoning": step.reasoning_content,
                     "action": step.action,
                     "action_input": step.action_input,
                     "observation": step.observation,

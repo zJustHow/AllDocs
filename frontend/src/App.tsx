@@ -18,6 +18,7 @@ import {
 import { createAssistantStreamController } from "./chatStream";
 import Composer from "./Composer";
 import { type ViewerTarget } from "./citations";
+import { loadSupportedFormats } from "./fileTypes";
 import { useI18n, type Locale } from "./i18n";
 import {
   AllDocsIcon,
@@ -112,6 +113,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    void loadSupportedFormats();
     refreshDocuments().catch((err) => setError(String(err)));
 
     const intervalMs = indexingDocs.length > 0 ? 500 : 5000;
@@ -203,9 +205,14 @@ export default function App() {
     [],
   );
 
-  const closeViewer = useCallback(() => {
+  const closeViewer = useCallback((immediate = false) => {
     setViewerOpen(false);
     if (viewerCloseTimerRef.current) clearTimeout(viewerCloseTimerRef.current);
+    if (immediate) {
+      setViewerTarget(null);
+      viewerCloseTimerRef.current = null;
+      return;
+    }
     viewerCloseTimerRef.current = setTimeout(() => {
       setViewerTarget(null);
       viewerCloseTimerRef.current = null;
@@ -302,6 +309,7 @@ export default function App() {
     setInput("");
     setScrollTargetId(null);
     if (spacerRef.current) spacerRef.current.style.minHeight = "";
+    closeViewer(true);
   };
 
   const sendText = async (textOverride?: string) => {
@@ -551,7 +559,7 @@ export default function App() {
 
   return (
     <div
-      className={`app ${viewerTarget ? "with-viewer" : ""} ${viewerOpen ? "viewer-open" : ""}`}
+      className={`app ${viewerOpen ? "with-viewer viewer-open" : ""}`}
     >
       <div
         className={`sidebar-overlay ${sidebarOpen ? "visible" : ""}`}

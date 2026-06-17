@@ -1,4 +1,13 @@
 import type { Citation, MessageEmbed } from "./types";
+import {
+  formatEmbedMarker,
+  inlineCitationMarkerSource,
+  inlineCitationRefPattern,
+  messageTokenPattern,
+  stripInlineMarkers,
+} from "./shared/contract";
+
+export { embedDedupeKey } from "./shared/contract";
 
 export interface ViewerTarget {
   documentId: string;
@@ -11,13 +20,8 @@ export interface ViewerTarget {
   bbox?: number[] | null;
 }
 
-const INLINE_CITATION_MARKER = /\[\s*\d+\s*\]|【\s*\d+\s*】/g;
-const INLINE_EMBED_MARKER = /\{\{embed:\s*\d+\s*\}\}/g;
-
 export function stripInlineCitationMarkers(content: string): string {
-  return content
-    .replace(INLINE_CITATION_MARKER, "")
-    .replace(INLINE_EMBED_MARKER, "");
+  return stripInlineMarkers(content);
 }
 
 export function formatCitationLabel(index: number): string {
@@ -50,31 +54,23 @@ const CITATION_PLACEHOLDER_PATTERN = new RegExp(
 
 export function normalizeCitationLayout(content: string): string {
   let result = content;
-  // Blank lines before citations become separate markdown paragraphs.
+  const citation = inlineCitationMarkerSource;
+  result = result.replace(new RegExp(`\\n{2,}(?=\\s*(?:${citation}))`, "g"), "");
+  result = result.replace(new RegExp(`\\n(?=[ \\t]*(?:${citation}))`, "g"), "");
   result = result.replace(
-    /\n{2,}(?=\s*(?:\[\s*\d+\s*\]|【\s*\d+\s*】))/g,
-    "",
-  );
-  // Keep citations on the same line as the sentence they follow.
-  result = result.replace(
-    /\n(?=[ \t]*(?:\[\s*\d+\s*\]|【\s*\d+\s*】))/g,
-    "",
-  );
-  // Keep trailing punctuation on the same line as the citation.
-  result = result.replace(
-    /((?:\[\s*\d+\s*\]|【\s*\d+\s*】)+)\s*\n+\s*([;；。，：！？、])/g,
+    new RegExp(`((?:${citation})+)\\s*\\n+\\s*([;；。，：！？、])`, "g"),
     "$1$2",
   );
-  // Keep punctuation that follows a lone citation on the same line.
   result = result.replace(
-    /((?:\[\s*\d+\s*\]|【\s*\d+\s*】)+)\s+([;；。，：！？、])(?=\s*(?:\n|$))/g,
+    new RegExp(`((?:${citation})+)\\s+([;；。，：！？、])(?=\\s*(?:\\n|$))`, "g"),
     "$1$2",
   );
   return result;
 }
 
-const CITATION_ONLY_SECTION =
-  /^(?:\s*(?:\[\s*\d+\s*\]|【\s*\d+\s*】)\s*)+[;；。，：！？、]?$/;
+const CITATION_ONLY_SECTION = new RegExp(
+  `^(?:\\s*(?:${inlineCitationMarkerSource})\\s*)+[;；。，：！？、]?$`,
+);
 
 function mergeCitationOnlySections(sections: string[]): string[] {
   const merged: string[] = [];
@@ -87,6 +83,68 @@ function mergeCitationOnlySections(sections: string[]): string[] {
     merged.push(section);
   }
   return merged;
+}
+
+const HORIZONTAL_RULE_ONLY = /^[-*_]{3,}\s*$/;
+const TRAILING_HORIZONTAL_RULE = /\n*[-*_]{3,}\s*$/;
+
+export function stripTrailingHorizontalRule(text: string): string {
+  return text.replace(TRAILING_HORIZONTAL_RULE, "").trimEnd();
+}
+
+const HORIZONTAL_RULE_BETWEEN_HEADINGS =
+  /(^#{1,6}\s[^\n]*\n)\n*[-*_]{3,}\s*\n+(?=^#{1,6}\s)/gm;
+
+function stripHorizontalRulesBetweenHeadings(text: string): string {
+  return text.replace(HORIZONTAL_RULE_BETWEEN_HEADINGS, "$1\n");
+}
+
+function getLeadingHeadingLevel(text: string): number | null {
+  const match = text.match(/^#{1,6}(?=\s)/);
+  return match ? match[0].length : null;
+}
+
+function mergeSubheadingSections(sections: string[]): string[] {
+  if (sections.length <= 1) return sections;
+
+  const merged: string[] = [];
+  let sectionRootLevel: number | null = null;
+
+  for (const section of sections) {
+    const level = getLeadingHeadingLevel(section);
+
+    if (
+      merged.length > 0 &&
+      level !== null &&
+      sectionRootLevel !== null &&
+      level > sectionRootLevel
+    ) {
+      const previous = merged[merged.length - 1];
+      merged[merged.length - 1] = `${previous.trimEnd()}\n\n${section.trimStart()}`;
+      continue;
+    }
+
+    merged.push(section);
+    sectionRootLevel = level;
+  }
+
+  return merged;
+}
+
+function normalizeSectionText(text: string): string {
+  const trimmed = stripHorizontalRulesBetweenHeadings(
+    stripTrailingHorizontalRule(text.trim()),
+  );
+  if (!trimmed || HORIZONTAL_RULE_ONLY.test(trimmed)) {
+    return "";
+  }
+  return trimmed;
+}
+
+function normalizeSections(sections: string[]): string[] {
+  return sections
+    .map((section) => normalizeSectionText(section))
+    .filter((section) => section.length > 0);
 }
 
 const ORPHAN_CITATION_BLOCK_HTML =
@@ -148,8 +206,7 @@ export function injectCitationPlaceholders(
   if (!citations.length) return content;
 
   const normalized = normalizeCitationLayout(content);
-  const pattern = /\[\s*(\d+)\s*\]|【\s*(\d+)\s*】/g;
-  return normalized.replace(pattern, (match, n1, n2) => {
+  return normalized.replace(inlineCitationRefPattern, (match, n1, n2) => {
     const index = Number(n1 ?? n2) - 1;
     if (index < 0 || index >= citations.length) {
       return options?.hideUnmatched ? "" : match;
@@ -177,23 +234,96 @@ export function replaceCitationPlaceholdersWithButtons(
   });
 }
 
+function sectionContainsCitationRef(sectionText: string, ref: number): boolean {
+  return new RegExp(`(?:\\[\\s*${ref}\\s*\\]|【\\s*${ref}\\s*】)`).test(
+    sectionText,
+  );
+}
+
+function findSectionIndexForEmbedRef(
+  sectionTexts: string[],
+  ref: number,
+): number {
+  let lastMatch = -1;
+  for (let i = 0; i < sectionTexts.length; i += 1) {
+    if (sectionContainsCitationRef(sectionTexts[i], ref)) {
+      lastMatch = i;
+    }
+  }
+  return lastMatch;
+}
+
+function stripEmbedMarkerFromText(text: string, ref: number): string {
+  const marker = formatEmbedMarker(ref);
+  return text
+    .replace(marker, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function removeEmbedMarkerFromSegments(
+  segments: MessageSegment[],
+  ref: number,
+): MessageSegment[] {
+  return segments
+    .map((segment) => {
+      if (segment.type !== "text") return segment;
+      return {
+        ...segment,
+        value: stripEmbedMarkerFromText(segment.value, ref),
+      };
+    })
+    .filter((segment) => segment.type !== "text" || segment.value.length > 0);
+}
+
+export function reassignEmbedsAcrossSections(
+  sectionTexts: string[],
+  segmentsBySection: MessageSegment[][],
+): MessageSegment[][] {
+  const result = segmentsBySection.map((segments) => [...segments]);
+
+  for (let fromIdx = 0; fromIdx < result.length; fromIdx += 1) {
+    for (let i = result[fromIdx].length - 1; i >= 0; i -= 1) {
+      const segment = result[fromIdx][i];
+      if (segment.type !== "embed") continue;
+
+      const ref = segment.embed.ref;
+      if (sectionContainsCitationRef(sectionTexts[fromIdx], ref)) continue;
+
+      const toIdx = findSectionIndexForEmbedRef(sectionTexts, ref);
+      if (toIdx < 0 || toIdx === fromIdx) continue;
+
+      result[fromIdx].splice(i, 1);
+      result[fromIdx] = removeEmbedMarkerFromSegments(
+        result[fromIdx],
+        ref,
+      );
+      result[toIdx] = [segment, ...result[toIdx]];
+    }
+  }
+
+  return result;
+}
+
 export function splitContentIntoSections(content: string): string[] {
   const trimmed = normalizeCitationLayout(content.trim());
   if (!trimmed) return [];
 
   if (/^#{1,6}\s/m.test(trimmed)) {
-    return mergeCitationOnlySections(
-      trimmed.split(/(?=^#{1,6}\s)/m).filter((part) => part.trim()),
+    return normalizeSections(
+      mergeCitationOnlySections(
+        mergeSubheadingSections(
+          trimmed.split(/(?=^#{1,6}\s)/m).filter((part) => part.trim()),
+        ),
+      ),
     );
   }
 
-  if (/\{\{embed:\s*\d+\s*\}\}/.test(trimmed)) {
-    return [trimmed];
-  }
-
   const paragraphs = trimmed.split(/\n{2,}/).filter((part) => part.trim());
-  return mergeCitationOnlySections(
-    paragraphs.length > 0 ? paragraphs : [trimmed],
+  return normalizeSections(
+    mergeCitationOnlySections(
+      paragraphs.length > 0 ? paragraphs : [trimmed],
+    ),
   );
 }
 
@@ -264,31 +394,6 @@ function findEmbed(ref: number, embeds: MessageEmbed[]): MessageEmbed | null {
   return embeds.find((item) => item.ref === ref) ?? null;
 }
 
-function normalizedBboxKey(bbox?: number[] | null): string | null {
-  if (!bbox || bbox.length !== 4) return null;
-  return bbox.map((value) => Math.round(value * 10) / 10).join(",");
-}
-
-export function embedDedupeKey(embed: MessageEmbed): string {
-  if (embed.asset_id) {
-    return `asset:${embed.asset_id}`;
-  }
-  const bboxKey = normalizedBboxKey(embed.bbox);
-  if (embed.type === "figure") {
-    if (bboxKey) {
-      return `figure:${embed.document_id}:${embed.page}:${bboxKey}`;
-    }
-    return `figure:${embed.document_id}:${embed.page}`;
-  }
-  if (embed.type === "table" && bboxKey) {
-    return `table:${embed.document_id}:${embed.page}:${bboxKey}`;
-  }
-  if (embed.url) {
-    return `url:${embed.url}`;
-  }
-  return `page:${embed.document_id}:${embed.page}`;
-}
-
 export function splitMessageWithCitations(
   content: string,
   citations: Citation[],
@@ -296,8 +401,7 @@ export function splitMessageWithCitations(
 ): MessageSegment[] {
   const hideUnmatched = options?.hideUnmatched ?? false;
   const embeds = options?.embeds ?? [];
-  const pattern =
-    /\{\{embed:\s*(\d+)\s*\}\}|\[\s*(\d+)\s*\]|【\s*(\d+)\s*】|\[([^\]]+)\]/g;
+  const pattern = new RegExp(messageTokenPattern.source, "g");
 
   if (!citations.length && !embeds.length) {
     return [{ type: "text", value: stripInlineCitationMarkers(content) }];

@@ -11,20 +11,15 @@ from app.api.schemas import ChunkFilter
 from app.config import get_settings
 from app.db.models import Message, Session
 from app.db.session import async_session_factory
+from app.services.agent.answer_flow import persist_turn, stream_agent_answer
+from app.services.citations_util import strip_inline_citation_markers
 from app.services.deps import get_agent_service
-from app.services.citations_util import finalize_answer, public_citations
 from app.services.rag import detect_language
-from app.services.vision_util import prepare_vision_images
 from app.services.speech import SpeechService
 
 router = APIRouter(tags=["voice-ws"])
 
 _SENTENCE_SPLIT = re.compile(r"(?<=[。！？.!?])\s*")
-_CITATION_MARKER = re.compile(r"\[\d+\]")
-
-
-def _strip_citation_markers(text: str) -> str:
-    return _CITATION_MARKER.sub("", text).strip()
 
 
 def _split_sentences(text: str) -> tuple[list[str], str]:
@@ -39,6 +34,23 @@ def _split_sentences(text: str) -> tuple[list[str], str]:
 
 async def _send_json(websocket: WebSocket, payload: dict) -> None:
     await websocket.send_text(json.dumps(payload, ensure_ascii=False))
+
+
+async def _synthesize_sentence(
+    websocket: WebSocket,
+    speech: SpeechService,
+    sentence: str,
+    lang: str,
+) -> None:
+    spoken = strip_inline_citation_markers(sentence)
+    if not spoken:
+        return
+    await _send_json(websocket, {"type": "status", "stage": "speaking"})
+    audio_wav = await asyncio.to_thread(speech.synthesize, spoken, lang)
+    await _send_json(
+        websocket,
+        {"type": "audio", "data": base64.b64encode(audio_wav).decode("ascii")},
+    )
 
 
 @router.websocket("/ws/voice")
@@ -112,113 +124,88 @@ async def voice_websocket(websocket: WebSocket) -> None:
 
                 effective_doc_ids = parsed_doc_ids or [uuid.UUID(doc_id) for doc_id in session.doc_ids]
 
-                await _send_json(websocket, {"type": "status", "stage": "agent"})
-
-                async def on_step(event: dict) -> None:
+                async def on_agent_step(event: dict) -> None:
                     await _send_json(websocket, event)
 
-                result = await agent.run(
+                pending_tts = ""
+                answering_sent = False
+
+                async for event in stream_agent_answer(
+                    agent,
                     db,
                     question,
                     effective_doc_ids or None,
                     chunk_filters,
                     history,
-                    on_step=on_step,
-                    skip_synthesis=True,
-                )
-
-                if result.fallback_message:
-                    fallback = result.fallback_message
-                    await _send_json(websocket, {"type": "answer_delta", "content": fallback})
-                    if with_audio:
-                        audio_wav = await asyncio.to_thread(speech.synthesize, fallback, lang)
-                        await _send_json(
-                            websocket,
-                            {"type": "audio", "data": base64.b64encode(audio_wav).decode("ascii")},
-                        )
-                    db.add(Message(session_id=session.id, role="user", content=question))
-                    db.add(
-                        Message(
-                            session_id=session.id,
-                            role="assistant",
-                            content=fallback,
-                            citations=[],
-                        )
-                    )
-                    await db.commit()
-                    await _send_json(
-                        websocket,
-                        {
-                            "type": "done",
-                            "session_id": str(session.id),
-                            "citations": [],
-                            "language": lang,
-                        },
-                    )
-                    continue
-
-                refs = public_citations(result.evidence)
-                await _send_json(websocket, {"type": "citations", "citations": refs})
-
-                vision_images = await prepare_vision_images(db, result.evidence, settings)
-                answer_parts: list[str] = []
-                pending_tts = ""
-                await _send_json(websocket, {"type": "status", "stage": "answering"})
-
-                async for delta in agent.iter_synthesis(
-                    question, result.evidence, history, vision_images, lang=lang
+                    settings,
+                    lang,
+                    on_agent_step=on_agent_step,
                 ):
-                    answer_parts.append(delta)
-                    pending_tts += delta
-                    await _send_json(websocket, {"type": "answer_delta", "content": delta})
-                    if with_audio:
-                        complete, pending_tts = _split_sentences(pending_tts)
-                        for sentence in complete:
-                            spoken = _strip_citation_markers(sentence)
-                            if not spoken:
-                                continue
-                            await _send_json(websocket, {"type": "status", "stage": "speaking"})
-                            audio_wav = await asyncio.to_thread(speech.synthesize, spoken, lang)
-                            await _send_json(
-                                websocket,
-                                {"type": "audio", "data": base64.b64encode(audio_wav).decode("ascii")},
-                            )
+                    event_type = event["type"]
 
-                if with_audio and pending_tts.strip():
-                    spoken = _strip_citation_markers(pending_tts.strip())
-                    if spoken:
-                        await _send_json(websocket, {"type": "status", "stage": "speaking"})
-                        audio_wav = await asyncio.to_thread(speech.synthesize, spoken, lang)
+                    if event_type == "fallback":
+                        content = event["content"]
+                        await _send_json(websocket, {"type": "answer_delta", "content": content})
+                        if with_audio:
+                            await _synthesize_sentence(websocket, speech, content, lang)
+                        await persist_turn(db, session.id, question, content, [])
                         await _send_json(
                             websocket,
-                            {"type": "audio", "data": base64.b64encode(audio_wav).decode("ascii")},
+                            {
+                                "type": "done",
+                                "session_id": str(session.id),
+                                "citations": [],
+                                "language": lang,
+                            },
                         )
+                        break
 
-                answer, refs, embeds = finalize_answer("".join(answer_parts), result.evidence)
-                if embeds:
-                    await _send_json(websocket, {"type": "embeds", "embeds": embeds})
-                db.add(Message(session_id=session.id, role="user", content=question))
-                db.add(
-                    Message(
-                        session_id=session.id,
-                        role="assistant",
-                        content=answer,
-                        citations=refs,
-                        embeds=embeds,
-                    )
-                )
-                await db.commit()
-                await _send_json(
-                    websocket,
-                    {
-                        "type": "done",
-                        "session_id": str(session.id),
-                        "content": answer,
-                        "citations": refs,
-                        "embeds": embeds,
-                        "language": lang,
-                    },
-                )
+                    if event_type == "citations":
+                        await _send_json(websocket, event)
+                        continue
+
+                    if event_type == "delta":
+                        if not answering_sent:
+                            await _send_json(websocket, {"type": "status", "stage": "answering"})
+                            answering_sent = True
+                        delta = event["content"]
+                        await _send_json(websocket, {"type": "answer_delta", "content": delta})
+                        if with_audio:
+                            pending_tts += delta
+                            complete, pending_tts = _split_sentences(pending_tts)
+                            for sentence in complete:
+                                await _synthesize_sentence(websocket, speech, sentence, lang)
+                        continue
+
+                    if event_type == "embeds":
+                        await _send_json(websocket, event)
+                        continue
+
+                    if event_type == "complete":
+                        if with_audio and pending_tts.strip():
+                            await _synthesize_sentence(websocket, speech, pending_tts.strip(), lang)
+                        await persist_turn(
+                            db,
+                            session.id,
+                            question,
+                            event["answer"],
+                            event["citations"],
+                            event["embeds"],
+                        )
+                        await _send_json(
+                            websocket,
+                            {
+                                "type": "done",
+                                "session_id": str(session.id),
+                                "content": event["answer"],
+                                "citations": event["citations"],
+                                "embeds": event["embeds"],
+                                "language": lang,
+                            },
+                        )
+                        break
+
+                    await _send_json(websocket, event)
     except WebSocketDisconnect:
         return
     except Exception as exc:

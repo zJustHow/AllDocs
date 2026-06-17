@@ -73,6 +73,7 @@ services:
       - "8000:8000"
     volumes:
       - ./backend/app:/app/app
+      - ./backend/shared:/app/shared
       - model_cache:/root/.cache
       - ./models:/app/models
     depends_on:
@@ -107,6 +108,7 @@ services:
       - inference
     volumes:
       - ./backend/app:/app/app
+      - ./backend/shared:/app/shared
       - model_cache:/root/.cache
       - ./models:/app/models
     healthcheck:
@@ -135,6 +137,7 @@ services:
     env_file: .env
     volumes:
       - ./backend/app:/app/app
+      - ./backend/shared:/app/shared
       - model_cache:/root/.cache
       - ./models:/app/models
     depends_on:

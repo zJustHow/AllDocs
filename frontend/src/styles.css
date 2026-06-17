@@ -1129,6 +1129,27 @@ button {
   line-height: 1.5;
 }
 
+.agent-reasoning-block {
+  margin: 6px 0 0;
+}
+
+.agent-reasoning-label {
+  display: block;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--muted);
+  margin-bottom: 2px;
+}
+
+.agent-reasoning {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--muted);
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
 .agent-action-input {
   margin: 4px 0 0;
   font-size: 0.8rem;
@@ -1235,13 +1256,19 @@ button {
 
 /* ── Message sections & citation badges ── */
 
-.message-section + .message-section {
-  margin-top: 12px;
+.message-section:not(:last-child) {
+  padding-bottom: 12px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--line);
 }
 
 .message-section-body {
   display: flow-root;
   line-height: 1.65;
+}
+
+.answer-media-text .markdown-preview hr {
+  display: none;
 }
 
 .citation-link {

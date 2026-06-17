@@ -45,6 +45,7 @@ if "from typing import Optional" not in text:
     trainer.write_text("from typing import Optional\n" + text)
 PY
 
+COPY shared ./shared
 COPY app ./app
 
 EXPOSE 8000

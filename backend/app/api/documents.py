@@ -19,6 +19,7 @@ from app.services.file_types import (
     get_extension,
     is_supported_filename,
     resolve_content_type,
+    supported_formats_payload,
     supported_formats_label,
 )
 from app.services.page_render import render_page_png
@@ -93,6 +94,11 @@ async def upload_document(
 async def list_documents(db: AsyncSession = Depends(get_db)) -> list[DocumentResponse]:
     result = await db.execute(select(Document).order_by(Document.created_at.desc()))
     return [DocumentResponse.model_validate(item) for item in result.scalars().all()]
+
+
+@router.get("/formats")
+async def get_supported_formats() -> dict:
+    return supported_formats_payload()
 
 
 @router.get("/{document_id}/file")

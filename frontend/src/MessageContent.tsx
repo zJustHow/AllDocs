@@ -3,6 +3,7 @@ import ImageLightbox from "./ImageLightbox";
 import {
   embedDedupeKey,
   isCompactMediaText,
+  reassignEmbedsAcrossSections,
   segmentsToRenderableContent,
   splitContentIntoSections,
   splitMessageWithCitations,
@@ -174,15 +175,22 @@ function MessageContent({
   if (!content.trim()) return null;
 
   const sections = splitContentIntoSections(content);
+  const segmentsBySection = sections.map((sectionText) =>
+    splitMessageWithCitations(sectionText, citations, {
+      hideUnmatched: true,
+      embeds,
+    }),
+  );
+  const reassignedSegments = reassignEmbedsAcrossSections(
+    sections,
+    segmentsBySection,
+  );
   const seenEmbedKeys = new Set<string>();
 
   return (
     <>
-      {sections.map((sectionText, sectionIndex) => {
-        const segments = splitMessageWithCitations(sectionText, citations, {
-          hideUnmatched: true,
-          embeds,
-        }).filter((segment) => {
+      {reassignedSegments.map((segments, sectionIndex) => {
+        const filteredSegments = segments.filter((segment) => {
           if (segment.type !== "embed") return true;
           const embedKey = embedDedupeKey(segment.embed);
           if (seenEmbedKeys.has(embedKey)) return false;
@@ -194,7 +202,7 @@ function MessageContent({
           <div key={sectionIndex} className="message-section">
             <div className="message-section-body">
               <SectionView
-                segments={segments}
+                segments={filteredSegments}
                 citations={citations}
                 onOpenDocument={onOpenDocument}
               />

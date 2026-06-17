@@ -51,15 +51,32 @@ async def ready() -> dict[str, str]:
     return {"status": "ready"}
 
 
+async def _embed_batched(batcher: EmbedBatcher, texts: list[str], *, chunk_size: int) -> list[list[float]]:
+    """Chunk large embed requests so retrieval queries can interleave between batches."""
+    if not texts:
+        return []
+    if len(texts) <= chunk_size:
+        return await batcher.embed(texts)
+
+    vectors: list[list[float]] = []
+    for start in range(0, len(texts), chunk_size):
+        vectors.extend(await batcher.embed(texts[start : start + chunk_size]))
+    return vectors
+
+
 @app.post("/v1/embed/queries", response_model=EmbedResponse)
 async def embed_queries(payload: EmbedRequest) -> EmbedResponse:
-    vectors = await app.state.batcher.embed(payload.texts)
+    settings = get_settings()
+    chunk_size = min(settings.embedding_batch_size, settings.inference_batch_max_texts)
+    vectors = await _embed_batched(app.state.batcher, payload.texts, chunk_size=chunk_size)
     return EmbedResponse(vectors=vectors)
 
 
 @app.post("/v1/embed/documents", response_model=EmbedResponse)
 async def embed_documents(payload: EmbedRequest) -> EmbedResponse:
-    vectors = await app.state.batcher.embed(payload.texts)
+    settings = get_settings()
+    chunk_size = min(settings.embedding_batch_size, settings.inference_batch_max_texts)
+    vectors = await _embed_batched(app.state.batcher, payload.texts, chunk_size=chunk_size)
     return EmbedResponse(vectors=vectors)
 
 

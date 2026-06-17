@@ -1,4 +1,10 @@
-import type { AgentStepEvent, Citation, DocumentItem, MessageEmbed } from "./types";
+import type {
+  AgentStepEvent,
+  AgentThoughtDelta,
+  Citation,
+  DocumentItem,
+  MessageEmbed,
+} from "./types";
 import { parseAgentStepPayload } from "./agentStepUtils";
 import { t } from "./i18n";
 
@@ -53,6 +59,7 @@ export async function reindexDocument(id: string): Promise<DocumentItem> {
 export interface StreamHandlers {
   onStatus?: (stage: string) => void;
   onAgentStep?: (step: AgentStepEvent) => void;
+  onAgentThoughtDelta?: (delta: AgentThoughtDelta) => void;
   onCitations?: (citations: Citation[]) => void;
   onEmbeds?: (embeds: MessageEmbed[]) => void;
   onDelta: (text: string) => void;
@@ -107,6 +114,13 @@ export async function streamChat(
         continue;
       }
       if (payload.type === "status") handlers.onStatus?.(payload.stage as string);
+      if (payload.type === "agent_thought_delta") {
+        handlers.onAgentThoughtDelta?.({
+          step: payload.step as number,
+          field: (payload.field as AgentThoughtDelta["field"]) ?? "content",
+          delta: (payload.delta as string) ?? "",
+        });
+      }
       const agentStep = parseAgentStepPayload(payload);
       if (agentStep) handlers.onAgentStep?.(agentStep);
       if (payload.type === "citations") {

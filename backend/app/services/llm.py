@@ -1,4 +1,5 @@
 from collections.abc import AsyncIterator
+from types import SimpleNamespace
 from typing import Any
 
 from openai import AsyncOpenAI
@@ -237,11 +238,38 @@ class LLMService:
         )
         return response.choices[0].message.content or ""
 
-    async def decide_agent_action(self, question: str, steps: list) -> dict:
+    @staticmethod
+    def _build_streamed_agent_message(
+        content: str,
+        reasoning_content: str,
+        tool_calls_acc: dict[int, dict[str, Any]],
+    ) -> Any:
+        tool_calls_list = []
+        for idx in sorted(tool_calls_acc):
+            entry = tool_calls_acc[idx]
+            tool_calls_list.append(
+                SimpleNamespace(
+                    id=entry.get("id") or "",
+                    function=SimpleNamespace(
+                        name=entry.get("name") or "",
+                        arguments="".join(entry.get("arguments_parts", [])),
+                    ),
+                )
+            )
+        return SimpleNamespace(
+            content=content,
+            reasoning_content=reasoning_content,
+            tool_calls=tool_calls_list or None,
+        )
+
+    async def decide_agent_action_stream(
+        self, question: str, steps: list
+    ) -> AsyncIterator[dict[str, Any]]:
+        """Stream agent planning deltas, then yield a final parsed action payload."""
         # Thinking/reasoning models reject tool_choice="required"; omit it and rely on
         # the system prompt. Multi-turn tool loops must pass reasoning_content back
         # (see build_agent_messages).
-        response = await self.client.chat.completions.create(
+        stream = await self.client.chat.completions.create(
             model=self.settings.llm_model,
             messages=[
                 {"role": "system", "content": AGENT_SYSTEM_PROMPT},
@@ -249,8 +277,50 @@ class LLMService:
             ],
             tools=AGENT_TOOL_DEFINITIONS,
             temperature=0,
+            stream=True,
         )
-        return parse_agent_tool_response(response.choices[0].message)
+
+        content_parts: list[str] = []
+        reasoning_parts: list[str] = []
+        tool_calls_acc: dict[int, dict[str, Any]] = {}
+
+        async for chunk in stream:
+            if not chunk.choices:
+                continue
+            delta = chunk.choices[0].delta
+            if delta is None:
+                continue
+
+            if delta.content:
+                content_parts.append(delta.content)
+                yield {"type": "delta", "field": "content", "delta": delta.content}
+
+            reasoning = getattr(delta, "reasoning_content", None)
+            if isinstance(reasoning, str) and reasoning:
+                reasoning_parts.append(reasoning)
+                yield {"type": "delta", "field": "reasoning", "delta": reasoning}
+
+            if delta.tool_calls:
+                for tool_call in delta.tool_calls:
+                    idx = tool_call.index
+                    entry = tool_calls_acc.setdefault(
+                        idx,
+                        {"id": "", "name": "", "arguments_parts": []},
+                    )
+                    if tool_call.id:
+                        entry["id"] = tool_call.id
+                    if tool_call.function:
+                        if tool_call.function.name:
+                            entry["name"] = tool_call.function.name
+                        if tool_call.function.arguments:
+                            entry["arguments_parts"].append(tool_call.function.arguments)
+
+        message = self._build_streamed_agent_message(
+            "".join(content_parts),
+            "".join(reasoning_parts),
+            tool_calls_acc,
+        )
+        yield {"type": "result", "payload": parse_agent_tool_response(message)}
 
     async def chat_stream(
         self,

@@ -64,6 +64,7 @@ const zh = {
     planning: "分析检索策略...",
     executing: "正在{action}...",
     inProgress: "执行中",
+    reasoning: "推理",
     summary: "{count} 步 · {actions}",
     evidenceCount: "证据 {count} 条",
     tools: {

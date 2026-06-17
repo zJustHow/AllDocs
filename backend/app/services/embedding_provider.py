@@ -33,7 +33,15 @@ class RemoteEmbeddingService:
         self._client = InferenceClient(self.settings)
 
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
-        return self._client.embed_documents_sync(texts)
+        if not texts:
+            return []
+        batch_size = self.settings.embedding_batch_size
+        vectors: list[list[float]] = []
+        for start in range(0, len(texts), batch_size):
+            vectors.extend(
+                self._client.embed_documents_sync(texts[start : start + batch_size])
+            )
+        return vectors
 
     def embed_query(self, text: str) -> list[float]:
         return self.embed_queries([text])[0]

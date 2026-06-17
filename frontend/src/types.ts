@@ -36,11 +36,18 @@ export interface MessageEmbed {
 export interface AgentStepEvent {
   step: number;
   thought: string;
+  reasoning?: string;
   action: string;
   action_input: Record<string, unknown>;
   observation: string;
   evidence_count?: number;
   status?: "running" | "done";
+}
+
+export interface AgentThoughtDelta {
+  step: number;
+  field: "reasoning" | "content";
+  delta: string;
 }
 
 export interface ChatMessage {

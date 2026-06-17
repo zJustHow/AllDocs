@@ -64,6 +64,7 @@ const en = {
     planning: "Planning retrieval...",
     executing: "{action} in progress...",
     inProgress: "Running",
+    reasoning: "Reasoning",
     summary: "{count} step(s) · {actions}",
     evidenceCount: "{count} source(s)",
     tools: {

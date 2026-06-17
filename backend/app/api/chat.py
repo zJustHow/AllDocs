@@ -11,10 +11,9 @@ from app.api.schemas import ChatRequest
 from app.config import get_settings
 from app.db.models import Message, Session
 from app.db.session import get_db
+from app.services.agent.answer_flow import persist_turn, stream_agent_answer
 from app.services.deps import get_agent_service
-from app.services.citations_util import finalize_answer, public_citations
 from app.services.rag import detect_language
-from app.services.vision_util import prepare_vision_images
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -43,6 +42,10 @@ STREAM_HEADERS = {
 }
 
 
+def _sse(payload: dict) -> str:
+    return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+
 @router.post("")
 async def chat(
     payload: ChatRequest,
@@ -62,84 +65,72 @@ async def chat(
     doc_ids = payload.doc_ids or [uuid.UUID(doc_id) for doc_id in session.doc_ids]
     chunk_filters = payload.filters
     lang = detect_language(payload.message)
+    agent = get_agent_service()
 
     async def event_stream():
         try:
-            yield f"data: {json.dumps({'type': 'status', 'stage': 'agent'}, ensure_ascii=False)}\n\n"
-            agent = get_agent_service()
-            step_queue: asyncio.Queue[dict | None] = asyncio.Queue()
-
-            async def on_step(event: dict) -> None:
-                await step_queue.put(event)
-
-            async def run_agent():
-                try:
-                    return await agent.run(
-                        db,
-                        payload.message,
-                        doc_ids or None,
-                        chunk_filters,
-                        history,
-                        on_step=on_step,
-                        skip_synthesis=True,
-                    )
-                finally:
-                    await step_queue.put(None)
-
-            agent_task = asyncio.create_task(run_agent())
-            while True:
-                event = await step_queue.get()
-                if event is None:
-                    break
-                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
-
-            result = await agent_task
-
-            if result.fallback_message:
-                fallback = result.fallback_message
-                yield f"data: {json.dumps({'type': 'delta', 'content': fallback}, ensure_ascii=False)}\n\n"
-                yield f"data: {json.dumps({'type': 'done', 'session_id': str(session.id), 'citations': [], 'language': lang}, ensure_ascii=False)}\n\n"
-                db.add(Message(session_id=session.id, role="user", content=payload.message))
-                db.add(
-                    Message(
-                        session_id=session.id,
-                        role="assistant",
-                        content=fallback,
-                        citations=[],
-                    )
-                )
-                await db.commit()
-                return
-
-            refs = public_citations(result.evidence)
-            yield f"data: {json.dumps({'type': 'citations', 'citations': refs}, ensure_ascii=False)}\n\n"
-
-            vision_images = await prepare_vision_images(db, result.evidence, settings)
-            answer_parts: list[str] = []
-            async for delta in agent.iter_synthesis(
-                payload.message, result.evidence, history, vision_images, lang=lang
+            async for event in stream_agent_answer(
+                agent,
+                db,
+                payload.message,
+                doc_ids or None,
+                chunk_filters,
+                history,
+                settings,
+                lang,
             ):
-                answer_parts.append(delta)
-                yield f"data: {json.dumps({'type': 'delta', 'content': delta}, ensure_ascii=False)}\n\n"
+                event_type = event["type"]
+                if event_type == "fallback":
+                    content = event["content"]
+                    yield _sse({"type": "delta", "content": content})
+                    yield _sse(
+                        {
+                            "type": "done",
+                            "session_id": str(session.id),
+                            "citations": [],
+                            "language": event["language"],
+                        }
+                    )
+                    await persist_turn(db, session.id, payload.message, content, [])
+                    return
 
-            answer, refs, embeds = finalize_answer("".join(answer_parts), result.evidence)
-            if embeds:
-                yield f"data: {json.dumps({'type': 'embeds', 'embeds': embeds}, ensure_ascii=False)}\n\n"
-            yield f"data: {json.dumps({'type': 'done', 'session_id': str(session.id), 'content': answer, 'citations': refs, 'embeds': embeds, 'language': lang}, ensure_ascii=False)}\n\n"
-            db.add(Message(session_id=session.id, role="user", content=payload.message))
-            db.add(
-                Message(
-                    session_id=session.id,
-                    role="assistant",
-                    content=answer,
-                    citations=refs,
-                    embeds=embeds,
-                )
-            )
-            await db.commit()
+                if event_type == "citations":
+                    yield _sse({"type": "citations", "citations": event["citations"]})
+                    continue
+
+                if event_type == "delta":
+                    yield _sse({"type": "delta", "content": event["content"]})
+                    continue
+
+                if event_type == "embeds":
+                    yield _sse({"type": "embeds", "embeds": event["embeds"]})
+                    continue
+
+                if event_type == "complete":
+                    yield _sse(
+                        {
+                            "type": "done",
+                            "session_id": str(session.id),
+                            "content": event["answer"],
+                            "citations": event["citations"],
+                            "embeds": event["embeds"],
+                            "language": event["language"],
+                        }
+                    )
+                    await persist_turn(
+                        db,
+                        session.id,
+                        payload.message,
+                        event["answer"],
+                        event["citations"],
+                        event["embeds"],
+                    )
+                    return
+
+                yield _sse(event)
         except Exception as exc:
             await db.rollback()
-            yield f"data: {json.dumps({'type': 'error', 'message': str(exc)}, ensure_ascii=False)}\n\n"
+            yield _sse({"type": "error", "message": str(exc)})
 
     return StreamingResponse(
         event_stream(),

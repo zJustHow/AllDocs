@@ -114,6 +114,12 @@ function AgentSteps({ steps, running = false }: AgentStepsProps) {
                   </span>
                 ) : null}
               </div>
+              {step.reasoning && step.reasoning !== step.thought ? (
+                <div className="agent-reasoning-block">
+                  <span className="agent-reasoning-label">{t("agent.reasoning")}</span>
+                  <p className="agent-reasoning">{step.reasoning}</p>
+                </div>
+              ) : null}
               {step.thought ? <p className="agent-thought">{step.thought}</p> : null}
               {inputLines.length > 0 ? (
                 <ul className="agent-action-input-list">

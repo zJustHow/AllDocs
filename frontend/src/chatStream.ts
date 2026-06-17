@@ -1,5 +1,5 @@
 import type { Dispatch, SetStateAction } from "react";
-import { upsertAgentStep } from "./agentStepUtils";
+import { appendAgentThoughtDelta, upsertAgentStep } from "./agentStepUtils";
 import { createDeltaBatcher, createEventBatcher } from "./streamBatch";
 import {
   appendStreamingContent,
@@ -7,7 +7,13 @@ import {
   getStreamingContent,
   initStreamingContent,
 } from "./streamingContent";
-import type { AgentStepEvent, ChatMessage, Citation, MessageEmbed } from "./types";
+import type {
+  AgentStepEvent,
+  AgentThoughtDelta,
+  ChatMessage,
+  Citation,
+  MessageEmbed,
+} from "./types";
 
 export type StreamDispatchResult = "continue" | "done" | "error";
 
@@ -25,6 +31,7 @@ export interface AssistantStreamController {
   flush: () => void;
   handlers: {
     onAgentStep: (step: AgentStepEvent) => void;
+    onAgentThoughtDelta: (delta: AgentThoughtDelta) => void;
     onCitations: (citations: Citation[]) => void;
     onEmbeds: (embeds: MessageEmbed[]) => void;
     onDelta: (delta: string) => void;
@@ -84,6 +91,19 @@ export function createAssistantStreamController(
     );
   });
 
+  const agentThoughtDeltaBatcher = createEventBatcher<AgentThoughtDelta>((deltas) => {
+    setMessages((prev) =>
+      prev.map((msg) => {
+        if (msg.id !== assistantId) return msg;
+        let agentSteps = msg.agentSteps ?? [];
+        for (const delta of deltas) {
+          agentSteps = appendAgentThoughtDelta(agentSteps, delta);
+        }
+        return { ...msg, agentSteps };
+      }),
+    );
+  });
+
   const finalizeAssistant = (payload: {
     content?: string;
     citations?: ChatMessage["citations"];
@@ -110,10 +130,13 @@ export function createAssistantStreamController(
   const flushAll = () => {
     deltaBatcher.flush();
     agentStepBatcher.flush();
+    agentThoughtDeltaBatcher.flush();
   };
 
   const handlers = {
     onAgentStep: (step: AgentStepEvent) => agentStepBatcher.push(step),
+    onAgentThoughtDelta: (delta: AgentThoughtDelta) =>
+      agentThoughtDeltaBatcher.push(delta),
     onCitations: (citations: Citation[]) => patchAssistant({ citations }),
     onEmbeds: (embeds: MessageEmbed[]) => patchAssistant({ embeds }),
     onDelta: (delta: string) => deltaBatcher.push(delta),
@@ -151,10 +174,20 @@ export function createAssistantStreamController(
     type: string;
     [key: string]: unknown;
   }): StreamDispatchResult => {
+    if (payload.type === "agent_thought_delta") {
+      handlers.onAgentThoughtDelta({
+        step: payload.step as number,
+        field: (payload.field as AgentThoughtDelta["field"]) ?? "content",
+        delta: (payload.delta as string) ?? "",
+      });
+      return "continue";
+    }
+
     if (payload.type === "agent_step" || payload.type === "agent_step_start") {
       handlers.onAgentStep({
         step: payload.step as number,
         thought: (payload.thought as string) ?? "",
+        reasoning: (payload.reasoning as string) ?? "",
         action: (payload.action as string) ?? "",
         action_input: (payload.action_input as Record<string, unknown>) ?? {},
         observation: (payload.observation as string) ?? "",

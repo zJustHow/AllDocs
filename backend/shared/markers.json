@@ -1,0 +1,13 @@
+{
+  "regex": {
+    "inlineCitationRef": "\\[\\s*(\\d+)\\s*\\]|【\\s*(\\d+)\\s*】",
+    "inlineCitationMarker": "\\[\\s*\\d+\\s*\\]|【\\s*\\d+\\s*】",
+    "embedMarker": "\\{\\{\\s*embed\\s*:\\s*(\\d+)\\s*\\}\\}",
+    "embedMarkerLoose": "\\{\\{embed:\\s*\\d+\\s*\\}\\}",
+    "messageToken": "\\{\\{embed:\\s*(\\d+)\\s*\\}\\}|\\[\\s*(\\d+)\\s*\\]|【\\s*(\\d+)\\s*】|\\[([^\\]]+)\\]"
+  },
+  "embed": {
+    "markerTemplate": "{{embed:{ref}}}",
+    "bboxRoundDecimals": 1
+  }
+}
