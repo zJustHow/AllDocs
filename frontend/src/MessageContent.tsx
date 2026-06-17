@@ -1,17 +1,15 @@
-import { lazy, memo, Suspense, useCallback, useState } from "react";
+import { lazy, memo, Suspense } from "react";
 import {
-  citationKey,
   citationToViewerTarget,
   embedDedupeKey,
-  formatCitationBadgeIndex,
-  formatCitationBadgeName,
-  groupContentIntoSections,
+  formatCitationLabel,
+  getCitationIndex,
+  splitContentIntoSections,
   splitMessageWithCitations,
   stripInlineCitationMarkers,
 } from "./citations";
 import type { ViewerTarget } from "./citations";
 import { useI18n } from "./i18n";
-import { PdfBadgeIcon } from "./icons";
 import type { Citation, MessageEmbed } from "./types";
 
 const MarkdownText = lazy(() => import("./MarkdownText"));
@@ -29,98 +27,30 @@ function pageHintFor(citation: Citation, t: (key: string, vars?: Record<string, 
   return citation.page ? t("viewer.pageHint", { page: citation.page }) : "";
 }
 
-interface SectionCitationsProps {
-  sectionCitations: Citation[];
+interface InlineCitationLinkProps {
+  citation: Citation;
   allCitations: Citation[];
   onOpenDocument: (target: ViewerTarget) => void;
 }
 
-function SectionCitations({
-  sectionCitations,
+function InlineCitationLink({
+  citation,
   allCitations,
   onOpenDocument,
-}: SectionCitationsProps) {
+}: InlineCitationLinkProps) {
   const { t } = useI18n();
-  const [expanded, setExpanded] = useState(false);
-
-  const toggleExpanded = useCallback(() => {
-    setExpanded((value) => !value);
-  }, []);
-
-  if (sectionCitations.length === 0) return null;
-
-  if (sectionCitations.length === 1) {
-    const citation = sectionCitations[0];
-    const indexLabel = formatCitationBadgeIndex(citation, allCitations);
-
-    return (
-      <div className="section-citations">
-        <button
-          type="button"
-          className="citation-badge"
-          title={citationTooltip(citation, pageHintFor(citation, t))}
-          onClick={() => onOpenDocument(citationToViewerTarget(citation))}
-        >
-          <PdfBadgeIcon />
-          <span className="citation-badge-name">
-            {formatCitationBadgeName(citation, allCitations)}
-          </span>
-          {indexLabel ? (
-            <span className="citation-badge-index">{indexLabel}</span>
-          ) : null}
-        </button>
-      </div>
-    );
-  }
-
-  if (!expanded) {
-    return (
-      <div className="section-citations">
-        <button
-          type="button"
-          className="citation-badge citation-badge-more"
-          aria-label={t("citation.showAll", { count: sectionCitations.length })}
-          aria-expanded={false}
-          onClick={toggleExpanded}
-        >
-          …
-        </button>
-      </div>
-    );
-  }
+  const index = getCitationIndex(citation, allCitations);
+  if (index < 0) return null;
 
   return (
-    <div className="section-citations">
-      {sectionCitations.map((citation, index) => {
-        const indexLabel = formatCitationBadgeIndex(citation, allCitations);
-        return (
-          <button
-            key={`${citationKey(citation)}-${index}`}
-            type="button"
-            className="citation-badge"
-            title={citationTooltip(citation, pageHintFor(citation, t))}
-            onClick={() => onOpenDocument(citationToViewerTarget(citation))}
-          >
-            <PdfBadgeIcon />
-            <span className="citation-badge-name">
-              {formatCitationBadgeName(citation, allCitations)}
-            </span>
-            {indexLabel ? (
-              <span className="citation-badge-index">{indexLabel}</span>
-            ) : null}
-          </button>
-        );
-      })}
-      <button
-        type="button"
-        className="citation-badge citation-badge-more"
-        aria-label={t("citation.collapse")}
-        aria-expanded
-        onClick={toggleExpanded}
-      >
-        …
-      </button>
-    </div>
+    <button
+      type="button"
+      className="citation-link"
+      title={citationTooltip(citation, pageHintFor(citation, t))}
+      onClick={() => onOpenDocument(citationToViewerTarget(citation))}
+    >
+      {formatCitationLabel(index)}
+    </button>
   );
 }
 
@@ -199,66 +129,76 @@ function MessageContent({
   streaming = false,
   onOpenDocument,
 }: MessageContentProps) {
-  const { t } = useI18n();
-
   if (streaming) {
     const plain = stripInlineCitationMarkers(content);
     if (!plain.trim()) return null;
     return <div className="streaming-text">{plain}</div>;
   }
 
-  const sections = groupContentIntoSections(content, citations, embeds);
+  const sections = splitContentIntoSections(content);
   const seenEmbedKeys = new Set<string>();
 
   return (
     <>
-      {sections.map((section, sectionIndex) => {
-        const segments = splitMessageWithCitations(section.content, citations, {
+      {sections.map((sectionText, sectionIndex) => {
+        const segments = splitMessageWithCitations(sectionText, citations, {
           hideUnmatched: true,
           embeds,
         });
+        const hasInlineRefs = segments.some(
+          (segment) => segment.type === "citation" || segment.type === "embed",
+        );
+
         return (
           <div key={sectionIndex} className="message-section">
             <div className="message-section-body">
-            {segments.map((segment, index) => {
-              if (segment.type === "text") {
+              {segments.map((segment, index) => {
+                if (segment.type === "text") {
+                  return (
+                    <Suspense
+                      key={index}
+                      fallback={
+                        <div className="streaming-text">{segment.value}</div>
+                      }
+                    >
+                      <MarkdownText
+                        content={segment.value}
+                        inline={hasInlineRefs}
+                      />
+                    </Suspense>
+                  );
+                }
+
+                if (segment.type === "citation") {
+                  return (
+                    <InlineCitationLink
+                      key={index}
+                      citation={segment.citation}
+                      allCitations={citations}
+                      onOpenDocument={onOpenDocument}
+                    />
+                  );
+                }
+
+                if (segment.type !== "embed") {
+                  return null;
+                }
+
+                const embedKey = embedDedupeKey(segment.embed);
+                if (seenEmbedKeys.has(embedKey)) {
+                  return null;
+                }
+                seenEmbedKeys.add(embedKey);
+
                 return (
-                  <Suspense
+                  <AnswerEmbedFigure
                     key={index}
-                    fallback={
-                      <div className="streaming-text">{segment.value}</div>
-                    }
-                  >
-                    <MarkdownText content={segment.value} />
-                  </Suspense>
+                    embed={segment.embed}
+                    onOpenDocument={onOpenDocument}
+                  />
                 );
-              }
-
-              if (segment.type !== "embed") {
-                return null;
-              }
-
-              const embedKey = embedDedupeKey(segment.embed);
-              if (seenEmbedKeys.has(embedKey)) {
-                return null;
-              }
-              seenEmbedKeys.add(embedKey);
-
-              return (
-                <AnswerEmbedFigure
-                  key={index}
-                  embed={segment.embed}
-                  onOpenDocument={onOpenDocument}
-                />
-              );
-            })}
+              })}
             </div>
-
-            <SectionCitations
-              sectionCitations={section.citations}
-              allCitations={citations}
-              onOpenDocument={onOpenDocument}
-            />
           </div>
         );
       })}

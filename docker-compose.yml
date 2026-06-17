@@ -95,6 +95,40 @@ services:
       - "8000"
       - --reload
 
+  # Optional: set INFERENCE_URL=http://inference:8100 in .env, then start with:
+  #   docker compose up -d inference
+  inference:
+    image: alldocs-backend
+    pull_policy: never
+    env_file: .env
+    ports:
+      - "8100:8100"
+    profiles:
+      - inference
+    volumes:
+      - ./backend/app:/app/app
+      - model_cache:/root/.cache
+      - ./models:/app/models
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8100/health', timeout=3)",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 120s
+    command:
+      - uvicorn
+      - "app.inference.server:app"
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8100"
+
   worker:
     image: alldocs-backend
     pull_policy: never

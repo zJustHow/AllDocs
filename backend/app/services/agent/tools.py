@@ -226,9 +226,7 @@ class AgentToolRegistry:
                 return "search_chunks_batch 需要非空 searches 列表。", [], 0
 
             queries = [str(item.get("query") or question).strip() for item in searches]
-            query_vectors = await asyncio.to_thread(
-                self.rag.embedding.embed_queries, queries
-            )
+            query_vectors = await self.rag._embed_queries(queries)
 
             async def run_one(
                 search_item: dict, query_vector: list[float]

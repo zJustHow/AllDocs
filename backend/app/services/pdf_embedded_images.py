@@ -31,6 +31,7 @@ class ParsedAttachedAsset:
     png_bytes: bytes
     width: int
     height: int
+    text_summary: str = ""
 
 
 def _bbox_key(bbox: tuple[float, float, float, float]) -> tuple[int, int, int, int]:
@@ -158,7 +159,15 @@ def _figure_to_attached_asset(figure: EmbeddedFigure) -> ParsedAttachedAsset:
         png_bytes=figure.png_bytes,
         width=figure.width,
         height=figure.height,
+        text_summary=figure.text.strip(),
     )
+
+
+def figure_bboxes_on_page(
+    figures: list[EmbeddedFigure],
+    page_number: int,
+) -> list[tuple[float, float, float, float]]:
+    return [figure.bbox for figure in figures if figure.page == page_number]
 
 
 def _rect_intersection_area(
@@ -243,6 +252,19 @@ def _pick_nearest_chunk(figure: EmbeddedFigure, candidates: list) -> object | No
         return (float("inf"), 1, slot)
 
     return min(pool, key=rank)
+
+
+def figure_overlaps_bboxes(
+    figure: EmbeddedFigure,
+    bboxes: list[tuple[float, float, float, float]],
+) -> bool:
+    for bbox in bboxes:
+        overlap = _rect_intersection_area(figure.bbox, bbox)
+        if overlap <= 0:
+            continue
+        if overlap / max(_rect_area(figure.bbox), 1.0) >= _OVERLAP_SKIP_RATIO:
+            return True
+    return False
 
 
 def attach_figures_to_chunks(

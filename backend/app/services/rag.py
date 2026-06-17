@@ -18,10 +18,10 @@ from app.services.chunk_index import (
     format_context_body,
 )
 from app.services.chunk_filter import ChunkFilter, filter_chunks, chunk_asset_types
-from app.services.embedding import EmbeddingService
+from app.services.embedding_provider import get_embedding_service
 from app.services.fulltext_store import FulltextStore
 from app.services.hybrid import reciprocal_rank_fusion
-from app.services.reranker import RerankerService
+from app.services.reranker_provider import get_reranker_service
 from app.services.vector_store import VectorStore
 
 DetectorFactory.seed = 0
@@ -113,15 +113,15 @@ def resolve_retrieval_fallback(
 class RAGService:
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
-        self.embedding = EmbeddingService(self.settings)
+        self.embedding = get_embedding_service(self.settings)
         self.vector_store = VectorStore(self.settings)
         self.fulltext_store = (
             FulltextStore(self.settings) if self.settings.hybrid_enabled else None
         )
         self.reranker = None
         if self.settings.rerank_enabled:
-            if model_path_ready(self.settings.rerank_model):
-                self.reranker = RerankerService(self.settings)
+            if self.settings.inference_url or model_path_ready(self.settings.rerank_model):
+                self.reranker = get_reranker_service(self.settings)
             else:
                 logger.warning(
                     "Rerank model not found at %s; rerank disabled for this process",
@@ -266,6 +266,15 @@ class RAGService:
         vector_score_map = {str(hit.id): float(hit.score) for hit in vector_hits}
         return vector_ids, vector_score_map
 
+    async def _embed_query(self, question: str) -> list[float]:
+        return await self.embedding.embed_query_async(question)
+
+    async def _embed_queries(self, texts: list[str]) -> list[list[float]]:
+        return await self.embedding.embed_queries_async(texts)
+
+    async def _rerank(self, question: str, chunks: list[dict]) -> list[dict]:
+        return await self.reranker.rerank_async(question, chunks)
+
     async def _retrieve_once(
         self,
         db: AsyncSession,
@@ -280,7 +289,7 @@ class RAGService:
         final_k = top_k or self.settings.rag_top_k
 
         if query_vector is None:
-            query_vector = await asyncio.to_thread(self.embedding.embed_query, question)
+            query_vector = await self._embed_query(question)
 
         ranked_chunk_ids, score_map = await self._search_hybrid(
             question,
@@ -295,7 +304,7 @@ class RAGService:
             return []
 
         if self.reranker:
-            chunks = await asyncio.to_thread(self.reranker.rerank, question, chunks)
+            chunks = await self._rerank(question, chunks)
         return chunks[:final_k]
 
     async def _retrieve_with_relaxation(
@@ -312,7 +321,7 @@ class RAGService:
             ) or []
 
         if query_vector is None:
-            query_vector = await asyncio.to_thread(self.embedding.embed_query, question)
+            query_vector = await self._embed_query(question)
         broad_filter = chunk_filter.broad_filter()
 
         async def retrieve_broad() -> list[dict]:

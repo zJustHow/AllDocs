@@ -12,9 +12,11 @@ from app.services.document_delete import (
     finalize_document_deletion,
     rollback_document_deletion,
 )
-from app.services.embedding import EmbeddingService, chunk_embedding_text
+from app.services.embedding import chunk_embedding_text
+from app.services.embedding_provider import get_embedding_service
 from app.services.fulltext_store import FulltextStore
-from app.services.ingest_caption import apply_ingest_captions, merge_captions_into_chunk_text
+from app.services.ingest_caption import apply_ingest_captions
+from app.services.chunk_index import chunk_fulltext_caption
 from app.services.ingestion import IngestionService, toc_entry_to_dict
 from app.services.infra_init import ensure_external_stores
 from app.services.storage import StorageService
@@ -45,6 +47,7 @@ class _PendingAssetUpload:
     bbox: list[float]
     width: int | None
     height: int | None
+    text_summary: str = ""
 
 
 def _collect_pending_asset_uploads(
@@ -56,17 +59,20 @@ def _collect_pending_asset_uploads(
     for parsed, chunk in zip(parsed_chunks, chunk_rows, strict=True):
         if parsed.asset_png and parsed.asset_bbox and parsed.page is not None:
             asset_id = uuid.uuid4()
+            asset_type = parsed.primary_asset_type or "figure"
+            summary = parsed.primary_asset_summary.strip()
             pending.append(
                 _PendingAssetUpload(
                     asset_id=asset_id,
                     chunk_id=chunk.id,
                     object_key=f"{doc_uuid}/assets/{asset_id}.png",
                     png_bytes=parsed.asset_png,
-                    asset_type="figure",
+                    asset_type=asset_type,
                     page=parsed.page,
                     bbox=list(parsed.asset_bbox),
                     width=parsed.asset_width,
                     height=parsed.asset_height,
+                    text_summary=summary,
                 )
             )
         for attached in parsed.attached_assets:
@@ -82,6 +88,7 @@ def _collect_pending_asset_uploads(
                     bbox=list(attached.bbox),
                     width=attached.width,
                     height=attached.height,
+                    text_summary=attached.text_summary,
                 )
             )
     return pending
@@ -200,6 +207,7 @@ def process_document(document_id: str) -> None:
             pending_assets = _collect_pending_asset_uploads(doc_uuid, parsed_chunks, chunk_rows)
             _upload_assets_parallel(storage, pending_assets)
             for item in pending_assets:
+                initial_caption = item.text_summary.strip() if item.text_summary.strip() else None
                 db.add(
                     ChunkAsset(
                         id=item.asset_id,
@@ -211,6 +219,7 @@ def process_document(document_id: str) -> None:
                         object_key=item.object_key,
                         width=item.width,
                         height=item.height,
+                        caption=initial_caption,
                     )
                 )
             db.flush()
@@ -239,20 +248,25 @@ def process_document(document_id: str) -> None:
             for asset in asset_rows:
                 assets_by_chunk.setdefault(str(asset.chunk_id), []).append(asset)
 
-            merge_captions_into_chunk_text(
-                db,
-                chunk_rows=chunk_rows,
-                assets_by_chunk=assets_by_chunk,
-                settings=settings,
-            )
+            def _asset_captions(chunk_id: uuid.UUID) -> list[str]:
+                return [
+                    asset.caption
+                    for asset in assets_by_chunk.get(str(chunk_id), [])
+                    if asset.caption
+                ]
 
             _set_progress(db, document, 65, "生成向量")
             if _abort_if_deleting(db, document):
                 db.rollback()
                 return
-            vectors = EmbeddingService().embed_documents(
+            vectors = get_embedding_service(settings).embed_documents(
                 [
-                    chunk_embedding_text(chunk.text, chunk.section)
+                    chunk_embedding_text(
+                        chunk.text,
+                        chunk.section,
+                        caption=chunk.caption,
+                        asset_captions=_asset_captions(chunk.id),
+                    )
                     for chunk in chunk_rows
                 ]
             )
@@ -285,7 +299,13 @@ def process_document(document_id: str) -> None:
                 fulltext_store.upsert_chunks(
                     chunk_ids=[chunk.id for chunk in chunk_rows],
                     texts=[chunk.text for chunk in chunk_rows],
-                    captions=["" for _ in chunk_rows],
+                    captions=[
+                        chunk_fulltext_caption(
+                            chunk.caption,
+                            _asset_captions(chunk.id),
+                        )
+                        for chunk in chunk_rows
+                    ],
                     payloads=payloads,
                 )
                 fulltext_store.refresh_index()

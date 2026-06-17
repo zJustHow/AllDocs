@@ -16,6 +16,11 @@ class Settings(BaseSettings):
     llm_vision_max_images: int = 4
     llm_vision_render_scale: float = 2.0
 
+    inference_url: str = ""
+    inference_timeout_seconds: float = 120.0
+    inference_batch_wait_ms: int = 10
+    inference_batch_max_texts: int = 64
+
     embedding_model: str = "BAAI/bge-m3"
     embedding_device: str = "cpu"
     embedding_batch_size: int = 8
@@ -70,6 +75,11 @@ class Settings(BaseSettings):
     pdf_embedded_image_min_height: int = 64
     pdf_embedded_image_max_page_coverage: float = 0.85
     pdf_embedded_image_max_per_page: int = 20
+
+    pdf_extract_tables: bool = True
+    pdf_table_min_rows: int = 2
+    pdf_table_min_cols: int = 2
+    pdf_table_render_scale: float = 2.0
 
     ingest_caption_enabled: bool = False
     ingest_caption_api_base_url: str = ""

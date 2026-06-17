@@ -82,9 +82,6 @@ services:
         - alldocs-backend
     restart: unless-stopped
     env_file: .env
-    volumes:
-      - model_cache:/root/.cache
-      - ./models:/app/models
     depends_on:
       postgres:
         condition: service_healthy
@@ -103,6 +100,45 @@ services:
       - 0.0.0.0
       - --port
       - "8000"
+
+  inference:
+    image: alldocs-backend
+    pull_policy: never
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - model_cache:/root/.cache
+      - ./models:/app/models
+    # GPU (recommended; rebuild image with CUDA torch):
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+    # environment:
+    #   EMBEDDING_DEVICE: cuda
+    #   RERANK_DEVICE: cuda
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8100/ready', timeout=3)",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 180s
+    command:
+      - uvicorn
+      - "app.inference.server:app"
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8100"
 
   worker:
     image: alldocs-backend

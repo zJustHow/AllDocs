@@ -14,6 +14,16 @@ from app.services.pdf_embedded_images import (
     ParsedAttachedAsset,
     attach_figures_to_chunks,
     extract_pdf_embedded_figures,
+    figure_bboxes_on_page,
+    figure_overlaps_bboxes,
+)
+from app.services.pdf_tables import (
+    EmbeddedTable,
+    extract_pdf_tables,
+    attach_tables_to_chunks,
+    filter_page_blocks,
+    filter_page_text,
+    table_bboxes_on_page,
 )
 
 _SECTION_PATH_MAX_LEN = 512
@@ -46,6 +56,8 @@ class ParsedChunk:
     asset_png: bytes | None = None
     asset_width: int | None = None
     asset_height: int | None = None
+    primary_asset_type: str | None = None
+    primary_asset_summary: str = ""
     attached_assets: list[ParsedAttachedAsset] = field(default_factory=list)
 
 
@@ -530,16 +542,34 @@ def _merge_pdf_layout_chunks(
 
 
 def _orphan_figure_chunk(figure: EmbeddedFigure) -> ParsedChunk:
-    """Standalone image chunk; VLM caption becomes body text after ingest."""
+    """Standalone figure chunk; OCR clip text stays on asset caption, not chunk.text."""
     return ParsedChunk(
-        text=figure.text.strip(),
+        text="",
         page=figure.page,
         section=figure.section,
         chunk_index=0,
+        primary_asset_type="figure",
+        primary_asset_summary=figure.text.strip(),
         asset_bbox=figure.bbox,
         asset_png=figure.png_bytes,
         asset_width=figure.width,
         asset_height=figure.height,
+    )
+
+
+def _orphan_table_chunk(table: EmbeddedTable) -> ParsedChunk:
+    """Standalone table chunk; summary stays on asset caption, not chunk.text."""
+    return ParsedChunk(
+        text="",
+        page=table.page,
+        section=table.section,
+        chunk_index=0,
+        primary_asset_type="table",
+        primary_asset_summary=table.summary,
+        asset_bbox=table.bbox,
+        asset_png=table.png_bytes,
+        asset_width=table.width,
+        asset_height=table.height,
     )
 
 
@@ -607,39 +637,18 @@ class IngestionService:
         pages: list[tuple[str | None, str, int]] = []
         ocr_pages = 0
 
-        for page_index in range(page_count):
-            page = doc[page_index]
-            page_number = page_index + 1
-            if should_skip_front_matter(page_number, toc_entries):
-                continue
-
-            fallback_section = section_for_page(toc_entries, page_number)
-            page_text, used_ocr = self._extract_page_text(page)
-
-            if used_ocr:
-                ocr_pages += 1
-            if not page_text.strip():
-                continue
-            if is_toc_text(page_text):
-                continue
-
-            if use_y_split and not used_ocr:
-                blocks = _extract_page_text_blocks(page)
-                if blocks:
-                    for section, segment_text in _segment_page_by_anchors(
-                        toc_anchors,
-                        page_number,
-                        blocks,
-                        fallback_section,
-                    ):
-                        if segment_text.strip():
-                            pages.append((section, segment_text.strip(), page_number))
-                else:
-                    pages.append((fallback_section, page_text.strip(), page_number))
-            else:
-                pages.append((fallback_section, page_text.strip(), page_number))
-            if on_page_progress is not None:
-                on_page_progress(page_number, page_count)
+        extracted_tables = extract_pdf_tables(
+            doc,
+            settings=self.settings,
+            section_resolver=section_resolver,
+            should_skip_page=lambda page_number: should_skip_front_matter(
+                page_number, toc_entries
+            ),
+        )
+        tables_by_page = {
+            page: table_bboxes_on_page(extracted_tables, page)
+            for page in {table.page for table in extracted_tables}
+        }
 
         embedded_figures = extract_pdf_embedded_figures(
             doc,
@@ -649,12 +658,70 @@ class IngestionService:
                 page_number, toc_entries
             ),
         )
+        embedded_figures = [
+            figure
+            for figure in embedded_figures
+            if not figure_overlaps_bboxes(
+                figure, tables_by_page.get(figure.page, [])
+            )
+        ]
+        figures_by_page = {
+            page: figure_bboxes_on_page(embedded_figures, page)
+            for page in {figure.page for figure in embedded_figures}
+        }
 
-        if not pages and not embedded_figures:
+        for page_index in range(page_count):
+            page = doc[page_index]
+            page_number = page_index + 1
+            if should_skip_front_matter(page_number, toc_entries):
+                continue
+
+            fallback_section = section_for_page(toc_entries, page_number)
+            exclude_bboxes = (
+                tables_by_page.get(page_number, [])
+                + figures_by_page.get(page_number, [])
+            )
+
+            if exclude_bboxes and not self.settings.ocr_force:
+                page_text = filter_page_text(page, exclude_bboxes)
+                used_ocr = False
+            else:
+                page_text, used_ocr = self._extract_page_text(page)
+                if exclude_bboxes and page_text.strip():
+                    page_text = filter_page_text(page, exclude_bboxes) or page_text
+
+            if used_ocr:
+                ocr_pages += 1
+            if not page_text.strip() and not exclude_bboxes:
+                continue
+            if page_text.strip() and is_toc_text(page_text):
+                continue
+
+            if use_y_split and not used_ocr and page_text.strip():
+                blocks = filter_page_blocks(page, exclude_bboxes)
+                if blocks:
+                    for section, segment_text in _segment_page_by_anchors(
+                        toc_anchors,
+                        page_number,
+                        blocks,
+                        fallback_section,
+                    ):
+                        if segment_text.strip():
+                            pages.append((section, segment_text.strip(), page_number))
+                elif page_text.strip():
+                    pages.append((fallback_section, page_text.strip(), page_number))
+            elif page_text.strip():
+                pages.append((fallback_section, page_text.strip(), page_number))
+            if on_page_progress is not None:
+                on_page_progress(page_number, page_count)
+
+        if not pages and not embedded_figures and not extracted_tables:
             doc.close()
             raise ValueError("No text extracted from PDF")
 
-        page_chunks = _build_chunks_from_pages(pages, self.settings)
+        page_chunks = _build_chunks_from_pages(pages, self.settings) if pages else []
+
+        orphan_tables = attach_tables_to_chunks(extracted_tables, page_chunks)
 
         orphan_figures = attach_figures_to_chunks(
             embedded_figures,
@@ -662,6 +729,10 @@ class IngestionService:
         )
 
         inline_chunks: list[tuple[int, float, ParsedChunk]] = []
+        for table in orphan_tables:
+            inline_chunks.append(
+                (table.page, table.sort_key, _orphan_table_chunk(table))
+            )
         for figure in orphan_figures:
             inline_chunks.append(
                 (figure.page, figure.sort_key, _orphan_figure_chunk(figure))

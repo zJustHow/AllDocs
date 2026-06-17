@@ -12,7 +12,6 @@ from sqlalchemy.orm import Session as OrmSession
 from app.config import Settings
 from app.db.models import Chunk, ChunkAsset, Document
 from app.services.caption import CaptionService
-from app.services.chunk_index import merge_visual_descriptions_into_text
 from app.services.file_types import detect_file_type
 from app.services.page_render import render_page_png
 from app.services.storage import StorageService
@@ -215,33 +214,3 @@ def apply_ingest_captions(
     if generated:
         db.flush()
     return generated
-
-
-def merge_captions_into_chunk_text(
-    db: OrmSession,
-    *,
-    chunk_rows: list[Chunk],
-    assets_by_chunk: dict[str, list[ChunkAsset]],
-    settings: Settings,
-) -> int:
-    """Merge table/figure VLM captions into chunk.text; clear chunk.caption after merge."""
-    updated = 0
-    min_body_chars = settings.ingest_caption_min_text_chars
-    for chunk in chunk_rows:
-        assets = assets_by_chunk.get(str(chunk.id), [])
-        merged = merge_visual_descriptions_into_text(
-            chunk.text,
-            chunk_caption=chunk.caption,
-            assets=assets,
-            replace_short_body=True,
-            min_body_chars=min_body_chars,
-        )
-        if merged == chunk.text and not chunk.caption:
-            continue
-        chunk.text = merged
-        if chunk.caption:
-            chunk.caption = None
-        updated += 1
-    if updated:
-        db.flush()
-    return updated

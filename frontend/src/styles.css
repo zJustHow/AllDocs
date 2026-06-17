@@ -1236,6 +1236,28 @@ button {
 
 .message-section-body {
   display: flow-root;
+  line-height: 1.65;
+}
+
+.citation-link {
+  display: inline;
+  margin: 0;
+  padding: 0 1px;
+  border: none;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-size: 0.88em;
+  font-weight: 600;
+  line-height: inherit;
+  vertical-align: baseline;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.citation-link:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 
 .section-citations {
@@ -1243,6 +1265,7 @@ button {
   flex-wrap: wrap;
   gap: 6px;
   margin-top: 8px;
+  clear: both;
 }
 
 .citation-badge {
@@ -1294,16 +1317,23 @@ button {
 
 .answer-embed {
   display: block;
-  clear: both;
-  margin: 12px 0;
+  margin: 4px 16px 10px 0;
   max-width: 100%;
 }
 
 .answer-embed--figure {
+  float: left;
+  clear: none;
+  max-width: min(42%, 240px);
   text-align: center;
 }
 
 .answer-embed--table {
+  clear: both;
+  float: none;
+  width: 100%;
+  max-width: 100%;
+  margin: 12px 0;
   text-align: initial;
 }
 
@@ -1320,13 +1350,28 @@ button {
 }
 
 .answer-embed--figure .answer-embed-image {
-  margin-inline: auto;
+  max-width: 100%;
+  max-height: 280px;
+  margin-inline: 0;
 }
 
 .answer-embed--table .answer-embed-image {
   max-width: 100%;
   max-height: none;
   width: 100%;
+}
+
+@media (max-width: 640px) {
+  .answer-embed--figure {
+    float: none;
+    max-width: 100%;
+    margin: 12px 0;
+  }
+
+  .answer-embed--figure .answer-embed-image {
+    max-height: 360px;
+    margin-inline: auto;
+  }
 }
 
 .answer-embed figcaption {

@@ -72,6 +72,8 @@ export function citationKey(citation: Citation): string {
   return `${citation.document_id}:${citation.page}:${citation.section}`;
 }
 
+const EMBED_ONLY_PARAGRAPH = /^\s*\{\{embed:\s*\d+\s*\}\}\s*$/;
+
 export function splitContentIntoSections(content: string): string[] {
   const trimmed = content.trim();
   if (!trimmed) return [];
@@ -80,8 +82,25 @@ export function splitContentIntoSections(content: string): string[] {
     return trimmed.split(/(?=^#{1,6}\s)/m).filter((part) => part.trim());
   }
 
+  // Keep embed markers in the same flow as nearby text so images can float beside prose.
+  if (/\{\{embed:\s*\d+\s*\}\}/.test(trimmed)) {
+    return [trimmed];
+  }
+
   const paragraphs = trimmed.split(/\n{2,}/).filter((part) => part.trim());
-  return paragraphs.length > 0 ? paragraphs : [trimmed];
+  const merged: string[] = [];
+
+  for (let index = 0; index < paragraphs.length; index += 1) {
+    const part = paragraphs[index];
+    if (EMBED_ONLY_PARAGRAPH.test(part) && index + 1 < paragraphs.length) {
+      merged.push(`${part}\n\n${paragraphs[index + 1]}`);
+      index += 1;
+      continue;
+    }
+    merged.push(part);
+  }
+
+  return merged.length > 0 ? merged : [trimmed];
 }
 
 export function extractSectionCitations(
