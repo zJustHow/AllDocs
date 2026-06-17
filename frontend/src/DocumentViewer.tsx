@@ -1,6 +1,14 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
 import { documentFileUrl, documentPageRenderUrl } from "./api";
-import type { ViewerTarget } from "./citations";
+import { formatCitationSnippetExcerpt, type ViewerTarget } from "./citations";
 import { getPreviewMode } from "./fileTypes";
 import { useI18n } from "./i18n";
 import {
@@ -11,6 +19,12 @@ import {
   ZoomOutIcon,
 } from "./icons";
 import { warmPageImage } from "./pageImageCache";
+import {
+  bboxToOverlayStyle,
+  isValidBbox,
+  scrollToPageRegion,
+  type Bbox,
+} from "./viewerPosition";
 
 interface DocumentViewerProps {
   target: ViewerTarget;
@@ -50,11 +64,16 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
   const [pageAspect, setPageAspect] = useState(DEFAULT_PAGE_ASPECT);
   const [loadedPages, setLoadedPages] = useState<Set<number>>(() => new Set());
   const [scrollWidth, setScrollWidth] = useState(0);
+  const [highlightStyle, setHighlightStyle] = useState<CSSProperties | null>(null);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const pageRefs = useRef(new Map<number, HTMLDivElement>());
   const scrollSyncLockRef = useRef(false);
   const currentPageRef = useRef(currentPage);
+  const targetBboxKey = useMemo(
+    () => (isValidBbox(target.bbox) ? target.bbox.join(",") : ""),
+    [target.bbox],
+  );
 
   const pageCount = target.pageCount ?? null;
   const showPageToolbar = previewMode === "pdf" && pageCount !== null;
@@ -131,6 +150,46 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
     [pageCount],
   );
 
+  const scrollToTarget = useCallback(
+    (behavior: ScrollBehavior = "auto") => {
+      const scrollEl = scrollRef.current;
+      if (!scrollEl || pageCount === null) return;
+
+      const page = Math.min(Math.max(1, target.page ?? 1), pageCount);
+      ensurePagesLoaded(page);
+
+      const attempt = (retries = 0) => {
+        const pageEl = pageRefs.current.get(page);
+        if (!pageEl) {
+          if (retries < 12) requestAnimationFrame(() => attempt(retries + 1));
+          return;
+        }
+
+        const scrolled = scrollToPageRegion(
+          scrollEl,
+          pageEl,
+          isValidBbox(target.bbox) ? target.bbox : null,
+          renderScale,
+          behavior,
+        );
+        if (!scrolled) {
+          if (retries < 12) requestAnimationFrame(() => attempt(retries + 1));
+          return;
+        }
+
+        scrollSyncLockRef.current = true;
+        setCurrentPage(page);
+        setPageInput(String(page));
+        window.setTimeout(() => {
+          scrollSyncLockRef.current = false;
+        }, behavior === "smooth" ? 500 : 50);
+      };
+
+      attempt();
+    },
+    [ensurePagesLoaded, pageCount, renderScale, target.bbox, target.page],
+  );
+
   const scrollToPage = useCallback(
     (page: number, behavior: ScrollBehavior = "smooth") => {
       const scrollEl = scrollRef.current;
@@ -138,6 +197,7 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
 
       const next = Math.min(Math.max(1, page), pageCount);
       ensurePagesLoaded(next);
+      setHighlightStyle(null);
 
       const scroll = () => {
         const pageEl = pageRefs.current.get(next);
@@ -161,6 +221,22 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
     [ensurePagesLoaded, pageCount],
   );
 
+  const updateHighlight = useCallback(() => {
+    if (!isValidBbox(target.bbox) || target.page === null) {
+      setHighlightStyle(null);
+      return;
+    }
+
+    const pageEl = pageRefs.current.get(target.page);
+    const img = pageEl?.querySelector("img");
+    if (!img || !img.complete || img.naturalWidth <= 0 || img.offsetHeight <= 0) {
+      setHighlightStyle(null);
+      return;
+    }
+
+    setHighlightStyle(bboxToOverlayStyle(target.bbox as Bbox, img, renderScale));
+  }, [renderScale, target.bbox, target.page]);
+
   useEffect(() => {
     if (previewMode !== "pdf" || pageCount === null) return;
     const page = Math.min(Math.max(1, target.page ?? 1), pageCount);
@@ -171,9 +247,20 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
 
   useLayoutEffect(() => {
     if (previewMode !== "pdf" || pageCount === null) return;
-    const page = Math.min(Math.max(1, target.page ?? 1), pageCount);
-    scrollToPage(page, "auto");
-  }, [previewMode, pageCount, scrollToPage, target.documentId, target.page]);
+    scrollToTarget("auto");
+  }, [
+    previewMode,
+    pageCount,
+    scrollToTarget,
+    target.documentId,
+    target.page,
+    targetBboxKey,
+  ]);
+
+  useLayoutEffect(() => {
+    if (previewMode !== "pdf") return;
+    updateHighlight();
+  }, [previewMode, updateHighlight, targetBboxKey, target.page, zoom, renderScale]);
 
   useEffect(() => {
     const scrollEl = scrollRef.current;
@@ -210,10 +297,15 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
   useEffect(() => {
     if (previewMode !== "pdf" || pageCount === null) return;
     const timer = window.setTimeout(() => {
+      if (isValidBbox(target.bbox)) {
+        scrollToTarget("auto");
+        updateHighlight();
+        return;
+      }
       scrollToPage(currentPageRef.current, "auto");
     }, 60);
     return () => window.clearTimeout(timer);
-  }, [pageCount, previewMode, renderScale, scrollToPage, zoom]);
+  }, [pageCount, previewMode, renderScale, scrollToPage, scrollToTarget, target.bbox, updateHighlight, zoom]);
 
   const goToPage = useCallback(
     (page: number) => {
@@ -335,6 +427,11 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
                       renderScale,
                     );
                     const isLoaded = loadedPages.has(page);
+                    const showHighlight =
+                      isLoaded &&
+                      target.page === page &&
+                      isValidBbox(target.bbox) &&
+                      highlightStyle;
 
                     return (
                       <div
@@ -349,22 +446,37 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
                         }
                       >
                         {isLoaded ? (
-                          <img
-                            src={pageUrl}
-                            alt={`${target.documentName} p.${page}`}
-                            className="doc-viewer-image doc-viewer-image--pdf"
-                            style={{ width: `${zoom}%` }}
-                            draggable={false}
-                            loading="lazy"
-                            onLoad={(event) => {
-                              warmPageImage(pageUrl);
-                              handlePageLoad(
-                                event.currentTarget.naturalWidth,
-                                event.currentTarget.naturalHeight,
-                              );
-                            }}
-                            onError={() => setError(t("errors.loadDocumentFailed"))}
-                          />
+                          <div className="doc-viewer-page-media">
+                            <img
+                              src={pageUrl}
+                              alt={`${target.documentName} p.${page}`}
+                              className="doc-viewer-image doc-viewer-image--pdf"
+                              style={{ width: `${zoom}%` }}
+                              draggable={false}
+                              loading="lazy"
+                              onLoad={(event) => {
+                                warmPageImage(pageUrl);
+                                handlePageLoad(
+                                  event.currentTarget.naturalWidth,
+                                  event.currentTarget.naturalHeight,
+                                );
+                                if (target.page === page) {
+                                  updateHighlight();
+                                  if (isValidBbox(target.bbox)) {
+                                    scrollToTarget("auto");
+                                  }
+                                }
+                              }}
+                              onError={() => setError(t("errors.loadDocumentFailed"))}
+                            />
+                            {showHighlight ? (
+                              <div
+                                className="doc-viewer-highlight"
+                                style={highlightStyle ?? undefined}
+                                aria-hidden="true"
+                              />
+                            ) : null}
+                          </div>
                         ) : (
                           <div
                             className="doc-viewer-page-placeholder"
@@ -472,7 +584,7 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
 
       {target.snippet && (
         <div className="doc-viewer-snippet">
-          <p>{target.snippet}</p>
+          <p>{formatCitationSnippetExcerpt(target.snippet)}</p>
         </div>
       )}
     </aside>

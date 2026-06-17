@@ -3,6 +3,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import ChunkAsset, Document, DocumentStatus
@@ -17,7 +18,10 @@ async def get_asset(
     asset_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
 ) -> Response:
-    asset = await db.get(ChunkAsset, asset_id)
+    result = await db.execute(
+        select(ChunkAsset).where(ChunkAsset.id == asset_id).limit(1)
+    )
+    asset = result.scalar_one_or_none()
     if not asset:
         raise HTTPException(status_code=404, detail="Asset not found")
 

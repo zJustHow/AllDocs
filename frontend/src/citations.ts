@@ -8,18 +8,7 @@ export interface ViewerTarget {
   section: string | null;
   snippet?: string;
   pageCount?: number | null;
-}
-
-export function getCitationIndex(
-  citation: Citation,
-  citations: Citation[],
-): number {
-  return citations.findIndex(
-    (item) =>
-      item.document_id === citation.document_id &&
-      item.page === citation.page &&
-      item.section === citation.section,
-  );
+  bbox?: number[] | null;
 }
 
 const INLINE_CITATION_MARKER = /\[\s*\d+\s*\]|【\s*\d+\s*】/g;
@@ -35,44 +24,73 @@ export function formatCitationLabel(index: number): string {
   return `[${index + 1}]`;
 }
 
-export function formatDocumentNameLabel(name: string, maxLength = 16): string {
-  const trimmed = name.trim();
-  if (trimmed.length <= maxLength) return trimmed;
-  return `${trimmed.slice(0, maxLength - 1)}…`;
-}
+const SNIPPET_LEADING_PUNCT = /^[,.;:!?。，；：！？…、（【「『《"''']/;
+const SNIPPET_TRAILING_PUNCT = /[,.;:!?。，；：！？…、）】」』》"''']$/;
 
-export function formatCitationBadgeName(
-  citation: Citation,
-  citations: Citation[],
-  maxLength = 16,
-): string {
-  const index = getCitationIndex(citation, citations);
-  if (index < 0) {
-    return formatDocumentNameLabel(citation.document_name, maxLength);
+export function formatCitationSnippetExcerpt(text: string): string {
+  const trimmed = text.trim();
+  if (!trimmed) return trimmed;
+
+  let excerpt = trimmed;
+  if (!SNIPPET_LEADING_PUNCT.test(excerpt)) {
+    excerpt = `...${excerpt}`;
   }
-  const suffix = ` ${formatCitationLabel(index)}`;
-  const nameMax = Math.max(4, maxLength - suffix.length);
-  return formatDocumentNameLabel(citation.document_name, nameMax);
+  if (!SNIPPET_TRAILING_PUNCT.test(excerpt)) {
+    excerpt = `${excerpt}...`;
+  }
+  return excerpt;
 }
 
-export function formatCitationBadgeIndex(
-  citation: Citation,
+const CITATION_PLACEHOLDER_PREFIX = "\uE000";
+const CITATION_PLACEHOLDER_SUFFIX = "\uE001";
+const CITATION_PLACEHOLDER_PATTERN = new RegExp(
+  `${CITATION_PLACEHOLDER_PREFIX}(\\d+)${CITATION_PLACEHOLDER_SUFFIX}`,
+  "g",
+);
+
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+export function injectCitationPlaceholders(
+  content: string,
   citations: Citation[],
+  options?: { hideUnmatched?: boolean },
 ): string {
-  const index = getCitationIndex(citation, citations);
-  return index >= 0 ? formatCitationLabel(index) : "";
+  if (!citations.length) return content;
+
+  const pattern = /\[\s*(\d+)\s*\]|【\s*(\d+)\s*】/g;
+  return content.replace(pattern, (match, n1, n2) => {
+    const index = Number(n1 ?? n2) - 1;
+    if (index < 0 || index >= citations.length) {
+      return options?.hideUnmatched ? "" : match;
+    }
+    return `${CITATION_PLACEHOLDER_PREFIX}${index}${CITATION_PLACEHOLDER_SUFFIX}`;
+  });
 }
 
-export interface MessageContentSection {
-  content: string;
-  citations: Citation[];
-}
+export function replaceCitationPlaceholdersWithButtons(
+  html: string,
+  citations: Citation[],
+  options: {
+    formatLabel: (index: number) => string;
+    formatTitle: (citation: Citation) => string;
+  },
+): string {
+  return html.replace(CITATION_PLACEHOLDER_PATTERN, (_, indexStr) => {
+    const index = Number(indexStr);
+    const citation = citations[index];
+    if (!citation) return "";
 
-export function citationKey(citation: Citation): string {
-  return `${citation.document_id}:${citation.page}:${citation.section}`;
+    const label = escapeHtml(options.formatLabel(index));
+    const title = escapeHtml(options.formatTitle(citation));
+    return `<button type="button" class="citation-link" data-citation-index="${index}" title="${title}">${label}</button>`;
+  });
 }
-
-const EMBED_ONLY_PARAGRAPH = /^\s*\{\{embed:\s*\d+\s*\}\}\s*$/;
 
 export function splitContentIntoSections(content: string): string[] {
   const trimmed = content.trim();
@@ -82,64 +100,12 @@ export function splitContentIntoSections(content: string): string[] {
     return trimmed.split(/(?=^#{1,6}\s)/m).filter((part) => part.trim());
   }
 
-  // Keep embed markers in the same flow as nearby text so images can float beside prose.
   if (/\{\{embed:\s*\d+\s*\}\}/.test(trimmed)) {
     return [trimmed];
   }
 
   const paragraphs = trimmed.split(/\n{2,}/).filter((part) => part.trim());
-  const merged: string[] = [];
-
-  for (let index = 0; index < paragraphs.length; index += 1) {
-    const part = paragraphs[index];
-    if (EMBED_ONLY_PARAGRAPH.test(part) && index + 1 < paragraphs.length) {
-      merged.push(`${part}\n\n${paragraphs[index + 1]}`);
-      index += 1;
-      continue;
-    }
-    merged.push(part);
-  }
-
-  return merged.length > 0 ? merged : [trimmed];
-}
-
-export function extractSectionCitations(
-  content: string,
-  citations: Citation[],
-  embeds: MessageEmbed[] = [],
-): MessageContentSection {
-  const segments = splitMessageWithCitations(content, citations, { embeds });
-  const sectionCitations: Citation[] = [];
-  const seen = new Set<string>();
-  const textParts: string[] = [];
-
-  for (const segment of segments) {
-    if (segment.type === "text" || segment.type === "embed") {
-      textParts.push(segment.value);
-      continue;
-    }
-
-    const key = citationKey(segment.citation);
-    if (!seen.has(key)) {
-      seen.add(key);
-      sectionCitations.push(segment.citation);
-    }
-  }
-
-  return {
-    content: textParts.join(""),
-    citations: sectionCitations,
-  };
-}
-
-export function groupContentIntoSections(
-  content: string,
-  citations: Citation[],
-  embeds: MessageEmbed[] = [],
-): MessageContentSection[] {
-  return splitContentIntoSections(content).map((part) =>
-    extractSectionCitations(part, citations, embeds),
-  );
+  return paragraphs.length > 0 ? paragraphs : [trimmed];
 }
 
 export function citationToViewerTarget(citation: Citation): ViewerTarget {
@@ -149,6 +115,7 @@ export function citationToViewerTarget(citation: Citation): ViewerTarget {
     page: citation.page,
     section: citation.section,
     snippet: citation.snippet,
+    bbox: citation.bbox ?? null,
   };
 }
 
@@ -208,9 +175,27 @@ function findEmbed(ref: number, embeds: MessageEmbed[]): MessageEmbed | null {
   return embeds.find((item) => item.ref === ref) ?? null;
 }
 
+function normalizedBboxKey(bbox?: number[] | null): string | null {
+  if (!bbox || bbox.length !== 4) return null;
+  return bbox.map((value) => Math.round(value * 10) / 10).join(",");
+}
+
 export function embedDedupeKey(embed: MessageEmbed): string {
   if (embed.asset_id) {
     return `asset:${embed.asset_id}`;
+  }
+  const bboxKey = normalizedBboxKey(embed.bbox);
+  if (embed.type === "figure") {
+    if (bboxKey) {
+      return `figure:${embed.document_id}:${embed.page}:${bboxKey}`;
+    }
+    return `figure:${embed.document_id}:${embed.page}`;
+  }
+  if (embed.type === "table" && bboxKey) {
+    return `table:${embed.document_id}:${embed.page}:${bboxKey}`;
+  }
+  if (embed.url) {
+    return `url:${embed.url}`;
   }
   return `page:${embed.document_id}:${embed.page}`;
 }
@@ -279,4 +264,147 @@ export function splitMessageWithCitations(
   }
 
   return segments.length ? segments : [{ type: "text", value: content }];
+}
+
+export function segmentsToRenderableContent(segments: MessageSegment[]): string {
+  return segments
+    .map((segment) => {
+      if (segment.type === "text" || segment.type === "citation") {
+        return segment.value;
+      }
+      return "";
+    })
+    .join("");
+}
+
+const COMPACT_MEDIA_TEXT_LIMIT = 140;
+const COMPACT_SINGLE_LINE_LIMIT = 320;
+
+export function isCompactMediaText(segments: MessageSegment[]): boolean {
+  const text = stripInlineCitationMarkers(
+    segmentsToRenderableContent(segments),
+  ).trim();
+  if (!text) return true;
+  if (text.length < COMPACT_MEDIA_TEXT_LIMIT) return true;
+  const lineCount = text.split("\n").filter((line) => line.trim()).length;
+  if (lineCount <= 1 && text.length < COMPACT_SINGLE_LINE_LIMIT) return true;
+  return false;
+}
+
+function splitTextAtFirstParagraph(text: string): [string, string] {
+  const match = text.match(/\n{2,}/);
+  if (!match || match.index === undefined) {
+    return [text, ""];
+  }
+  const splitAt = match.index + match[0].length;
+  return [text.slice(0, match.index), text.slice(splitAt)];
+}
+
+function takeFirstParagraphSegments(
+  segments: MessageSegment[],
+): { paired: MessageSegment[]; rest: MessageSegment[] } {
+  const paired: MessageSegment[] = [];
+  const rest: MessageSegment[] = [];
+
+  for (let index = 0; index < segments.length; index += 1) {
+    const segment = segments[index];
+    if (segment.type !== "text") {
+      if (paired.length === 0 || !rest.length) {
+        paired.push(segment);
+      } else {
+        rest.push(segment);
+      }
+      continue;
+    }
+
+    const [first, remainder] = splitTextAtFirstParagraph(segment.value);
+    if (first) {
+      paired.push({ type: "text", value: first });
+    }
+    if (remainder) {
+      rest.push({ type: "text", value: remainder });
+      rest.push(...segments.slice(index + 1));
+      break;
+    }
+  }
+
+  return { paired, rest };
+}
+
+export type LayoutBlock =
+  | { kind: "prose"; segments: MessageSegment[] }
+  | { kind: "media"; embeds: MessageEmbed[]; segments: MessageSegment[]; compact?: boolean };
+
+export function groupSegmentsForLayout(
+  segments: MessageSegment[],
+  seenEmbedKeys: Set<string> = new Set(),
+): LayoutBlock[] {
+  const blocks: LayoutBlock[] = [];
+  let proseBuffer: MessageSegment[] = [];
+
+  const flushProse = () => {
+    if (proseBuffer.length === 0) return;
+    blocks.push({ kind: "prose", segments: proseBuffer });
+    proseBuffer = [];
+  };
+
+  const collectUniqueEmbeds = (embed: MessageEmbed): MessageEmbed[] => {
+    const key = embedDedupeKey(embed);
+    if (seenEmbedKeys.has(key)) {
+      return [];
+    }
+    seenEmbedKeys.add(key);
+    return [embed];
+  };
+
+  let index = 0;
+  while (index < segments.length) {
+    const segment = segments[index];
+    if (segment.type !== "embed") {
+      proseBuffer.push(segment);
+      index += 1;
+      continue;
+    }
+
+    flushProse();
+
+    let mediaEmbeds = collectUniqueEmbeds(segment.embed);
+    index += 1;
+
+    while (index < segments.length && segments[index].type === "embed") {
+      const next = segments[index];
+      if (next.type === "embed") {
+        mediaEmbeds.push(...collectUniqueEmbeds(next.embed));
+      }
+      index += 1;
+    }
+
+    const tailSegments: MessageSegment[] = [];
+    while (index < segments.length && segments[index].type !== "embed") {
+      tailSegments.push(segments[index]);
+      index += 1;
+    }
+
+    const { paired, rest } = takeFirstParagraphSegments(tailSegments);
+    if (rest.length > 0) {
+      proseBuffer.push(...rest);
+    }
+
+    if (mediaEmbeds.length === 0) {
+      if (paired.length > 0) {
+        proseBuffer.push(...paired);
+      }
+      continue;
+    }
+
+    blocks.push({
+      kind: "media",
+      embeds: mediaEmbeds,
+      segments: paired,
+      compact: isCompactMediaText(paired),
+    });
+  }
+
+  flushProse();
+  return blocks;
 }

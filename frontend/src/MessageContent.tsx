@@ -1,58 +1,19 @@
 import { lazy, memo, Suspense } from "react";
 import {
-  citationToViewerTarget,
   embedDedupeKey,
-  formatCitationLabel,
-  getCitationIndex,
+  groupSegmentsForLayout,
+  segmentsToRenderableContent,
   splitContentIntoSections,
   splitMessageWithCitations,
   stripInlineCitationMarkers,
+  type LayoutBlock,
+  type MessageSegment,
 } from "./citations";
 import type { ViewerTarget } from "./citations";
 import { useI18n } from "./i18n";
 import type { Citation, MessageEmbed } from "./types";
 
 const MarkdownText = lazy(() => import("./MarkdownText"));
-
-function citationTooltip(
-  citation: Citation,
-  pageHint: string,
-): string {
-  return `${citation.document_name}${pageHint}${
-    citation.section ? ` · ${citation.section}` : ""
-  }\n${citation.snippet}`;
-}
-
-function pageHintFor(citation: Citation, t: (key: string, vars?: Record<string, unknown>) => string): string {
-  return citation.page ? t("viewer.pageHint", { page: citation.page }) : "";
-}
-
-interface InlineCitationLinkProps {
-  citation: Citation;
-  allCitations: Citation[];
-  onOpenDocument: (target: ViewerTarget) => void;
-}
-
-function InlineCitationLink({
-  citation,
-  allCitations,
-  onOpenDocument,
-}: InlineCitationLinkProps) {
-  const { t } = useI18n();
-  const index = getCitationIndex(citation, allCitations);
-  if (index < 0) return null;
-
-  return (
-    <button
-      type="button"
-      className="citation-link"
-      title={citationTooltip(citation, pageHintFor(citation, t))}
-      onClick={() => onOpenDocument(citationToViewerTarget(citation))}
-    >
-      {formatCitationLabel(index)}
-    </button>
-  );
-}
 
 interface MessageContentProps {
   content: string;
@@ -88,7 +49,9 @@ function embedDisplayCaption(
 
 function AnswerEmbedFigure({ embed, onOpenDocument }: AnswerEmbedFigureProps) {
   const { t } = useI18n();
-  const caption = embedDisplayCaption(embed, t);
+  const linkLabel =
+    embedDisplayCaption(embed, t) ??
+    t("viewer.pageHint", { page: embed.page }).trim();
   const isTable = embed.type === "table";
 
   return (
@@ -99,11 +62,10 @@ function AnswerEmbedFigure({ embed, onOpenDocument }: AnswerEmbedFigureProps) {
     >
       <img
         src={embed.url}
-        alt={caption ?? t("viewer.pageHint", { page: embed.page })}
+        alt={linkLabel}
         loading="lazy"
         className="answer-embed-image"
       />
-      {caption ? <figcaption>{caption}</figcaption> : null}
       <button
         type="button"
         className="answer-embed-link"
@@ -113,12 +75,114 @@ function AnswerEmbedFigure({ embed, onOpenDocument }: AnswerEmbedFigureProps) {
             documentName: embed.document_name ?? "",
             page: embed.page,
             section: embed.caption ?? null,
+            bbox: embed.bbox ?? null,
           })
         }
       >
-        {t("viewer.openSource")}
+        {linkLabel}
       </button>
     </figure>
+  );
+}
+
+interface SegmentListProps {
+  segments: MessageSegment[];
+  citations: Citation[];
+  hasInlineRefs: boolean;
+  onOpenDocument: (target: ViewerTarget) => void;
+}
+
+function SegmentList({
+  segments,
+  citations,
+  hasInlineRefs,
+  onOpenDocument,
+}: SegmentListProps) {
+  const proseContent = segmentsToRenderableContent(segments);
+  if (!proseContent.trim()) return null;
+
+  return (
+    <Suspense
+      fallback={<div className="streaming-text">{proseContent}</div>}
+    >
+      <MarkdownText
+        content={proseContent}
+        inline={hasInlineRefs}
+        citations={citations}
+        onOpenDocument={onOpenDocument}
+      />
+    </Suspense>
+  );
+}
+
+interface LayoutBlockViewProps {
+  block: LayoutBlock;
+  citations: Citation[];
+  hasInlineRefs: boolean;
+  onOpenDocument: (target: ViewerTarget) => void;
+}
+
+function LayoutBlockView({
+  block,
+  citations,
+  hasInlineRefs,
+  onOpenDocument,
+}: LayoutBlockViewProps) {
+  if (block.kind === "prose") {
+    return (
+      <div className="answer-prose">
+        <SegmentList
+          segments={block.segments}
+          citations={citations}
+          hasInlineRefs={hasInlineRefs}
+          onOpenDocument={onOpenDocument}
+        />
+      </div>
+    );
+  }
+
+  if (block.embeds.length === 0) {
+    return (
+      <div className="answer-prose">
+        <SegmentList
+          segments={block.segments}
+          citations={citations}
+          hasInlineRefs={hasInlineRefs}
+          onOpenDocument={onOpenDocument}
+        />
+      </div>
+    );
+  }
+
+  const isTable = block.embeds.some((embed) => embed.type === "table");
+  const compact = block.compact && !isTable;
+
+  return (
+    <div
+      className={`answer-media-block${
+        isTable ? " answer-media-block--table" : ""
+      }${compact ? " answer-media-block--compact" : ""}`}
+    >
+      {block.segments.length > 0 ? (
+        <div className="answer-media-text">
+          <SegmentList
+            segments={block.segments}
+            citations={citations}
+            hasInlineRefs={hasInlineRefs}
+            onOpenDocument={onOpenDocument}
+          />
+        </div>
+      ) : null}
+      <div className="answer-media-figures">
+        {block.embeds.map((embed) => (
+          <AnswerEmbedFigure
+            key={embedDedupeKey(embed)}
+            embed={embed}
+            onOpenDocument={onOpenDocument}
+          />
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -148,56 +212,20 @@ function MessageContent({
         const hasInlineRefs = segments.some(
           (segment) => segment.type === "citation" || segment.type === "embed",
         );
+        const blocks = groupSegmentsForLayout(segments, seenEmbedKeys);
 
         return (
           <div key={sectionIndex} className="message-section">
             <div className="message-section-body">
-              {segments.map((segment, index) => {
-                if (segment.type === "text") {
-                  return (
-                    <Suspense
-                      key={index}
-                      fallback={
-                        <div className="streaming-text">{segment.value}</div>
-                      }
-                    >
-                      <MarkdownText
-                        content={segment.value}
-                        inline={hasInlineRefs}
-                      />
-                    </Suspense>
-                  );
-                }
-
-                if (segment.type === "citation") {
-                  return (
-                    <InlineCitationLink
-                      key={index}
-                      citation={segment.citation}
-                      allCitations={citations}
-                      onOpenDocument={onOpenDocument}
-                    />
-                  );
-                }
-
-                if (segment.type !== "embed") {
-                  return null;
-                }
-
-                const embedKey = embedDedupeKey(segment.embed);
-                if (seenEmbedKeys.has(embedKey)) {
-                  return null;
-                }
-                seenEmbedKeys.add(embedKey);
-
-                return (
-                  <AnswerEmbedFigure
-                    key={index}
-                    embed={segment.embed}
-                    onOpenDocument={onOpenDocument}
-                  />
-                );
-              })}
+              {blocks.map((block, blockIndex) => (
+                <LayoutBlockView
+                  key={blockIndex}
+                  block={block}
+                  citations={citations}
+                  hasInlineRefs={hasInlineRefs}
+                  onOpenDocument={onOpenDocument}
+                />
+              ))}
             </div>
           </div>
         );

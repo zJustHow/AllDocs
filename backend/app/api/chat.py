@@ -119,7 +119,7 @@ async def chat(
                 vision_images = await prepare_vision_images(db, result.evidence, settings)
                 answer_parts: list[str] = []
                 async for delta in agent.iter_synthesis(
-                    payload.message, result.evidence, history, vision_images
+                    payload.message, result.evidence, history, vision_images, lang=lang
                 ):
                     answer_parts.append(delta)
                     yield f"data: {json.dumps({'type': 'delta', 'content': delta}, ensure_ascii=False)}\n\n"

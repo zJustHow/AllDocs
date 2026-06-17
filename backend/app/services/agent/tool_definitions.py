@@ -141,6 +141,40 @@ AGENT_TOOL_DEFINITIONS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "read_neighbor_chunks",
+            "description": (
+                "按 chunk_index 读取锚点 chunk 及其前后相邻片段。"
+                "适用于 snippet 被截断、操作步骤/表格可能延续到相邻块的情况。"
+                "chunk_id 必须来自上一步检索结果中的 id= 字段（UUID）。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "chunk_id": {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "锚点 chunk UUID",
+                    },
+                    "before": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 3,
+                        "description": "读取锚点之前几块，默认 1",
+                    },
+                    "after": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 3,
+                        "description": "读取锚点之后几块，默认 1",
+                    },
+                },
+                "required": ["chunk_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "finish",
             "description": "证据已足够，结束检索并进入回答阶段。",
             "parameters": {

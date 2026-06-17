@@ -506,7 +506,6 @@ export default function App() {
 
   const openDocument = useCallback((target: ViewerTarget) => {
     const doc = documents.find((d) => d.id === target.documentId);
-    setSidebarOpen(false);
     if (viewerCloseTimerRef.current) {
       clearTimeout(viewerCloseTimerRef.current);
       viewerCloseTimerRef.current = null;

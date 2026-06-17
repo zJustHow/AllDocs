@@ -16,6 +16,7 @@ from app.services.embedding import chunk_embedding_text
 from app.services.embedding_provider import get_embedding_service
 from app.services.fulltext_store import FulltextStore
 from app.services.ingest_caption import apply_ingest_captions
+from app.services.asset_dedupe import AssetDedupeRegistry
 from app.services.chunk_index import chunk_fulltext_caption
 from app.services.ingestion import IngestionService, toc_entry_to_dict
 from app.services.infra_init import ensure_external_stores
@@ -48,6 +49,7 @@ class _PendingAssetUpload:
     width: int | None
     height: int | None
     text_summary: str = ""
+    needs_upload: bool = True
 
 
 def _collect_pending_asset_uploads(
@@ -55,55 +57,74 @@ def _collect_pending_asset_uploads(
     parsed_chunks,
     chunk_rows: list[Chunk],
 ) -> list[_PendingAssetUpload]:
+    registry = AssetDedupeRegistry(doc_uuid)
     pending: list[_PendingAssetUpload] = []
+
+    def append_asset(
+        *,
+        chunk_id: uuid.UUID,
+        png_bytes: bytes,
+        asset_type: str,
+        page: int,
+        bbox: list[float],
+        width: int | None,
+        height: int | None,
+        text_summary: str = "",
+    ) -> None:
+        asset_id, object_key, needs_upload = registry.resolve(png_bytes)
+        pending.append(
+            _PendingAssetUpload(
+                asset_id=asset_id,
+                chunk_id=chunk_id,
+                object_key=object_key,
+                png_bytes=png_bytes,
+                asset_type=asset_type,
+                page=page,
+                bbox=bbox,
+                width=width,
+                height=height,
+                text_summary=text_summary,
+                needs_upload=needs_upload,
+            )
+        )
+
     for parsed, chunk in zip(parsed_chunks, chunk_rows, strict=True):
         if parsed.asset_png and parsed.asset_bbox and parsed.page is not None:
-            asset_id = uuid.uuid4()
-            asset_type = parsed.primary_asset_type or "figure"
-            summary = parsed.primary_asset_summary.strip()
-            pending.append(
-                _PendingAssetUpload(
-                    asset_id=asset_id,
-                    chunk_id=chunk.id,
-                    object_key=f"{doc_uuid}/assets/{asset_id}.png",
-                    png_bytes=parsed.asset_png,
-                    asset_type=asset_type,
-                    page=parsed.page,
-                    bbox=list(parsed.asset_bbox),
-                    width=parsed.asset_width,
-                    height=parsed.asset_height,
-                    text_summary=summary,
-                )
+            append_asset(
+                chunk_id=chunk.id,
+                png_bytes=parsed.asset_png,
+                asset_type=parsed.primary_asset_type or "figure",
+                page=parsed.page,
+                bbox=list(parsed.asset_bbox),
+                width=parsed.asset_width,
+                height=parsed.asset_height,
+                text_summary=parsed.primary_asset_summary.strip(),
             )
         for attached in parsed.attached_assets:
-            asset_id = uuid.uuid4()
-            pending.append(
-                _PendingAssetUpload(
-                    asset_id=asset_id,
-                    chunk_id=chunk.id,
-                    object_key=f"{doc_uuid}/assets/{asset_id}.png",
-                    png_bytes=attached.png_bytes,
-                    asset_type=attached.asset_type,
-                    page=attached.page,
-                    bbox=list(attached.bbox),
-                    width=attached.width,
-                    height=attached.height,
-                    text_summary=attached.text_summary,
-                )
+            append_asset(
+                chunk_id=chunk.id,
+                png_bytes=attached.png_bytes,
+                asset_type=attached.asset_type,
+                page=attached.page,
+                bbox=list(attached.bbox),
+                width=attached.width,
+                height=attached.height,
+                text_summary=attached.text_summary,
             )
     return pending
 
 
 def _upload_assets_parallel(storage: StorageService, pending: list[_PendingAssetUpload]) -> None:
-    if not pending:
+    to_upload = [item for item in pending if item.needs_upload]
+    if not to_upload:
         return
-    workers = min(_UPLOAD_WORKERS, len(pending))
+    workers = min(_UPLOAD_WORKERS, len(to_upload))
 
     def _upload_one(item: _PendingAssetUpload) -> None:
         storage.upload(item.object_key, item.png_bytes, "image/png")
 
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        list(pool.map(_upload_one, pending))
+        list(pool.map(_upload_one, to_upload))
 
 
 def _set_progress(
@@ -199,6 +220,7 @@ def process_document(document_id: str) -> None:
                     page=parsed.page,
                     section=parsed.section,
                     chunk_index=parsed.chunk_index,
+                    layout_bbox=list(parsed.layout_bbox) if parsed.layout_bbox else None,
                 )
                 db.add(chunk)
                 chunk_rows.append(chunk)

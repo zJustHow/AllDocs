@@ -12,10 +12,9 @@ from app.services.chunk_filter import ChunkFilter, chunk_asset_types
 from app.services.rag import RAGService, parse_chunk_uuids
 from app.services.toc_lookup import format_documents_outline, lookup_toc, outline_to_chunks
 
-RETRIEVAL_TOOLS = frozenset(
-    {"list_outline", "lookup_toc", "search_chunks", "search_chunks_batch", "read_chunks"}
-)
+RETRIEVAL_TOOLS = frozenset({"search_chunks", "search_chunks_batch"})
 SEMANTIC_SEARCH_ACTIONS = frozenset({"search_chunks", "search_chunks_batch"})
+NEIGHBOR_READ_MAX = 3
 
 
 def _evidence_key(chunk: dict) -> str:
@@ -51,6 +50,9 @@ def _format_chunks(chunks: list[dict], *, source_tool: str) -> str:
         chunk_id = item.get("chunk_id")
         if chunk_id:
             header += f" id={chunk_id}"
+        chunk_index = item.get("chunk_index")
+        if chunk_index is not None:
+            header += f" idx={chunk_index}"
         snippet = (item.get("snippet") or item.get("text") or "")[:240]
         lines.append(f"{header}\n{snippet}")
     return "\n\n".join(lines)
@@ -127,6 +129,14 @@ def parse_batch_searches(action_input: dict, question: str, *, max_items: int) -
         if len(searches) >= max_items:
             break
     return searches
+
+
+def _parse_neighbor_count(raw: object, *, default: int) -> int:
+    try:
+        value = int(raw) if raw is not None else default
+    except (TypeError, ValueError):
+        value = default
+    return max(0, min(value, NEIGHBOR_READ_MAX))
 
 
 def count_retrieval_units(action: str, action_input: dict, *, max_batch: int) -> int:
@@ -270,6 +280,24 @@ class AgentToolRegistry:
             observation = _format_chunks(chunks, source_tool="read_chunks")
             if invalid_ids:
                 observation += f"\n（已忽略无效 chunk_id：{', '.join(invalid_ids[:5])}）"
+            return observation, chunks, 1
+
+        if action == "read_neighbor_chunks":
+            anchor_id = str(action_input.get("chunk_id") or "").strip()
+            if not anchor_id:
+                return "read_neighbor_chunks 需要 chunk_id（锚点 UUID）。", [], 1
+            before = _parse_neighbor_count(action_input.get("before"), default=1)
+            after = _parse_neighbor_count(action_input.get("after"), default=1)
+            chunks, error = await self.rag.read_neighbor_chunks(
+                db,
+                anchor_id,
+                before=before,
+                after=after,
+            )
+            if error:
+                return error, [], 1
+            observation = _format_chunks(chunks, source_tool="read_neighbor_chunks")
+            observation += f"\n（锚点 id={anchor_id}，前 {before} / 后 {after} 块，共 {len(chunks)} 条）"
             return observation, chunks, 1
 
         return f"未知工具：{action}", [], 0

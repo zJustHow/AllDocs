@@ -73,6 +73,7 @@ const en = {
       search_chunks: "Search",
       search_chunks_batch: "Parallel search",
       read_chunks: "Read chunks",
+      read_neighbor_chunks: "Neighbor chunks",
       finish: "Finish",
     },
   },
@@ -105,6 +106,8 @@ const en = {
     unsupported: "Preview is not available for this format",
     download: "Download original file",
     openSource: "Open source",
+    viewEnlarged: "View enlarged image",
+    closeEnlarged: "Close enlarged image",
   },
   citation: {
     pdf: "Doc",

@@ -122,11 +122,3 @@ export function ChevronRightIcon() {
     </svg>
   );
 }
-
-export function PdfBadgeIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-      <path d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm-1 2l5 5h-4V4zM8 13h2v5H8v-5zm3 0h2v5h-2v-5zm3 0h2v5h-2v-5z" />
-    </svg>
-  );
-}

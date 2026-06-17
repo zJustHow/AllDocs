@@ -43,6 +43,7 @@ class Citation(BaseModel):
     section: str | None
     snippet: str
     score: float | None = None
+    bbox: list[float] | None = None
 
 
 class ChatResponse(BaseModel):
@@ -51,14 +52,4 @@ class ChatResponse(BaseModel):
     citations: list[Citation]
     embeds: list[dict] = Field(default_factory=list)
     language: str
-
-
-class MessageEmbed(BaseModel):
-    ref: int
-    document_id: str
-    document_name: str | None = None
-    page: int
-    type: str = "page"
-    url: str
-    caption: str | None = None
 

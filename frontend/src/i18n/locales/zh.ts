@@ -73,6 +73,7 @@ const zh = {
       search_chunks: "语义检索",
       search_chunks_batch: "并行检索",
       read_chunks: "精读片段",
+      read_neighbor_chunks: "相邻片段",
       finish: "完成检索",
     },
   },
@@ -105,6 +106,8 @@ const zh = {
     unsupported: "此格式暂不支持在线预览",
     download: "下载原文件",
     openSource: "查看原文",
+    viewEnlarged: "查看大图",
+    closeEnlarged: "关闭大图",
   },
   citation: {
     pdf: "文档",

@@ -70,6 +70,7 @@ def _embed_for_chunk(chunk: dict) -> dict | None:
             "type": embed_type,
             "url": asset.get("url") or asset_url(asset["asset_id"]),
             "asset_id": asset.get("asset_id"),
+            "bbox": asset.get("bbox"),
             "caption": caption,
         }
 
@@ -80,15 +81,49 @@ def _embed_for_chunk(chunk: dict) -> dict | None:
         "type": visual_type,
         "url": embed_render_url(str(document_id), int(page)),
         "asset_id": None,
+        "bbox": None,
         "caption": _embed_display_caption(chunk),
     }
+
+
+def _normalized_bbox_key(bbox: list | tuple | None) -> str | None:
+    if not bbox or len(bbox) != 4:
+        return None
+    return ",".join(str(round(float(value), 1)) for value in bbox)
 
 
 def _embed_dedupe_key(payload: dict) -> str:
     asset_id = payload.get("asset_id")
     if asset_id:
         return f"asset:{asset_id}"
-    return f"page:{payload['document_id']}:{payload['page']}"
+
+    embed_type = payload.get("type") or "figure"
+    document_id = payload.get("document_id")
+    page = payload.get("page")
+    bbox_key = _normalized_bbox_key(payload.get("bbox"))
+
+    if embed_type == "figure" and document_id and page is not None:
+        if bbox_key:
+            return f"figure:{document_id}:{page}:{bbox_key}"
+        return f"figure:{document_id}:{page}"
+
+    if embed_type == "table" and document_id and page is not None and bbox_key:
+        return f"table:{document_id}:{page}:{bbox_key}"
+
+    url = payload.get("url")
+    if url:
+        return f"url:{url}"
+
+    if document_id and page is not None:
+        return f"page:{document_id}:{page}"
+    return f"embed:{id(payload)}"
+
+
+def _chunk_embed_keys(chunk: dict) -> list[str]:
+    payload = _embed_for_chunk(chunk)
+    if payload is None:
+        return []
+    return [_embed_dedupe_key(payload)]
 
 
 def _collapse_extra_blank_lines(text: str) -> str:
@@ -102,28 +137,37 @@ def evidence_has_visual(chunks: list[dict]) -> bool:
 def auto_insert_embed_markers(answer: str, cited_chunks: list[dict]) -> str:
     """Insert {{embed:N}} for visual cited chunks when the model omitted markers."""
     existing_refs = {int(match) for match in EMBED_MARKER.findall(answer)}
+    seen_keys: set[str] = set()
+    for ref in existing_refs:
+        index = ref - 1
+        if index < 0 or index >= len(cited_chunks):
+            continue
+        for key in _chunk_embed_keys(cited_chunks[index]):
+            seen_keys.add(key)
+
     inserts: list[tuple[int, str]] = []
 
     for ref, chunk in enumerate(cited_chunks, start=1):
         if ref in existing_refs or not _chunk_should_embed(chunk):
             continue
+        payload = _embed_for_chunk(chunk)
+        if payload is None:
+            continue
+        dedupe_key = _embed_dedupe_key(payload)
+        if dedupe_key in seen_keys:
+            continue
         marker = f"{{{{embed:{ref}}}}}"
         citation_pat = re.compile(rf"\[\s*{ref}\s*\]|【\s*{ref}\s*】")
         match = citation_pat.search(answer)
-        if match:
-            pos = match.start()
-            para_start = answer.rfind("\n\n", 0, pos)
-            insert_at = para_start + 2 if para_start >= 0 else 0
-            inserts.append((insert_at, marker))
-        else:
-            inserts.append((0, marker))
+        if not match:
+            continue
+        insert_at = match.start()
+        inserts.append((insert_at, f"\n\n{marker}\n\n"))
+        seen_keys.add(dedupe_key)
         existing_refs.add(ref)
 
     for insert_at, marker in sorted(inserts, key=lambda item: item[0], reverse=True):
-        if insert_at == 0:
-            answer = f"{marker}\n\n{answer}" if answer else marker
-        else:
-            answer = answer[:insert_at] + f"{marker}\n\n" + answer[insert_at:]
+        answer = answer[:insert_at] + marker + answer[insert_at:]
 
     return answer
 
@@ -182,6 +226,7 @@ def public_embeds(embeds: list[dict]) -> list[dict]:
             "type": item.get("type", "page"),
             "url": item["url"],
             "asset_id": item.get("asset_id"),
+            "bbox": item.get("bbox"),
             "caption": item.get("caption"),
         }
         for item in embeds

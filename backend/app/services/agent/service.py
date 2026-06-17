@@ -45,21 +45,27 @@ class AgentRAGService:
         evidence: list[dict],
         chat_history: list[dict[str, str]] | None,
         vision_images: list[VisionImage] | None = None,
+        *,
+        lang: str | None = None,
     ) -> AsyncIterator[str]:
         context = self.rag.build_context(evidence)
+        response_lang = lang or detect_language(question)
         use_vision = (
             self.settings.llm_vision_enabled
             and vision_images
         )
         include_embed_rules = not use_vision and evidence_has_visual(evidence)
         stream = (
-            self.llm.chat_stream_vision(question, context, vision_images, chat_history)
+            self.llm.chat_stream_vision(
+                question, context, vision_images, chat_history, lang=response_lang
+            )
             if use_vision
             else self.llm.chat_stream(
                 question,
                 context,
                 chat_history,
                 include_embed_rules=include_embed_rules,
+                lang=response_lang,
             )
         )
         async for delta in stream:
@@ -263,7 +269,7 @@ class AgentRAGService:
         use_vision = self.settings.llm_vision_enabled and bool(vision_images)
         if use_vision:
             answer = await self.llm.chat_vision(
-                question, context, vision_images, chat_history
+                question, context, vision_images, chat_history, lang=lang
             )
         else:
             answer = await self.llm.chat(
@@ -271,6 +277,7 @@ class AgentRAGService:
                 context,
                 chat_history,
                 include_embed_rules=evidence_has_visual(state.evidence),
+                lang=lang,
             )
         answer, public_citations, embeds = finalize_answer(answer, state.evidence)
 

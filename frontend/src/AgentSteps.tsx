@@ -27,6 +27,11 @@ function summarizeActionInput(action: string, input: Record<string, unknown>): s
   if (action === "read_chunks" && Array.isArray(input.chunk_ids)) {
     return [`${input.chunk_ids.length} chunk(s)`];
   }
+  if (action === "read_neighbor_chunks" && typeof input.chunk_id === "string") {
+    const before = typeof input.before === "number" ? input.before : 1;
+    const after = typeof input.after === "number" ? input.after : 1;
+    return [`±${before}/${after} around ${input.chunk_id.slice(0, 8)}…`];
+  }
   if (action === "finish" && typeof input.reason === "string") {
     return [input.reason];
   }

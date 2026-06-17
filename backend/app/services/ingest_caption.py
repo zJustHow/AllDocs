@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import Literal
@@ -60,10 +61,14 @@ def _build_caption_jobs(
 ) -> list[tuple[ChunkAsset | Chunk, _CaptionJob]]:
     jobs: list[tuple[ChunkAsset | Chunk, _CaptionJob]] = []
     image_media_type = _image_media_type(filename)
+    seen_asset_ids: set[uuid.UUID] = set()
 
     for asset in asset_rows:
         if len(jobs) >= max_count:
             break
+        if asset.id in seen_asset_ids:
+            continue
+        seen_asset_ids.add(asset.id)
         jobs.append(
             (
                 asset,
@@ -206,7 +211,9 @@ def apply_ingest_captions(
             if not caption:
                 continue
             if isinstance(target, ChunkAsset):
-                target.caption = caption
+                for asset in asset_rows:
+                    if asset.id == target.id:
+                        asset.caption = caption
             else:
                 target.caption = caption
             generated += 1

@@ -59,6 +59,22 @@ def finalize_answer(answer: str, context_chunks: list[dict]) -> tuple[str, list[
     return answer, public_citations(cited_chunks), public_embeds(embeds)
 
 
+def _resolve_citation_bbox(chunk: dict) -> list[float] | None:
+    text = (chunk.get("text") or chunk.get("snippet") or "").strip()
+    layout = chunk.get("layout_bbox")
+    if layout and len(layout) == 4 and text:
+        return [float(value) for value in layout]
+
+    for asset in chunk.get("assets") or []:
+        bbox = asset.get("bbox")
+        if bbox and len(bbox) == 4:
+            return [float(value) for value in bbox]
+
+    if layout and len(layout) == 4:
+        return [float(value) for value in layout]
+    return None
+
+
 def public_citations(chunks: list[dict]) -> list[dict]:
     return [
         {
@@ -68,6 +84,7 @@ def public_citations(chunks: list[dict]) -> list[dict]:
             "section": item["section"],
             "snippet": item["snippet"],
             "score": item["score"],
+            "bbox": _resolve_citation_bbox(item),
         }
         for item in chunks
     ]

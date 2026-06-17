@@ -197,6 +197,7 @@ class RAGService:
             )
             chunks.append(
                 {
+                    "chunk_index": chunk.chunk_index,
                     "chunk_id": chunk_id,
                     "document_id": str(document.id),
                     "document_name": document.name,
@@ -207,6 +208,7 @@ class RAGService:
                     "snippet": snippet,
                     "text": body_text,
                     "index_text": index_text,
+                    "layout_bbox": chunk.layout_bbox,
                     "assets": [
                         {
                             "asset_id": str(asset.id),
@@ -215,6 +217,7 @@ class RAGService:
                             "url": asset_url(asset.id),
                             "object_key": asset.object_key,
                             "caption": asset.caption,
+                            "bbox": asset.bbox,
                         }
                         for asset in chunk_assets
                     ],
@@ -380,6 +383,43 @@ class RAGService:
     ) -> list[dict]:
         score_map = {chunk_id: 1.0 for chunk_id in chunk_ids}
         return await self._load_chunks(db, chunk_ids, score_map)
+
+    async def read_neighbor_chunks(
+        self,
+        db: AsyncSession,
+        chunk_id: str,
+        *,
+        before: int = 1,
+        after: int = 1,
+    ) -> tuple[list[dict], str | None]:
+        """Load anchor chunk and up to ``before``/``after`` neighbors by chunk_index."""
+        chunk_uuids, _invalid = parse_chunk_uuids([chunk_id])
+        if not chunk_uuids:
+            return [], f"无效 chunk_id：{chunk_id}"
+
+        anchor_id = chunk_uuids[0]
+        anchor_row = await db.execute(select(Chunk).where(Chunk.id == anchor_id))
+        anchor = anchor_row.scalar_one_or_none()
+        if anchor is None:
+            return [], "未找到锚点 chunk。"
+
+        index_lo = max(0, anchor.chunk_index - before)
+        index_hi = anchor.chunk_index + after
+        result = await db.execute(
+            select(Chunk.id)
+            .where(
+                Chunk.document_id == anchor.document_id,
+                Chunk.chunk_index >= index_lo,
+                Chunk.chunk_index <= index_hi,
+            )
+            .order_by(Chunk.chunk_index)
+        )
+        ordered_ids = [str(row[0]) for row in result.all()]
+        if not ordered_ids:
+            return [], "未找到相邻 chunk。"
+
+        score_map = {cid: 1.0 for cid in ordered_ids}
+        return await self._load_chunks(db, ordered_ids, score_map), None
 
     def build_context(self, chunks: list[dict]) -> str:
         parts: list[str] = []

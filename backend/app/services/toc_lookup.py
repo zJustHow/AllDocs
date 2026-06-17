@@ -197,22 +197,6 @@ def _entry_to_chunk(document: Document, entry: TocEntry, index: int, score: floa
     }
 
 
-_OUTLINE_QUESTION_RE = re.compile(
-    r"(?:目录|章节树|章节列表|章节目录|有哪些章|全书结构|"
-    r"outline|table\s+of\s+contents|chapter\s+list)",
-    re.IGNORECASE,
-)
-
-
-def is_toc_outline_question(question: str) -> bool:
-    return bool(_OUTLINE_QUESTION_RE.search(question.strip()))
-
-
-def is_toc_navigation_question(question: str) -> bool:
-    text = question.strip()
-    return bool(_TOC_NAV_NOISE_RE.search(text) or _CHAPTER_INDEX_RE.search(text))
-
-
 async def lookup_toc(
     db: AsyncSession,
     question: str,

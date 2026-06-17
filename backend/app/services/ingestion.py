@@ -52,6 +52,7 @@ class ParsedChunk:
     page: int | None
     section: str | None
     chunk_index: int
+    layout_bbox: tuple[float, float, float, float] | None = None
     asset_bbox: tuple[float, float, float, float] | None = None
     asset_png: bytes | None = None
     asset_width: int | None = None
@@ -161,49 +162,92 @@ def _split_text_with_offsets(
     return chunks
 
 
+def _merge_bboxes(
+    bboxes: list[tuple[float, float, float, float]],
+) -> tuple[float, float, float, float] | None:
+    if not bboxes:
+        return None
+    return (
+        min(bbox[0] for bbox in bboxes),
+        min(bbox[1] for bbox in bboxes),
+        max(bbox[2] for bbox in bboxes),
+        max(bbox[3] for bbox in bboxes),
+    )
+
+
+def _page_content_bbox(
+    page: fitz.Page,
+    exclude_bboxes: list[tuple[float, float, float, float]],
+) -> tuple[float, float, float, float] | None:
+    blocks = filter_page_blocks(page, exclude_bboxes)
+    merged = _merge_bboxes([block[:4] for block in blocks])
+    if merged:
+        return merged
+    rect = page.rect
+    return (float(rect.x0), float(rect.y0), float(rect.x1), float(rect.y1))
+
+
 def _group_contiguous_sections(
-    pages: list[tuple[str | None, str, int]],
-) -> list[tuple[str | None, list[tuple[int, str]]]]:
+    pages: list[tuple[str | None, str, int, tuple[float, float, float, float] | None]],
+) -> list[tuple[str | None, list[tuple[int, str, tuple[float, float, float, float] | None]]]]:
     if not pages:
         return []
 
-    groups: list[tuple[str | None, list[tuple[int, str]]]] = []
+    groups: list[
+        tuple[str | None, list[tuple[int, str, tuple[float, float, float, float] | None]]]
+    ] = []
     current_section = pages[0][0]
-    current_pages: list[tuple[int, str]] = [(pages[0][2], pages[0][1])]
+    current_pages: list[tuple[int, str, tuple[float, float, float, float] | None]] = [
+        (pages[0][2], pages[0][1], pages[0][3])
+    ]
 
-    for section, text, page in pages[1:]:
+    for section, text, page, bbox in pages[1:]:
         if section != current_section:
             groups.append((current_section, current_pages))
             current_section = section
             current_pages = []
-        current_pages.append((page, text))
+        current_pages.append((page, text, bbox))
     groups.append((current_section, current_pages))
     return groups
 
 
 def _concat_pages(
-    pages: list[tuple[int, str]], separator: str = _PAGE_SEPARATOR
-) -> tuple[str, list[tuple[int, int]]]:
-    spans: list[tuple[int, int]] = []
+    pages: list[tuple[int, str, tuple[float, float, float, float] | None]],
+    separator: str = _PAGE_SEPARATOR,
+) -> tuple[str, list[tuple[int, int, tuple[float, float, float, float] | None]]]:
+    spans: list[tuple[int, int, tuple[float, float, float, float] | None]] = []
     parts: list[str] = []
     offset = 0
-    for index, (page, text) in enumerate(pages):
+    for index, (page, text, bbox) in enumerate(pages):
         if index > 0:
             offset += len(separator)
-        spans.append((page, offset))
+        spans.append((page, offset, bbox))
         parts.append(text)
         offset += len(text)
     return separator.join(parts), spans
 
 
-def _page_for_offset(spans: list[tuple[int, int]], offset: int) -> int:
+def _page_for_offset(spans: list[tuple[int, int, tuple[float, float, float, float] | None]], offset: int) -> int:
     page = spans[0][0]
-    for span_page, start in spans:
+    for span_page, start, _bbox in spans:
         if start <= offset:
             page = span_page
         else:
             break
     return page
+
+
+def _bbox_for_offset(
+    spans: list[tuple[int, int, tuple[float, float, float, float] | None]],
+    offset: int,
+) -> tuple[float, float, float, float] | None:
+    bbox: tuple[float, float, float, float] | None = None
+    for _page, start, span_bbox in spans:
+        if start <= offset:
+            bbox = span_bbox
+        else:
+            break
+    return bbox
 
 
 def _extract_native_page_text(page: fitz.Page) -> str:
@@ -237,29 +281,37 @@ def _extract_page_text_blocks(page: fitz.Page) -> list[tuple[float, float, str]]
 def _segment_page_by_anchors(
     anchors: list[TocAnchor],
     page_number: int,
-    blocks: list[tuple[float, float, str]],
+    blocks: list[tuple[float, float, float, float, str]],
     fallback_section: str | None,
-) -> list[tuple[str | None, str]]:
+) -> list[tuple[str | None, str, tuple[float, float, float, float] | None]]:
     if not blocks:
         return []
 
-    segments: list[tuple[str | None, list[str]]] = []
+    segments: list[tuple[str | None, list[str], list[tuple[float, float, float, float]]]] = []
     current_section: str | None = None
     current_texts: list[str] = []
+    current_bboxes: list[tuple[float, float, float, float]] = []
 
-    for y0, y1, text in blocks:
+    for x0, y0, x1, y1, text in blocks:
         mid_y = (y0 + y1) / 2
         section = section_at_position(anchors, page_number, mid_y) or fallback_section
+        block_bbox = (x0, y0, x1, y1)
         if section != current_section and current_texts:
-            segments.append((current_section, current_texts))
+            segments.append((current_section, current_texts, current_bboxes))
             current_texts = []
+            current_bboxes = []
         current_section = section
         current_texts.append(text)
+        current_bboxes.append(block_bbox)
 
     if current_texts:
-        segments.append((current_section, current_texts))
+        segments.append((current_section, current_texts, current_bboxes))
 
-    return [(section, "\n".join(texts)) for section, texts in segments if texts]
+    return [
+        (section, "\n".join(texts), _merge_bboxes(bboxes))
+        for section, texts, bboxes in segments
+        if texts
+    ]
 
 
 def _page_needs_ocr(native_text: str, settings: Settings) -> bool:
@@ -454,6 +506,12 @@ def _strip_html(raw_html: str) -> str:
     return re.sub(r"\n{3,}", "\n\n", text).strip()
 
 
+def _pages_with_bbox(
+    pages: list[tuple[str | None, str, int]],
+) -> list[tuple[str | None, str, int, tuple[float, float, float, float] | None]]:
+    return [(section, text, page, None) for section, text, page in pages]
+
+
 def _flush_text_buffer(
     pages: list[tuple[str | None, str, int]],
     section: str | None,
@@ -548,6 +606,7 @@ def _orphan_figure_chunk(figure: EmbeddedFigure) -> ParsedChunk:
         page=figure.page,
         section=figure.section,
         chunk_index=0,
+        layout_bbox=figure.bbox,
         primary_asset_type="figure",
         primary_asset_summary=figure.text.strip(),
         asset_bbox=figure.bbox,
@@ -564,6 +623,7 @@ def _orphan_table_chunk(table: EmbeddedTable) -> ParsedChunk:
         page=table.page,
         section=table.section,
         chunk_index=0,
+        layout_bbox=table.bbox,
         primary_asset_type="table",
         primary_asset_summary=table.summary,
         asset_bbox=table.bbox,
@@ -574,7 +634,7 @@ def _orphan_table_chunk(table: EmbeddedTable) -> ParsedChunk:
 
 
 def _build_chunks_from_pages(
-    pages: list[tuple[str | None, str, int]],
+    pages: list[tuple[str | None, str, int, tuple[float, float, float, float] | None]],
     settings: Settings,
 ) -> list[ParsedChunk]:
     parsed_chunks: list[ParsedChunk] = []
@@ -592,6 +652,7 @@ def _build_chunks_from_pages(
                     page=_page_for_offset(page_spans, offset),
                     section=section,
                     chunk_index=chunk_index,
+                    layout_bbox=_bbox_for_offset(page_spans, offset),
                 )
             )
             chunk_index += 1
@@ -634,7 +695,7 @@ class IngestionService:
                     return resolved
             return section_for_page(toc_entries, page_number)
 
-        pages: list[tuple[str | None, str, int]] = []
+        pages: list[tuple[str | None, str, int, tuple[float, float, float, float] | None]] = []
         ocr_pages = 0
 
         extracted_tables = extract_pdf_tables(
@@ -700,18 +761,34 @@ class IngestionService:
             if use_y_split and not used_ocr and page_text.strip():
                 blocks = filter_page_blocks(page, exclude_bboxes)
                 if blocks:
-                    for section, segment_text in _segment_page_by_anchors(
+                    for section, segment_text, segment_bbox in _segment_page_by_anchors(
                         toc_anchors,
                         page_number,
                         blocks,
                         fallback_section,
                     ):
                         if segment_text.strip():
-                            pages.append((section, segment_text.strip(), page_number))
+                            pages.append(
+                                (section, segment_text.strip(), page_number, segment_bbox)
+                            )
                 elif page_text.strip():
-                    pages.append((fallback_section, page_text.strip(), page_number))
+                    pages.append(
+                        (
+                            fallback_section,
+                            page_text.strip(),
+                            page_number,
+                            _page_content_bbox(page, exclude_bboxes),
+                        )
+                    )
             elif page_text.strip():
-                pages.append((fallback_section, page_text.strip(), page_number))
+                pages.append(
+                    (
+                        fallback_section,
+                        page_text.strip(),
+                        page_number,
+                        _page_content_bbox(page, exclude_bboxes),
+                    )
+                )
             if on_page_progress is not None:
                 on_page_progress(page_number, page_count)
 
@@ -765,7 +842,7 @@ class IngestionService:
         if on_page_progress is not None:
             on_page_progress(1, 1)
         return ParseResult(
-            chunks=_build_chunks_from_pages(pages, self.settings),
+            chunks=_build_chunks_from_pages(_pages_with_bbox(pages), self.settings),
             page_count=1,
             ocr_pages=0,
             toc_entries=[],
@@ -783,7 +860,7 @@ class IngestionService:
         if on_page_progress is not None:
             on_page_progress(1, 1)
         return ParseResult(
-            chunks=_build_chunks_from_pages(pages, self.settings),
+            chunks=_build_chunks_from_pages(_pages_with_bbox(pages), self.settings),
             page_count=1,
             ocr_pages=0,
             toc_entries=[],
@@ -800,7 +877,7 @@ class IngestionService:
         if on_page_progress is not None:
             on_page_progress(1, 1)
         return ParseResult(
-            chunks=_build_chunks_from_pages(pages, self.settings),
+            chunks=_build_chunks_from_pages(_pages_with_bbox(pages), self.settings),
             page_count=1,
             ocr_pages=0,
             toc_entries=[],

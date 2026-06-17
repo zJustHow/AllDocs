@@ -68,3 +68,24 @@ async def init_db() -> None:
         await conn.execute(
             text("ALTER TABLE chunks DROP COLUMN IF EXISTS chunk_type")
         )
+        await conn.execute(
+            text("ALTER TABLE chunks ADD COLUMN IF NOT EXISTS layout_bbox JSONB")
+        )
+        await conn.execute(
+            text(
+                """
+                DO $$ BEGIN
+                    IF EXISTS (
+                        SELECT 1
+                        FROM pg_constraint
+                        WHERE conname = 'chunk_assets_pkey'
+                          AND conrelid = 'chunk_assets'::regclass
+                          AND array_length(conkey, 1) = 1
+                    ) THEN
+                        ALTER TABLE chunk_assets DROP CONSTRAINT chunk_assets_pkey;
+                        ALTER TABLE chunk_assets ADD PRIMARY KEY (id, chunk_id);
+                    END IF;
+                END $$;
+                """
+            )
+        )

@@ -18,6 +18,7 @@ export interface Citation {
   section: string | null;
   snippet: string;
   score?: number | null;
+  bbox?: number[] | null;
 }
 
 export interface MessageEmbed {
@@ -28,6 +29,7 @@ export interface MessageEmbed {
   page: number;
   type: "table" | "figure" | "page" | string;
   url: string;
+  bbox?: number[] | null;
   caption?: string | null;
 }
 

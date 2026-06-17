@@ -578,6 +578,8 @@ button {
   display: flex;
   align-items: center;
   gap: 8px;
+  position: relative;
+  z-index: 2;
   width: min(
     calc(var(--content-max) + 48px),
     calc(
@@ -661,6 +663,8 @@ button {
 .chat-area {
   flex: 1;
   min-height: 0;
+  position: relative;
+  z-index: 1;
   overflow-y: auto;
   overscroll-behavior: contain;
   display: flex;
@@ -1242,135 +1246,159 @@ button {
 .citation-link {
   display: inline;
   margin: 0;
-  padding: 0 1px;
+  padding: 0;
   border: none;
   background: none;
   color: var(--accent);
-  font: inherit;
-  font-size: 0.88em;
+  font-family: inherit;
+  font-size: 0.62em;
   font-weight: 600;
-  line-height: inherit;
-  vertical-align: baseline;
+  line-height: 1;
+  vertical-align: super;
   cursor: pointer;
   text-decoration: none;
 }
 
+.citation-link + .citation-link {
+  margin-left: 3px;
+}
+
 .citation-link:hover {
   text-decoration: underline;
-  text-underline-offset: 2px;
-}
-
-.section-citations {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 8px;
-  clear: both;
-}
-
-.citation-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 3px 10px;
-  margin: 0;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  background: var(--surface-hover);
-  backdrop-filter: blur(var(--glass-blur-tiny)) saturate(var(--glass-saturate));
-  -webkit-backdrop-filter: blur(var(--glass-blur-tiny))
-    saturate(var(--glass-saturate));
-  color: var(--text-secondary);
-  font-size: 0.72rem;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  line-height: 1.4;
-  vertical-align: middle;
-  cursor: pointer;
-  transition: background 0.15s;
-  max-width: 100%;
-}
-
-.citation-badge-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  min-width: 0;
-}
-
-.citation-badge-index {
-  flex-shrink: 0;
-  color: var(--text-secondary);
-}
-
-.citation-badge-more {
-  letter-spacing: 0.08em;
-}
-
-.citation-badge:hover {
-  background: var(--surface-hover);
-}
-
-.citation-badge svg {
-  opacity: var(--opacity-subtle);
+  text-underline-offset: 1px;
 }
 
 .answer-embed {
   display: block;
-  margin: 4px 16px 10px 0;
+  margin: 0;
   max-width: 100%;
 }
 
 .answer-embed--figure {
-  float: left;
-  clear: none;
-  max-width: min(42%, 240px);
   text-align: center;
 }
 
 .answer-embed--table {
-  clear: both;
-  float: none;
   width: 100%;
   max-width: 100%;
-  margin: 12px 0;
   text-align: initial;
+}
+
+.answer-media-block {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  margin: 14px 0;
+}
+
+.answer-media-block--table {
+  flex-direction: column;
+}
+
+.answer-media-block--compact {
+  flex-direction: column;
+  gap: 10px;
+  margin: 8px 0;
+}
+
+.answer-media-block--compact .answer-media-figures {
+  width: 100%;
+  max-width: min(360px, 100%);
+  margin-inline: auto;
+}
+
+.answer-media-block--compact .answer-embed-image {
+  max-height: 240px;
+}
+
+.answer-media-figures {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 auto;
+  gap: 10px;
+  width: min(240px, 38%);
+  max-width: 240px;
+}
+
+.answer-media-block--table .answer-media-figures {
+  width: 100%;
+  max-width: 100%;
+}
+
+.answer-media-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.answer-prose + .answer-media-block,
+.answer-media-block + .answer-prose {
+  margin-top: 14px;
+}
+
+.answer-media-block + .answer-media-block {
+  margin-top: 14px;
+}
+
+.answer-prose + .answer-media-block--compact,
+.answer-media-block--compact + .answer-prose,
+.answer-media-block--compact + .answer-media-block,
+.answer-media-block + .answer-media-block--compact {
+  margin-top: 8px;
+}
+
+.answer-embed-image-btn {
+  display: block;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: zoom-in;
+  max-width: 100%;
+}
+
+.answer-embed-image-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-md);
 }
 
 .answer-embed-image {
   display: block;
-  max-width: min(100%, 520px);
-  max-height: 360px;
+  max-width: 100%;
+  max-height: 280px;
   width: auto;
   height: auto;
   object-fit: contain;
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
   background: var(--surface);
+  transition: border-color 0.15s ease;
+}
+
+.answer-embed-image-btn:hover .answer-embed-image {
+  border-color: var(--accent);
 }
 
 .answer-embed--figure .answer-embed-image {
-  max-width: 100%;
-  max-height: 280px;
-  margin-inline: 0;
+  margin-inline: auto;
 }
 
 .answer-embed--table .answer-embed-image {
-  max-width: 100%;
   max-height: none;
   width: 100%;
 }
 
 @media (max-width: 640px) {
-  .answer-embed--figure {
-    float: none;
+  .answer-media-block {
+    flex-direction: column;
+  }
+
+  .answer-media-figures {
+    width: 100%;
     max-width: 100%;
-    margin: 12px 0;
   }
 
   .answer-embed--figure .answer-embed-image {
     max-height: 360px;
-    margin-inline: auto;
   }
 }
 
@@ -1553,6 +1581,61 @@ button {
   padding: 10px 16px;
   border-radius: var(--radius-md);
   font-size: 0.875rem;
+}
+
+/* ── Image lightbox ── */
+
+.image-lightbox-root {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.image-lightbox-backdrop {
+  position: absolute;
+  inset: 0;
+  border: none;
+  padding: 0;
+  background: var(--overlay-bg);
+  backdrop-filter: blur(var(--overlay-blur));
+  -webkit-backdrop-filter: blur(var(--overlay-blur));
+  cursor: zoom-out;
+}
+
+.image-lightbox-content {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  max-width: min(96vw, 1200px);
+  max-height: 92vh;
+  margin: 0;
+  animation: confirm-dialog-in 0.18s var(--panel-ease);
+}
+
+.image-lightbox-image {
+  display: block;
+  max-width: 100%;
+  max-height: calc(92vh - 48px);
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  border-radius: var(--radius-md);
+  box-shadow: 0 12px 48px var(--alpha-black-22);
+}
+
+.image-lightbox-caption {
+  margin: 0;
+  max-width: 100%;
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+  text-align: center;
 }
 
 /* ── Confirm dialog ── */
@@ -1814,6 +1897,21 @@ button {
   width: 100%;
   display: flex;
   justify-content: center;
+}
+
+.doc-viewer-page-media {
+  position: relative;
+  max-width: 100%;
+}
+
+.doc-viewer-highlight {
+  position: absolute;
+  box-sizing: border-box;
+  border: 2px solid color-mix(in srgb, var(--accent) 85%, white);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  border-radius: 2px;
+  pointer-events: none;
+  z-index: 1;
 }
 
 .doc-viewer-page-placeholder {

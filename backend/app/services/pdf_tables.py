@@ -69,10 +69,10 @@ def table_bboxes_on_page(
 def filter_page_blocks(
     page: fitz.Page,
     exclude_bboxes: list[tuple[float, float, float, float]],
-) -> list[tuple[float, float, str]]:
+) -> list[tuple[float, float, float, float, str]]:
     """Return text blocks with table/figure regions removed."""
     blocks = page.get_text("blocks")
-    extracted: list[tuple[float, float, str]] = []
+    extracted: list[tuple[float, float, float, float, str]] = []
     for block in blocks:
         if len(block) < 5:
             continue
@@ -81,8 +81,8 @@ def filter_page_blocks(
             continue
         text = str(block[4]).strip()
         if text:
-            extracted.append((float(bbox[1]), float(bbox[3]), text))
-    extracted.sort(key=lambda item: (item[0], item[1]))
+            extracted.append((bbox[0], bbox[1], bbox[2], bbox[3], text))
+    extracted.sort(key=lambda item: (item[1], item[3]))
     return extracted
 
 
@@ -92,7 +92,7 @@ def filter_page_text(
 ) -> str:
     blocks = filter_page_blocks(page, exclude_bboxes)
     if blocks:
-        return "\n".join(text for _, _, text in blocks)
+        return "\n".join(text for *_, text in blocks)
     return ""
 
 

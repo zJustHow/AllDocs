@@ -166,7 +166,7 @@ async def voice_websocket(websocket: WebSocket) -> None:
                 await _send_json(websocket, {"type": "status", "stage": "answering"})
 
                 async for delta in agent.iter_synthesis(
-                    question, result.evidence, history, vision_images
+                    question, result.evidence, history, vision_images, lang=lang
                 ):
                     answer_parts.append(delta)
                     pending_tts += delta
