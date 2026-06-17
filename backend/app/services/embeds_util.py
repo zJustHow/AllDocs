@@ -15,6 +15,8 @@ from app.services.visual_asset_util import VISUAL_ASSET_TYPES, primary_visual_as
 
 EMBED_MARKER = embed_marker_pattern()
 _EXTRA_BLANK_LINES = re.compile(r"\n{3,}")
+_PIPE_TABLE_ROW = re.compile(r"^\s*\|.+\|\s*$")
+_PIPE_TABLE_SEPARATOR = re.compile(r"^\s*\|[\s\-:|]+\|\s*$")
 
 
 def _paragraph_at_position(answer: str, pos: int) -> str:
@@ -25,14 +27,45 @@ def _paragraph_at_position(answer: str, pos: int) -> str:
     return answer[start:end]
 
 
+def _insert_at_section_heading(answer: str, chunk: dict) -> int | None:
+    """Prefer inserting near the chunk's document section title in the answer."""
+    section = (chunk.get("section") or "").strip()
+    if not section:
+        return None
+
+    candidates: list[str] = []
+    seen: set[str] = set()
+    for part in section.split(">"):
+        part = part.strip()
+        if part and part not in seen:
+            seen.add(part)
+            candidates.append(part)
+    if section not in seen:
+        candidates.append(section)
+
+    best_idx: int | None = None
+    for candidate in candidates:
+        if len(candidate) < 2:
+            continue
+        for needle in (f"## {candidate}", f"### {candidate}", candidate):
+            idx = answer.find(needle)
+            if idx >= 0 and (best_idx is None or idx < best_idx):
+                best_idx = idx
+    return best_idx
+
+
 def _best_citation_insert_at(answer: str, ref: int, chunk: dict) -> int | None:
+    heading_at = _insert_at_section_heading(answer, chunk)
+    if heading_at is not None:
+        return heading_at
+
     matches = list(citation_ref_pattern(ref).finditer(answer))
     if not matches:
         return None
 
     chunk_section = (chunk.get("section") or chunk.get("caption") or "").strip()
     if chunk_section:
-        for match in reversed(matches):
+        for match in matches:
             paragraph = _paragraph_at_position(answer, match.start())
             first_line = paragraph.split("\n", 1)[0].strip().lstrip("*").rstrip("*")
             if (
@@ -42,7 +75,7 @@ def _best_citation_insert_at(answer: str, ref: int, chunk: dict) -> int | None:
             ):
                 return match.start()
 
-    return matches[-1].start()
+    return matches[0].start()
 
 
 def embed_render_url(document_id: str, page: int) -> str:
@@ -120,11 +153,76 @@ def _collapse_extra_blank_lines(text: str) -> str:
     return _EXTRA_BLANK_LINES.sub("\n\n", text).strip()
 
 
+def _contains_markdown_pipe_table(text: str) -> bool:
+    """True when text includes a GFM pipe table (header, separator, and body row)."""
+    lines = [line for line in text.splitlines() if line.strip()]
+    for index in range(len(lines) - 2):
+        if (
+            _PIPE_TABLE_ROW.match(lines[index])
+            and _PIPE_TABLE_SEPARATOR.match(lines[index + 1])
+            and _PIPE_TABLE_ROW.match(lines[index + 2])
+        ):
+            return True
+    return False
+
+
+def _chunk_has_tabular_asset_caption(chunk: dict) -> bool:
+    """Table assets store markdown summaries in assets[].caption."""
+    asset = primary_visual_asset(chunk)
+    if asset is None or asset.get("type") != "table":
+        return False
+    caption = str(asset.get("caption") or "").strip()
+    return bool(caption) and _contains_markdown_pipe_table(caption)
+
+
+def _context_near_citation(answer: str, ref: int) -> str:
+    """Paragraph(s) around [ref]: table may sit just before or after the citation."""
+    paragraphs = [part for part in re.split(r"\n{2,}", answer) if part.strip()]
+    target_index: int | None = None
+    for index, paragraph in enumerate(paragraphs):
+        if citation_ref_pattern(ref).search(paragraph):
+            target_index = index
+            break
+    if target_index is None:
+        return ""
+
+    indices = {target_index}
+    if target_index > 0:
+        indices.add(target_index - 1)
+    if target_index + 1 < len(paragraphs):
+        indices.add(target_index + 1)
+    return "\n\n".join(paragraphs[index] for index in sorted(indices))
+
+
+def _should_skip_auto_embed(answer: str, ref: int, chunk: dict) -> bool:
+    """Skip auto embed when the answer already reproduces a table asset caption."""
+    if not _chunk_has_tabular_asset_caption(chunk):
+        return False
+    return _contains_markdown_pipe_table(_context_near_citation(answer, ref))
+
+
 def evidence_has_visual(chunks: list[dict]) -> bool:
     return any(_chunk_should_embed(chunk) for chunk in chunks)
 
 
-def auto_insert_embed_markers(answer: str, cited_chunks: list[dict]) -> str:
+def _chunk_embed_allowed(
+    chunk: dict,
+    allowed_embed_asset_ids: frozenset[str] | None,
+) -> bool:
+    if allowed_embed_asset_ids is None:
+        return True
+    asset = primary_visual_asset(chunk)
+    if asset is None or not asset.get("asset_id"):
+        return False
+    return str(asset["asset_id"]) in allowed_embed_asset_ids
+
+
+def auto_insert_embed_markers(
+    answer: str,
+    cited_chunks: list[dict],
+    *,
+    allowed_embed_asset_ids: frozenset[str] | None = None,
+) -> str:
     """Insert {{embed:N}} for visual cited chunks when the model omitted markers."""
     existing_refs = {int(match) for match in EMBED_MARKER.findall(answer)}
     seen_keys: set[str] = set()
@@ -140,6 +238,10 @@ def auto_insert_embed_markers(answer: str, cited_chunks: list[dict]) -> str:
 
     for ref, chunk in enumerate(cited_chunks, start=1):
         if ref in existing_refs or not _chunk_should_embed(chunk):
+            continue
+        if not _chunk_embed_allowed(chunk, allowed_embed_asset_ids):
+            continue
+        if _should_skip_auto_embed(answer, ref, chunk):
             continue
         payload = _embed_for_chunk(chunk)
         if payload is None:
@@ -178,6 +280,8 @@ def renumber_embed_markers(answer: str, old_to_new: dict[int, int]) -> str:
 def dedupe_answer_embed_markers(
     answer: str,
     evidence: list[dict],
+    *,
+    allowed_embed_asset_ids: frozenset[str] | None = None,
 ) -> tuple[str, list[dict]]:
     """Resolve agent-placed {{embed:N}} markers; each image appears at most once."""
     embeds: list[dict] = []
@@ -190,6 +294,8 @@ def dedupe_answer_embed_markers(
             return match.group(0)
         chunk = evidence[index]
         if not _chunk_should_embed(chunk):
+            return ""
+        if not _chunk_embed_allowed(chunk, allowed_embed_asset_ids):
             return ""
         payload = _embed_for_chunk(chunk)
         if payload is None:

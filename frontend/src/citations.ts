@@ -55,14 +55,20 @@ const CITATION_PLACEHOLDER_PATTERN = new RegExp(
 export function normalizeCitationLayout(content: string): string {
   let result = content;
   const citation = inlineCitationMarkerSource;
-  result = result.replace(new RegExp(`\\n{2,}(?=\\s*(?:${citation}))`, "g"), "");
+  result = result.replace(
+    new RegExp(`\\n{2,}(?=\\s*(?:${citation}))`, "g"),
+    "",
+  );
   result = result.replace(new RegExp(`\\n(?=[ \\t]*(?:${citation}))`, "g"), "");
   result = result.replace(
     new RegExp(`((?:${citation})+)\\s*\\n+\\s*([;；。，：！？、])`, "g"),
     "$1$2",
   );
   result = result.replace(
-    new RegExp(`((?:${citation})+)\\s+([;；。，：！？、])(?=\\s*(?:\\n|$))`, "g"),
+    new RegExp(
+      `((?:${citation})+)\\s+([;；。，：！？、])(?=\\s*(?:\\n|$))`,
+      "g",
+    ),
     "$1$2",
   );
   return result;
@@ -86,18 +92,6 @@ function mergeCitationOnlySections(sections: string[]): string[] {
 }
 
 const HORIZONTAL_RULE_ONLY = /^[-*_]{3,}\s*$/;
-const TRAILING_HORIZONTAL_RULE = /\n*[-*_]{3,}\s*$/;
-
-export function stripTrailingHorizontalRule(text: string): string {
-  return text.replace(TRAILING_HORIZONTAL_RULE, "").trimEnd();
-}
-
-const HORIZONTAL_RULE_BETWEEN_HEADINGS =
-  /(^#{1,6}\s[^\n]*\n)\n*[-*_]{3,}\s*\n+(?=^#{1,6}\s)/gm;
-
-function stripHorizontalRulesBetweenHeadings(text: string): string {
-  return text.replace(HORIZONTAL_RULE_BETWEEN_HEADINGS, "$1\n");
-}
 
 function getLeadingHeadingLevel(text: string): number | null {
   const match = text.match(/^#{1,6}(?=\s)/);
@@ -120,7 +114,8 @@ function mergeSubheadingSections(sections: string[]): string[] {
       level > sectionRootLevel
     ) {
       const previous = merged[merged.length - 1];
-      merged[merged.length - 1] = `${previous.trimEnd()}\n\n${section.trimStart()}`;
+      merged[merged.length - 1] =
+        `${previous.trimEnd()}\n\n${section.trimStart()}`;
       continue;
     }
 
@@ -132,9 +127,7 @@ function mergeSubheadingSections(sections: string[]): string[] {
 }
 
 function normalizeSectionText(text: string): string {
-  const trimmed = stripHorizontalRulesBetweenHeadings(
-    stripTrailingHorizontalRule(text.trim()),
-  );
+  const trimmed = text.trim();
   if (!trimmed || HORIZONTAL_RULE_ONLY.test(trimmed)) {
     return "";
   }
@@ -319,12 +312,7 @@ export function splitContentIntoSections(content: string): string[] {
     );
   }
 
-  const paragraphs = trimmed.split(/\n{2,}/).filter((part) => part.trim());
-  return normalizeSections(
-    mergeCitationOnlySections(
-      paragraphs.length > 0 ? paragraphs : [trimmed],
-    ),
-  );
+  return normalizeSections([trimmed]);
 }
 
 export function citationToViewerTarget(citation: Citation): ViewerTarget {
@@ -459,7 +447,9 @@ export function splitMessageWithCitations(
   return segments.length ? segments : [{ type: "text", value: content }];
 }
 
-export function segmentsToRenderableContent(segments: MessageSegment[]): string {
+export function segmentsToRenderableContent(
+  segments: MessageSegment[],
+): string {
   return normalizeCitationLayout(
     segments
       .map((segment) => {

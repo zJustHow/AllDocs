@@ -18,7 +18,7 @@ from app.services.chunk_filter import ChunkFilter
 from app.services.citations_util import finalize_answer
 from app.services.llm import LLMService
 from app.services.embeds_util import evidence_has_visual
-from app.services.vision_util import VisionImage, prepare_vision_images
+from app.services.vision_util import VisionImage, collect_vision_asset_ids, prepare_vision_images
 
 from app.services.rag import RAGService, detect_language, resolve_retrieval_fallback
 
@@ -300,6 +300,11 @@ class AgentRAGService:
         context = self.rag.build_context(state.evidence)
         vision_images = await prepare_vision_images(db, state.evidence, self.settings)
         use_vision = self.settings.llm_vision_enabled and bool(vision_images)
+        allowed_embed_asset_ids = (
+            collect_vision_asset_ids(state.evidence, vision_images)
+            if use_vision
+            else None
+        )
         if use_vision:
             answer = await self.llm.chat_vision(
                 question, context, vision_images, chat_history, lang=lang
@@ -312,7 +317,11 @@ class AgentRAGService:
                 include_embed_rules=evidence_has_visual(state.evidence),
                 lang=lang,
             )
-        answer, public_citations, embeds = finalize_answer(answer, state.evidence)
+        answer, public_citations, embeds = finalize_answer(
+            answer,
+            state.evidence,
+            allowed_embed_asset_ids=allowed_embed_asset_ids,
+        )
 
         trace = [
             {

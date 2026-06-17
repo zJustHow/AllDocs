@@ -36,14 +36,21 @@ function looksLikeImageDescription(text: string): boolean {
 function embedDisplayCaption(
   embed: MessageEmbed,
   t: (key: string, vars?: Record<string, unknown>) => string,
-): string | undefined {
+): string {
+  const prefix = `[${embed.ref}]`;
+  let body: string | undefined;
   if (embed.caption && !looksLikeImageDescription(embed.caption)) {
-    return embed.caption;
+    body = embed.caption;
+  } else if (embed.document_name) {
+    body = `${embed.document_name} ${t("viewer.pageHint", { page: embed.page })}`;
   }
-  if (embed.document_name) {
-    return `${embed.document_name} ${t("viewer.pageHint", { page: embed.page })}`;
+  if (!body) {
+    return prefix;
   }
-  return undefined;
+  if (/^\[\d+\]/.test(body.trim())) {
+    return body;
+  }
+  return `${prefix} ${body}`;
 }
 
 function AnswerEmbedFigure({ embed, onOpenDocument }: AnswerEmbedFigureProps) {

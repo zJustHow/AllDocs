@@ -51,16 +51,53 @@ def _chunk_qualifies_for_vision(chunk: dict) -> bool:
     return False
 
 
+def _min_semantic_score_for_vision(settings: Settings) -> float:
+    if settings.rerank_enabled:
+        return settings.rag_min_rerank_score
+    return settings.rag_min_retrieval_score
+
+
+def _passes_vision_score_floor(chunk: dict, min_semantic_score: float) -> bool:
+    """Drop low-scoring semantic hits; keep read_chunks / neighbor reads."""
+    if not chunk.get("from_semantic_search"):
+        return True
+    return float(chunk.get("score") or 0.0) >= min_semantic_score
+
+
+def _vision_candidate_sort_key(index: int, chunk: dict, asset_type: str) -> tuple:
+    """Prefer query-relevant semantic hits, then higher score, then table assets."""
+    return (
+        0 if chunk.get("from_semantic_search") else 1,
+        -float(chunk.get("score") or 0.0),
+        _TYPE_PRIORITY.get(asset_type, 99),
+        index,
+    )
+
+
 def select_evidence_for_vision(
     evidence: list[dict],
     max_images: int,
+    *,
+    settings: Settings | None = None,
 ) -> list[tuple[int, dict]]:
-    """Return (1-based ref_index, chunk) pairs for vision input."""
-    candidates: list[tuple[int, int, str, dict]] = []
+    """Return (1-based ref_index, chunk) pairs for vision input.
+
+    Ranking aligns with chunks most likely to be cited in the answer:
+    semantic-search hits before read/neighbor chunks, then rerank score,
+    then table before figure, then evidence order.
+    """
+    if max_images <= 0:
+        return []
+
+    settings = settings or get_settings()
+    min_semantic_score = _min_semantic_score_for_vision(settings)
+    candidates: list[tuple[tuple, int, dict]] = []
     seen_keys: set[str] = set()
 
     for index, chunk in enumerate(evidence, start=1):
         if not _chunk_qualifies_for_vision(chunk):
+            continue
+        if not _passes_vision_score_floor(chunk, min_semantic_score):
             continue
         asset = primary_visual_asset(chunk)
         if asset is None:
@@ -71,11 +108,11 @@ def select_evidence_for_vision(
         seen_keys.add(dedupe_key)
 
         asset_type = asset.get("type") or "figure"
-        priority = _TYPE_PRIORITY.get(asset_type, 99)
-        candidates.append((priority, index, dedupe_key, chunk))
+        sort_key = _vision_candidate_sort_key(index, chunk, asset_type)
+        candidates.append((sort_key, index, chunk))
 
-    candidates.sort(key=lambda item: (item[0], item[1]))
-    return [(index, chunk) for _, index, _, chunk in candidates[:max_images]]
+    candidates.sort(key=lambda item: item[0])
+    return [(index, chunk) for _, index, chunk in candidates[:max_images]]
 
 
 def _load_png_bytes(
@@ -146,6 +183,25 @@ async def _render_vision_image(
         return None
 
 
+def collect_vision_asset_ids(
+    evidence: list[dict],
+    vision_images: list[VisionImage],
+) -> frozenset[str] | None:
+    """Asset ids actually sent to the vision model; used to gate answer embeds."""
+    if not vision_images:
+        return None
+
+    asset_ids: set[str] = set()
+    for image in vision_images:
+        index = image.ref_index - 1
+        if index < 0 or index >= len(evidence):
+            continue
+        asset = primary_visual_asset(evidence[index])
+        if asset and asset.get("asset_id"):
+            asset_ids.add(str(asset["asset_id"]))
+    return frozenset(asset_ids) if asset_ids else None
+
+
 async def prepare_vision_images(
     db: AsyncSession,
     evidence: list[dict],
@@ -155,7 +211,11 @@ async def prepare_vision_images(
     if not settings.llm_vision_enabled or not evidence:
         return []
 
-    selected = select_evidence_for_vision(evidence, settings.llm_vision_max_images)
+    selected = select_evidence_for_vision(
+        evidence,
+        settings.llm_vision_max_images,
+        settings=settings,
+    )
     if not selected:
         return []
 

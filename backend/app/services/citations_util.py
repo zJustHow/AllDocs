@@ -12,7 +12,6 @@ TRAILING_SOURCES_SECTION = re.compile(
 )
 INLINE_CITATION_REF = inline_citation_ref_pattern()
 
-
 def strip_inline_citation_markers(content: str) -> str:
     """Remove inline [n] / 【n】 / {{embed:n}} markers (e.g. before TTS)."""
     return strip_inline_markers(content)
@@ -54,7 +53,12 @@ def renumber_answer_citations(answer: str, context_chunks: list[dict]) -> tuple[
     return INLINE_CITATION_REF.sub(replace_ref, answer), new_chunks, old_to_new
 
 
-def finalize_answer(answer: str, context_chunks: list[dict]) -> tuple[str, list[dict], list[dict]]:
+def finalize_answer(
+    answer: str,
+    context_chunks: list[dict],
+    *,
+    allowed_embed_asset_ids: frozenset[str] | None = None,
+) -> tuple[str, list[dict], list[dict]]:
     from app.services.embeds_util import (
         auto_insert_embed_markers,
         dedupe_answer_embed_markers,
@@ -65,8 +69,16 @@ def finalize_answer(answer: str, context_chunks: list[dict]) -> tuple[str, list[
     answer = normalize_answer_citations(answer)
     answer, cited_chunks, citation_renumber = renumber_answer_citations(answer, context_chunks)
     answer = renumber_embed_markers(answer, citation_renumber)
-    answer = auto_insert_embed_markers(answer, cited_chunks)
-    answer, embeds = dedupe_answer_embed_markers(answer, cited_chunks)
+    answer = auto_insert_embed_markers(
+        answer,
+        cited_chunks,
+        allowed_embed_asset_ids=allowed_embed_asset_ids,
+    )
+    answer, embeds = dedupe_answer_embed_markers(
+        answer,
+        cited_chunks,
+        allowed_embed_asset_ids=allowed_embed_asset_ids,
+    )
     return answer, public_citations(cited_chunks), public_embeds(embeds)
 
 

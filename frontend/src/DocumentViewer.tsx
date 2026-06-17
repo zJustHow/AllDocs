@@ -22,6 +22,7 @@ import { warmPageImage } from "./pageImageCache";
 import {
   bboxToOverlayStyle,
   isValidBbox,
+  scrollToPageElement,
   scrollToPageRegion,
   type Bbox,
 } from "./viewerPosition";
@@ -40,6 +41,7 @@ const PAGE_LOAD_BUFFER = 2;
 const DEFAULT_PAGE_ASPECT = 1.414;
 const BBOX_LAYOUT_SETTLE_MS = 80;
 const BBOX_INITIAL_NAV_MS = 500;
+const SCROLL_TO_TARGET_MAX_RETRIES = 48;
 
 function pagesNear(center: number, pageCount: number): number[] {
   const pages: number[] = [];
@@ -164,20 +166,21 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
       const attempt = (retries = 0) => {
         const pageEl = pageRefs.current.get(page);
         if (!pageEl) {
-          if (retries < 12) requestAnimationFrame(() => attempt(retries + 1));
+          if (retries < SCROLL_TO_TARGET_MAX_RETRIES) {
+            requestAnimationFrame(() => attempt(retries + 1));
+          }
           return;
         }
 
-        const scrolled = scrollToPageRegion(
+        const regionScrolled = scrollToPageRegion(
           scrollEl,
           pageEl,
           isValidBbox(target.bbox) ? target.bbox : null,
           renderScale,
           behavior,
         );
-        if (!scrolled) {
-          if (retries < 12) requestAnimationFrame(() => attempt(retries + 1));
-          return;
+        if (!regionScrolled) {
+          scrollToPageElement(scrollEl, pageEl, behavior);
         }
 
         scrollSyncLockRef.current = true;
@@ -186,6 +189,14 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
         window.setTimeout(() => {
           scrollSyncLockRef.current = false;
         }, behavior === "smooth" ? 500 : 50);
+
+        if (
+          !regionScrolled &&
+          isValidBbox(target.bbox) &&
+          retries < SCROLL_TO_TARGET_MAX_RETRIES
+        ) {
+          requestAnimationFrame(() => attempt(retries + 1));
+        }
       };
 
       attempt();
@@ -362,17 +373,25 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
   }, [ensurePagesLoaded, pageCount, pageNumbers, previewMode]);
 
   useEffect(() => {
-    if (previewMode !== "pdf" || pageCount === null) return;
+    if (previewMode !== "pdf" || pageCount === null || scrollWidth <= 0) return;
     const timer = window.setTimeout(() => {
+      scrollToTarget("auto");
       if (isValidBbox(target.bbox)) {
-        scrollToTarget("auto");
         updateHighlight();
-        return;
       }
-      scrollToPage(currentPageRef.current, "auto");
     }, 60);
     return () => window.clearTimeout(timer);
-  }, [pageCount, previewMode, renderScale, scrollToPage, scrollToTarget, target.bbox, updateHighlight, zoom]);
+  }, [
+    pageCount,
+    previewMode,
+    renderScale,
+    scrollToTarget,
+    scrollWidth,
+    target.bbox,
+    target.page,
+    updateHighlight,
+    zoom,
+  ]);
 
   const goToPage = useCallback(
     (page: number) => {
@@ -529,9 +548,7 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
                                 );
                                 if (target.page === page) {
                                   updateHighlight();
-                                  if (isValidBbox(target.bbox)) {
-                                    scrollToTarget("auto");
-                                  }
+                                  scrollToTarget("auto");
                                 }
                               }}
                               onError={() => setError(t("errors.loadDocumentFailed"))}

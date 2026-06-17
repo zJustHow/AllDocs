@@ -14,7 +14,7 @@ from app.services.agent.service import AgentRAGService
 from app.services.agent.state import AgentResult, OnAgentStep
 from app.services.chunk_filter import ChunkFilter
 from app.services.citations_util import finalize_answer, public_citations
-from app.services.vision_util import prepare_vision_images
+from app.services.vision_util import collect_vision_asset_ids, prepare_vision_images
 
 
 async def persist_turn(
@@ -59,6 +59,7 @@ async def _stream_synthesis(
     yield {"type": "citations", "citations": refs}
 
     vision_images = await prepare_vision_images(db, result.evidence, settings)
+    allowed_embed_asset_ids = collect_vision_asset_ids(result.evidence, vision_images)
     answer_parts: list[str] = []
     async for delta in agent.iter_synthesis(
         message, result.evidence, history, vision_images, lang=lang
@@ -66,7 +67,11 @@ async def _stream_synthesis(
         answer_parts.append(delta)
         yield {"type": "delta", "content": delta}
 
-    answer, refs, embeds = finalize_answer("".join(answer_parts), result.evidence)
+    answer, refs, embeds = finalize_answer(
+        "".join(answer_parts),
+        result.evidence,
+        allowed_embed_asset_ids=allowed_embed_asset_ids,
+    )
     if embeds:
         yield {"type": "embeds", "embeds": embeds}
     yield {

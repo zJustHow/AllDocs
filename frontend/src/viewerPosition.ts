@@ -40,6 +40,14 @@ export function bboxToOverlayStyle(
   };
 }
 
+export function scrollToPageElement(
+  scrollEl: HTMLElement,
+  pageEl: HTMLElement,
+  behavior: ScrollBehavior,
+): void {
+  scrollEl.scrollTo({ top: Math.max(0, pageEl.offsetTop - 16), behavior });
+}
+
 export function scrollToPageRegion(
   scrollEl: HTMLElement,
   pageEl: HTMLElement,
@@ -52,17 +60,19 @@ export function scrollToPageRegion(
     return false;
   }
 
-  let scrollTop = Math.max(0, pageEl.offsetTop - 16);
-  if (isValidBbox(bbox)) {
-    const overlay = bboxToOverlayStyle(bbox, img, renderScale);
-    const regionTop = Number.parseFloat(overlay.top);
-    const regionHeight = Number.parseFloat(overlay.height);
-    scrollTop =
-      pageEl.offsetTop +
-      regionTop +
-      regionHeight / 2 -
-      scrollEl.clientHeight * 0.35;
+  if (!isValidBbox(bbox)) {
+    scrollToPageElement(scrollEl, pageEl, behavior);
+    return true;
   }
+
+  const overlay = bboxToOverlayStyle(bbox, img, renderScale);
+  const regionTop = Number.parseFloat(overlay.top);
+  const regionHeight = Number.parseFloat(overlay.height);
+  const scrollTop =
+    pageEl.offsetTop +
+    regionTop +
+    regionHeight / 2 -
+    scrollEl.clientHeight * 0.35;
 
   scrollEl.scrollTo({ top: Math.max(0, scrollTop), behavior });
   return true;

@@ -27,7 +27,8 @@ interface MarkdownTextProps {
   onOpenDocument?: (target: ViewerTarget) => void;
 }
 
-const remarkPlugins = [remarkGfm];
+// Single-tilde strikethrough (~text~) breaks numeric ranges like 1~255 / 1~8.
+const remarkPlugins = [[remarkGfm, { singleTilde: false }]] as const;
 
 const inlineComponents: Components = {
   p: ({ children }) => <span className="md-inline">{children}</span>,
