@@ -97,7 +97,7 @@ AGENT_TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "function": {
             "name": "search_chunks_batch",
             "description": (
-                "并行多路检索（最多 4 路）。推荐用于故障/报警/异常等多角度问题，"
+                "并行多路检索（最多 3 路）。推荐用于故障/报警/异常等多角度问题，"
                 "一次同时查原因、原理、排查步骤等。"
             ),
             "parameters": {
@@ -107,7 +107,7 @@ AGENT_TOOL_DEFINITIONS: list[dict[str, Any]] = [
                         "type": "array",
                         "items": _SEARCH_ITEM_SCHEMA,
                         "minItems": 1,
-                        "maxItems": 4,
+                        "maxItems": 3,
                         "description": "多路检索配置，每路独立 query 与 filters",
                     },
                 },

@@ -68,6 +68,7 @@ export default function App() {
   const audioQueueRef = useRef<HTMLAudioElement[]>([]);
   const playingRef = useRef(false);
   const voiceDoneRef = useRef(false);
+  const userModifiedSelectionRef = useRef(false);
 
   const statusLabel = useMemo(
     (): Record<DocumentItem["status"], string> => ({
@@ -103,7 +104,9 @@ export default function App() {
       const readyIds = docs
         .filter((d) => d.status === "ready")
         .map((d) => d.id);
-      if (prev.length === 0) return readyIds;
+      if (prev.length === 0 && !userModifiedSelectionRef.current) {
+        return readyIds;
+      }
       return prev.filter((id) => readyIds.includes(id));
     });
   }, []);
@@ -241,6 +244,7 @@ export default function App() {
   );
 
   const toggleDoc = useCallback((docId: string) => {
+    userModifiedSelectionRef.current = true;
     setSelectedDocIds((prev) =>
       prev.includes(docId)
         ? prev.filter((id) => id !== docId)
@@ -672,7 +676,7 @@ export default function App() {
         <div className={`doc-viewer-slot ${viewerOpen ? "is-open" : ""}`}>
           <Suspense fallback={null}>
             <DocumentViewer
-              key={viewerTarget.documentId}
+              key={`${viewerTarget.documentId}:${viewerTarget.page ?? 0}:${viewerTarget.bbox?.join(",") ?? ""}`}
               target={viewerTarget}
               onClose={closeViewer}
             />

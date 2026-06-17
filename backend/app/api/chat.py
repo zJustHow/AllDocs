@@ -7,7 +7,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.schemas import ChatRequest, ChatResponse
+from app.api.schemas import ChatRequest
 from app.config import get_settings
 from app.db.models import Message, Session
 from app.db.session import get_db
@@ -61,118 +61,88 @@ async def chat(
 
     doc_ids = payload.doc_ids or [uuid.UUID(doc_id) for doc_id in session.doc_ids]
     chunk_filters = payload.filters
+    lang = detect_language(payload.message)
 
-    if payload.stream:
-        lang = detect_language(payload.message)
+    async def event_stream():
+        try:
+            yield f"data: {json.dumps({'type': 'status', 'stage': 'agent'}, ensure_ascii=False)}\n\n"
+            agent = get_agent_service()
+            step_queue: asyncio.Queue[dict | None] = asyncio.Queue()
 
-        async def event_stream():
-            try:
-                yield f"data: {json.dumps({'type': 'status', 'stage': 'agent'}, ensure_ascii=False)}\n\n"
-                agent = get_agent_service()
-                step_queue: asyncio.Queue[dict | None] = asyncio.Queue()
+            async def on_step(event: dict) -> None:
+                await step_queue.put(event)
 
-                async def on_step(event: dict) -> None:
-                    await step_queue.put(event)
-
-                async def run_agent():
-                    try:
-                        return await agent.run(
-                            db,
-                            payload.message,
-                            doc_ids or None,
-                            chunk_filters,
-                            history,
-                            on_step=on_step,
-                            skip_synthesis=True,
-                        )
-                    finally:
-                        await step_queue.put(None)
-
-                agent_task = asyncio.create_task(run_agent())
-                while True:
-                    event = await step_queue.get()
-                    if event is None:
-                        break
-                    yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
-
-                result = await agent_task
-
-                if result.fallback_message:
-                    fallback = result.fallback_message
-                    yield f"data: {json.dumps({'type': 'delta', 'content': fallback}, ensure_ascii=False)}\n\n"
-                    yield f"data: {json.dumps({'type': 'done', 'session_id': str(session.id), 'citations': [], 'language': lang}, ensure_ascii=False)}\n\n"
-                    db.add(Message(session_id=session.id, role="user", content=payload.message))
-                    db.add(
-                        Message(
-                            session_id=session.id,
-                            role="assistant",
-                            content=fallback,
-                            citations=[],
-                        )
+            async def run_agent():
+                try:
+                    return await agent.run(
+                        db,
+                        payload.message,
+                        doc_ids or None,
+                        chunk_filters,
+                        history,
+                        on_step=on_step,
+                        skip_synthesis=True,
                     )
-                    await db.commit()
-                    return
+                finally:
+                    await step_queue.put(None)
 
-                refs = public_citations(result.evidence)
-                yield f"data: {json.dumps({'type': 'citations', 'citations': refs}, ensure_ascii=False)}\n\n"
+            agent_task = asyncio.create_task(run_agent())
+            while True:
+                event = await step_queue.get()
+                if event is None:
+                    break
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
 
-                vision_images = await prepare_vision_images(db, result.evidence, settings)
-                answer_parts: list[str] = []
-                async for delta in agent.iter_synthesis(
-                    payload.message, result.evidence, history, vision_images, lang=lang
-                ):
-                    answer_parts.append(delta)
-                    yield f"data: {json.dumps({'type': 'delta', 'content': delta}, ensure_ascii=False)}\n\n"
+            result = await agent_task
 
-                answer, refs, embeds = finalize_answer("".join(answer_parts), result.evidence)
-                if embeds:
-                    yield f"data: {json.dumps({'type': 'embeds', 'embeds': embeds}, ensure_ascii=False)}\n\n"
-                yield f"data: {json.dumps({'type': 'done', 'session_id': str(session.id), 'content': answer, 'citations': refs, 'embeds': embeds, 'language': lang}, ensure_ascii=False)}\n\n"
+            if result.fallback_message:
+                fallback = result.fallback_message
+                yield f"data: {json.dumps({'type': 'delta', 'content': fallback}, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps({'type': 'done', 'session_id': str(session.id), 'citations': [], 'language': lang}, ensure_ascii=False)}\n\n"
                 db.add(Message(session_id=session.id, role="user", content=payload.message))
                 db.add(
                     Message(
                         session_id=session.id,
                         role="assistant",
-                        content=answer,
-                        citations=refs,
-                        embeds=embeds,
+                        content=fallback,
+                        citations=[],
                     )
                 )
                 await db.commit()
-            except Exception as exc:
-                await db.rollback()
-                yield f"data: {json.dumps({'type': 'error', 'message': str(exc)}, ensure_ascii=False)}\n\n"
+                return
 
-        return StreamingResponse(
-            event_stream(),
-            media_type="text/event-stream",
-            headers=STREAM_HEADERS,
-        )
+            refs = public_citations(result.evidence)
+            yield f"data: {json.dumps({'type': 'citations', 'citations': refs}, ensure_ascii=False)}\n\n"
 
-    agent = get_agent_service()
-    result = await agent.run(
-        db,
-        payload.message,
-        doc_ids or None,
-        chunk_filters,
-        history,
-    )
-    db.add(Message(session_id=session.id, role="user", content=payload.message))
-    db.add(
-        Message(
-            session_id=session.id,
-            role="assistant",
-            content=result.answer,
-            citations=result.citations,
-            embeds=result.embeds,
-        )
-    )
-    await db.commit()
+            vision_images = await prepare_vision_images(db, result.evidence, settings)
+            answer_parts: list[str] = []
+            async for delta in agent.iter_synthesis(
+                payload.message, result.evidence, history, vision_images, lang=lang
+            ):
+                answer_parts.append(delta)
+                yield f"data: {json.dumps({'type': 'delta', 'content': delta}, ensure_ascii=False)}\n\n"
 
-    return ChatResponse(
-        session_id=session.id,
-        answer=result.answer,
-        citations=result.citations,
-        embeds=result.embeds,
-        language=result.language,
+            answer, refs, embeds = finalize_answer("".join(answer_parts), result.evidence)
+            if embeds:
+                yield f"data: {json.dumps({'type': 'embeds', 'embeds': embeds}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'type': 'done', 'session_id': str(session.id), 'content': answer, 'citations': refs, 'embeds': embeds, 'language': lang}, ensure_ascii=False)}\n\n"
+            db.add(Message(session_id=session.id, role="user", content=payload.message))
+            db.add(
+                Message(
+                    session_id=session.id,
+                    role="assistant",
+                    content=answer,
+                    citations=refs,
+                    embeds=embeds,
+                )
+            )
+            await db.commit()
+        except Exception as exc:
+            await db.rollback()
+            yield f"data: {json.dumps({'type': 'error', 'message': str(exc)}, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers=STREAM_HEADERS,
     )

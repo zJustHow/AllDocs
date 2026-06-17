@@ -79,7 +79,6 @@ export async function streamChat(
       message,
       session_id: sessionId,
       doc_ids: docIds,
-      stream: true,
     }),
   });
 

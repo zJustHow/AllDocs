@@ -19,6 +19,7 @@ from app.services.vision_util import VisionImage
 SYSTEM_PROMPT = """你是产品操作指南助手。仅根据提供的<context>和用户问题回答，不得编造。
 
 规则：
+- 多轮对话时，<context> 与最后一条用户消息中的「问题」才是本轮待答内容；历史消息仅供理解指代（如「它」「上一步」），禁止重复或改答历史中的旧问题
 - 语言：整段回答（含标题、连接词、说明文字）必须与用户问题使用同一种语言；禁止中英混杂（原文专有名词、型号、按钮标识如 ON/OFF 除外）
 - 用户用中文提问 → 全文用中文；用户用英文提问 → 全文用英文
 - 根据<context>内容选择合适结构：开放问答直接作答；操作类用有序列表；参数类准确引用原文
@@ -119,13 +120,20 @@ class LLMService:
         messages: list[dict[str, str]] = [{"role": "system", "content": system_prompt}]
         if chat_history:
             messages.extend(chat_history[-6:])
+        question_line = f"{_question_label(lang)}：{question}"
+        if chat_history:
+            history_note = (
+                "\n\n（以上对话仅供理解指代；请仅根据本段 <context> 回答下列问题，"
+                "勿重复回答历史中的其他问题。）"
+                if lang == "zh"
+                else "\n\n(Prior turns are for reference only; answer ONLY the question "
+                "below using this <context>, not earlier questions.)"
+            )
+            question_line += history_note
         messages.append(
             {
                 "role": "user",
-                "content": (
-                    f"<context>\n{context}\n</context>\n\n"
-                    f"{_question_label(lang)}：{question}"
-                ),
+                "content": f"<context>\n{context}\n</context>\n\n{question_line}",
             }
         )
         return messages
@@ -155,13 +163,20 @@ class LLMService:
         if chat_history:
             messages.extend(chat_history[-6:])
 
+        question_line = f"{_question_label(lang)}：{question}"
+        if chat_history:
+            history_note = (
+                "\n\n（以上对话仅供理解指代；请仅根据本段 <context> 回答下列问题，"
+                "勿重复回答历史中的其他问题。）"
+                if lang == "zh"
+                else "\n\n(Prior turns are for reference only; answer ONLY the question "
+                "below using this <context>, not earlier questions.)"
+            )
+            question_line += history_note
         user_parts: list[dict[str, Any]] = [
             {
                 "type": "text",
-                "text": (
-                    f"<context>\n{context}\n</context>\n\n"
-                    f"{_question_label(lang)}：{question}"
-                ),
+                "text": f"<context>\n{context}\n</context>\n\n{question_line}",
             }
         ]
         for image in vision_images:

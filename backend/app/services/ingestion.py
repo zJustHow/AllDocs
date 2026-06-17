@@ -17,6 +17,7 @@ from app.services.pdf_embedded_images import (
     figure_bboxes_on_page,
     figure_overlaps_bboxes,
 )
+from app.services.asset_dedupe import AssetBindTracker
 from app.services.pdf_tables import (
     EmbeddedTable,
     extract_pdf_tables,
@@ -695,6 +696,8 @@ class IngestionService:
                     return resolved
             return section_for_page(toc_entries, page_number)
 
+        bind_tracker = AssetBindTracker()
+
         pages: list[tuple[str | None, str, int, tuple[float, float, float, float] | None]] = []
         ocr_pages = 0
 
@@ -705,6 +708,7 @@ class IngestionService:
             should_skip_page=lambda page_number: should_skip_front_matter(
                 page_number, toc_entries
             ),
+            bind_tracker=bind_tracker,
         )
         tables_by_page = {
             page: table_bboxes_on_page(extracted_tables, page)
@@ -718,6 +722,7 @@ class IngestionService:
             should_skip_page=lambda page_number: should_skip_front_matter(
                 page_number, toc_entries
             ),
+            bind_tracker=bind_tracker,
         )
         embedded_figures = [
             figure

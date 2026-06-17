@@ -41,10 +41,24 @@ def _resolve_asset_type(asset_type: str | None) -> str:
 def _chunk_qualifies_for_vision(chunk: dict) -> bool:
     """Cropped table/figure assets."""
     assets = chunk.get("assets") or []
-    if not assets or not assets[0].get("asset_id"):
-        return False
-    asset_type = assets[0].get("type") or "figure"
-    return asset_type in {"table", "figure"}
+    for asset in assets:
+        if not asset.get("asset_id"):
+            continue
+        asset_type = asset.get("type") or "figure"
+        if asset_type in {"table", "figure"}:
+            return True
+    return False
+
+
+def _primary_visual_asset(chunk: dict) -> dict | None:
+    assets = chunk.get("assets") or []
+    for asset in assets:
+        if not asset.get("asset_id"):
+            continue
+        asset_type = asset.get("type") or "figure"
+        if asset_type in {"table", "figure"}:
+            return asset
+    return None
 
 
 def select_evidence_for_vision(
@@ -58,13 +72,15 @@ def select_evidence_for_vision(
     for index, chunk in enumerate(evidence, start=1):
         if not _chunk_qualifies_for_vision(chunk):
             continue
-        assets = chunk.get("assets") or []
-        dedupe_key = f"asset:{assets[0]['asset_id']}"
+        asset = _primary_visual_asset(chunk)
+        if asset is None:
+            continue
+        dedupe_key = f"asset:{asset['asset_id']}"
         if dedupe_key in seen_keys:
             continue
         seen_keys.add(dedupe_key)
 
-        asset_type = assets[0].get("type") or "figure"
+        asset_type = asset.get("type") or "figure"
         priority = _TYPE_PRIORITY.get(asset_type, 99)
         candidates.append((priority, index, dedupe_key, chunk))
 
@@ -80,10 +96,10 @@ def _load_png_bytes(
 ) -> tuple[bytes, str]:
     document_id = str(chunk["document_id"])
     page = int(chunk["page"]) if chunk.get("page") else 1
-    assets = chunk.get("assets") or []
+    asset = _primary_visual_asset(chunk)
 
-    if assets and assets[0].get("object_key"):
-        return storage.download(assets[0]["object_key"]), "image/png"
+    if asset and asset.get("object_key"):
+        return storage.download(asset["object_key"]), "image/png"
 
     file_bytes, filename = file_cache[document_id]
     png_bytes = render_page_png(
@@ -106,8 +122,8 @@ async def _render_vision_image(
 ) -> VisionImage | None:
     document_id = str(chunk["document_id"])
     page = int(chunk["page"]) if chunk.get("page") else 1
-    assets = chunk.get("assets") or []
-    needs_document = not (assets and assets[0].get("object_key"))
+    asset = _primary_visual_asset(chunk)
+    needs_document = not (asset and asset.get("object_key"))
     if needs_document and document_id not in file_cache:
         return None
 
@@ -125,7 +141,7 @@ async def _render_vision_image(
             document_name=str(chunk.get("document_name") or ""),
             page=page,
             asset_type=_resolve_asset_type(
-                assets[0].get("type") if assets else None,
+                asset.get("type") if asset else None,
             ),
             base64=base64.b64encode(png_bytes).decode("ascii"),
             media_type=media_type,
@@ -158,8 +174,8 @@ async def prepare_vision_images(
 
     doc_ids_to_load: set[str] = set()
     for _, chunk in selected:
-        assets = chunk.get("assets") or []
-        if not (assets and assets[0].get("object_key")):
+        asset = _primary_visual_asset(chunk)
+        if not (asset and asset.get("object_key")):
             doc_ids_to_load.add(str(chunk["document_id"]))
 
     async def _download_document(doc_id: str) -> tuple[str, tuple[bytes, str]] | None:

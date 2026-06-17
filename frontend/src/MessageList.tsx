@@ -62,6 +62,7 @@ function MessageList({
                 message={message}
                 onOpenDocument={onOpenDocument}
                 registerRef={registerRef}
+                scrollContainerRef={scrollRef}
               />
             </div>
           );

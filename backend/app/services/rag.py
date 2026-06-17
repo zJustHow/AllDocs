@@ -150,7 +150,9 @@ class RAGService:
         rows = {str(chunk.id): (chunk, document) for chunk, document in result.all()}
 
         asset_result = await db.execute(
-            select(ChunkAsset).where(ChunkAsset.chunk_id.in_(chunk_uuids))
+            select(ChunkAsset)
+            .where(ChunkAsset.chunk_id.in_(chunk_uuids))
+            .order_by(ChunkAsset.asset_type, ChunkAsset.page)
         )
         assets_by_chunk: dict[str, list[ChunkAsset]] = {}
         for asset in asset_result.scalars():

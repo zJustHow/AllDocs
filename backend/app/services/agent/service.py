@@ -156,7 +156,11 @@ class AgentRAGService:
                     )
                     remaining = self.settings.rag_agent_max_retrievals - state.retrieval_calls
                     if remaining <= 0:
-                        observation = "检索次数已达上限，请调用 finish。"
+                        observation = (
+                            "检索次数已达上限，无法继续 search_chunks/search_chunks_batch。"
+                            "可精读已有结果（read_chunks、read_neighbor_chunks），"
+                            "证据足够时再 finish。"
+                        )
                         chunks = []
                     elif planned_units > remaining:
                         observation, chunks, retrieval_units = await self.tools.execute(
@@ -172,7 +176,8 @@ class AgentRAGService:
                         if planned_units > remaining:
                             observation += (
                                 f"\n（检索配额不足：计划 {planned_units} 路，"
-                                f"仅执行 {retrieval_units} 路，请 finish 或换更少的 searches。）"
+                                f"仅执行 {retrieval_units} 路；"
+                                f"后续请减少 searches 或改用 read_chunks 精读已有结果。）"
                             )
                     else:
                         observation, chunks, retrieval_units = await self.tools.execute(

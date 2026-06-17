@@ -48,6 +48,90 @@ const CITATION_PLACEHOLDER_PATTERN = new RegExp(
   "g",
 );
 
+export function normalizeCitationLayout(content: string): string {
+  let result = content;
+  // Blank lines before citations become separate markdown paragraphs.
+  result = result.replace(
+    /\n{2,}(?=\s*(?:\[\s*\d+\s*\]|【\s*\d+\s*】))/g,
+    "",
+  );
+  // Keep citations on the same line as the sentence they follow.
+  result = result.replace(
+    /\n(?=[ \t]*(?:\[\s*\d+\s*\]|【\s*\d+\s*】))/g,
+    "",
+  );
+  // Keep trailing punctuation on the same line as the citation.
+  result = result.replace(
+    /((?:\[\s*\d+\s*\]|【\s*\d+\s*】)+)\s*\n+\s*([;；。，：！？、])/g,
+    "$1$2",
+  );
+  // Keep punctuation that follows a lone citation on the same line.
+  result = result.replace(
+    /((?:\[\s*\d+\s*\]|【\s*\d+\s*】)+)\s+([;；。，：！？、])(?=\s*(?:\n|$))/g,
+    "$1$2",
+  );
+  return result;
+}
+
+const CITATION_ONLY_SECTION =
+  /^(?:\s*(?:\[\s*\d+\s*\]|【\s*\d+\s*】)\s*)+[;；。，：！？、]?$/;
+
+function mergeCitationOnlySections(sections: string[]): string[] {
+  const merged: string[] = [];
+  for (const section of sections) {
+    const trimmed = section.trim();
+    if (merged.length > 0 && CITATION_ONLY_SECTION.test(trimmed)) {
+      merged[merged.length - 1] = `${merged[merged.length - 1]}${trimmed}`;
+      continue;
+    }
+    merged.push(section);
+  }
+  return merged;
+}
+
+const ORPHAN_CITATION_BLOCK_HTML =
+  /<(?:p|span class="md-inline")>\s*((?:<button type="button" class="citation-link"[^>]*>[^<]*<\/button>\s*)+[;；。，：！？、]?)\s*<\/(?:p|span)>/i;
+
+function mergeOneOrphanCitationBlock(html: string): string {
+  const match = html.match(ORPHAN_CITATION_BLOCK_HTML);
+  if (!match) return html;
+
+  const citationHtml = match[1];
+  const withoutBlock = html.replace(ORPHAN_CITATION_BLOCK_HTML, "");
+
+  const lastListItemClose = withoutBlock.lastIndexOf("</li>");
+  if (lastListItemClose !== -1) {
+    return (
+      withoutBlock.slice(0, lastListItemClose) +
+      citationHtml +
+      withoutBlock.slice(lastListItemClose)
+    );
+  }
+
+  const lastInlineClose = withoutBlock.lastIndexOf("</span>");
+  const lastParagraphClose = withoutBlock.lastIndexOf("</p>");
+  const lastTextClose = Math.max(lastInlineClose, lastParagraphClose);
+  if (lastTextClose !== -1) {
+    return (
+      withoutBlock.slice(0, lastTextClose) +
+      citationHtml +
+      withoutBlock.slice(lastTextClose)
+    );
+  }
+
+  return html;
+}
+
+export function mergeOrphanCitationParagraphs(html: string): string {
+  let result = html;
+  let previous = "";
+  while (result !== previous) {
+    previous = result;
+    result = mergeOneOrphanCitationBlock(result);
+  }
+  return result;
+}
+
 function escapeHtml(text: string): string {
   return text
     .replace(/&/g, "&amp;")
@@ -63,8 +147,9 @@ export function injectCitationPlaceholders(
 ): string {
   if (!citations.length) return content;
 
+  const normalized = normalizeCitationLayout(content);
   const pattern = /\[\s*(\d+)\s*\]|【\s*(\d+)\s*】/g;
-  return content.replace(pattern, (match, n1, n2) => {
+  return normalized.replace(pattern, (match, n1, n2) => {
     const index = Number(n1 ?? n2) - 1;
     if (index < 0 || index >= citations.length) {
       return options?.hideUnmatched ? "" : match;
@@ -93,11 +178,13 @@ export function replaceCitationPlaceholdersWithButtons(
 }
 
 export function splitContentIntoSections(content: string): string[] {
-  const trimmed = content.trim();
+  const trimmed = normalizeCitationLayout(content.trim());
   if (!trimmed) return [];
 
   if (/^#{1,6}\s/m.test(trimmed)) {
-    return trimmed.split(/(?=^#{1,6}\s)/m).filter((part) => part.trim());
+    return mergeCitationOnlySections(
+      trimmed.split(/(?=^#{1,6}\s)/m).filter((part) => part.trim()),
+    );
   }
 
   if (/\{\{embed:\s*\d+\s*\}\}/.test(trimmed)) {
@@ -105,7 +192,9 @@ export function splitContentIntoSections(content: string): string[] {
   }
 
   const paragraphs = trimmed.split(/\n{2,}/).filter((part) => part.trim());
-  return paragraphs.length > 0 ? paragraphs : [trimmed];
+  return mergeCitationOnlySections(
+    paragraphs.length > 0 ? paragraphs : [trimmed],
+  );
 }
 
 export function citationToViewerTarget(citation: Citation): ViewerTarget {
@@ -267,14 +356,16 @@ export function splitMessageWithCitations(
 }
 
 export function segmentsToRenderableContent(segments: MessageSegment[]): string {
-  return segments
-    .map((segment) => {
-      if (segment.type === "text" || segment.type === "citation") {
-        return segment.value;
-      }
-      return "";
-    })
-    .join("");
+  return normalizeCitationLayout(
+    segments
+      .map((segment) => {
+        if (segment.type === "text" || segment.type === "citation") {
+          return segment.value;
+        }
+        return "";
+      })
+      .join(""),
+  );
 }
 
 const COMPACT_MEDIA_TEXT_LIMIT = 140;
@@ -289,122 +380,4 @@ export function isCompactMediaText(segments: MessageSegment[]): boolean {
   const lineCount = text.split("\n").filter((line) => line.trim()).length;
   if (lineCount <= 1 && text.length < COMPACT_SINGLE_LINE_LIMIT) return true;
   return false;
-}
-
-function splitTextAtFirstParagraph(text: string): [string, string] {
-  const match = text.match(/\n{2,}/);
-  if (!match || match.index === undefined) {
-    return [text, ""];
-  }
-  const splitAt = match.index + match[0].length;
-  return [text.slice(0, match.index), text.slice(splitAt)];
-}
-
-function takeFirstParagraphSegments(
-  segments: MessageSegment[],
-): { paired: MessageSegment[]; rest: MessageSegment[] } {
-  const paired: MessageSegment[] = [];
-  const rest: MessageSegment[] = [];
-
-  for (let index = 0; index < segments.length; index += 1) {
-    const segment = segments[index];
-    if (segment.type !== "text") {
-      if (paired.length === 0 || !rest.length) {
-        paired.push(segment);
-      } else {
-        rest.push(segment);
-      }
-      continue;
-    }
-
-    const [first, remainder] = splitTextAtFirstParagraph(segment.value);
-    if (first) {
-      paired.push({ type: "text", value: first });
-    }
-    if (remainder) {
-      rest.push({ type: "text", value: remainder });
-      rest.push(...segments.slice(index + 1));
-      break;
-    }
-  }
-
-  return { paired, rest };
-}
-
-export type LayoutBlock =
-  | { kind: "prose"; segments: MessageSegment[] }
-  | { kind: "media"; embeds: MessageEmbed[]; segments: MessageSegment[]; compact?: boolean };
-
-export function groupSegmentsForLayout(
-  segments: MessageSegment[],
-  seenEmbedKeys: Set<string> = new Set(),
-): LayoutBlock[] {
-  const blocks: LayoutBlock[] = [];
-  let proseBuffer: MessageSegment[] = [];
-
-  const flushProse = () => {
-    if (proseBuffer.length === 0) return;
-    blocks.push({ kind: "prose", segments: proseBuffer });
-    proseBuffer = [];
-  };
-
-  const collectUniqueEmbeds = (embed: MessageEmbed): MessageEmbed[] => {
-    const key = embedDedupeKey(embed);
-    if (seenEmbedKeys.has(key)) {
-      return [];
-    }
-    seenEmbedKeys.add(key);
-    return [embed];
-  };
-
-  let index = 0;
-  while (index < segments.length) {
-    const segment = segments[index];
-    if (segment.type !== "embed") {
-      proseBuffer.push(segment);
-      index += 1;
-      continue;
-    }
-
-    flushProse();
-
-    let mediaEmbeds = collectUniqueEmbeds(segment.embed);
-    index += 1;
-
-    while (index < segments.length && segments[index].type === "embed") {
-      const next = segments[index];
-      if (next.type === "embed") {
-        mediaEmbeds.push(...collectUniqueEmbeds(next.embed));
-      }
-      index += 1;
-    }
-
-    const tailSegments: MessageSegment[] = [];
-    while (index < segments.length && segments[index].type !== "embed") {
-      tailSegments.push(segments[index]);
-      index += 1;
-    }
-
-    const { paired, rest } = takeFirstParagraphSegments(tailSegments);
-    if (rest.length > 0) {
-      proseBuffer.push(...rest);
-    }
-
-    if (mediaEmbeds.length === 0) {
-      if (paired.length > 0) {
-        proseBuffer.push(...paired);
-      }
-      continue;
-    }
-
-    blocks.push({
-      kind: "media",
-      embeds: mediaEmbeds,
-      segments: paired,
-      compact: isCompactMediaText(paired),
-    });
-  }
-
-  flushProse();
-  return blocks;
 }

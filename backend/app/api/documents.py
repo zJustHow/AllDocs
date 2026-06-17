@@ -15,8 +15,12 @@ from app.services.document_reindex import (
     reset_document_for_reindex,
     schedule_document_reindex,
 )
-from app.services.file_types import is_supported_filename, resolve_content_type, supported_formats_label
-from app.services.file_types import get_extension
+from app.services.file_types import (
+    get_extension,
+    is_supported_filename,
+    resolve_content_type,
+    supported_formats_label,
+)
 from app.services.page_render import render_page_png
 from app.services.storage import StorageService
 from app.workers.tasks import delete_document as delete_document_task, process_document
@@ -139,17 +143,6 @@ async def render_document_page(
         media_type=media_type,
         headers={"Cache-Control": "public, max-age=86400"},
     )
-
-
-@router.get("/{document_id}", response_model=DocumentResponse)
-async def get_document(
-    document_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
-) -> DocumentResponse:
-    document = await db.get(Document, document_id)
-    if not document:
-        raise HTTPException(status_code=404, detail="Document not found")
-    return DocumentResponse.model_validate(document)
 
 
 @router.post("/{document_id}/reindex", response_model=DocumentResponse)

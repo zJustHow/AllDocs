@@ -25,13 +25,13 @@ class Settings(BaseSettings):
     embedding_device: str = "cpu"
     embedding_batch_size: int = 8
 
-    rag_retrieve_k: int = 20
-    rag_top_k: int = 5
+    rag_retrieve_k: int = 10
+    rag_top_k: int = 3
     rag_chunk_size: int = 500
     rag_chunk_overlap: int = 80
-    rag_agent_max_steps: int = 7
+    rag_agent_max_steps: int = 10
     rag_agent_max_retrievals: int = 6
-    rag_batch_search_max: int = 4
+    rag_batch_search_max: int = 3
 
     rerank_enabled: bool = True
     rerank_model: str = "BAAI/bge-reranker-v2-m3"
@@ -87,9 +87,6 @@ class Settings(BaseSettings):
     ingest_caption_model: str = ""
     ingest_caption_max_per_doc: int = 20
     ingest_caption_min_text_chars: int = 50
-
-    app_host: str = "0.0.0.0"
-    app_port: int = 8000
 
 
 @lru_cache

@@ -15,11 +15,21 @@ def embed_render_url(document_id: str, page: int) -> str:
     return f"/api/v1/documents/{document_id}/pages/{page}/render"
 
 
+def _primary_visual_asset(chunk: dict) -> dict | None:
+    for asset in chunk.get("assets") or []:
+        if not asset.get("asset_id"):
+            continue
+        asset_type = asset.get("type") or "figure"
+        if asset_type in _VISUAL_ASSET_TYPES:
+            return asset
+    return None
+
+
 def _visual_asset_type(chunk: dict) -> str | None:
-    assets = chunk.get("assets") or []
-    if not assets:
+    asset = _primary_visual_asset(chunk)
+    if asset is None:
         return None
-    asset_type = assets[0].get("type") or "figure"
+    asset_type = asset.get("type") or "figure"
     if asset_type in _VISUAL_ASSET_TYPES:
         return asset_type
     return None
@@ -27,10 +37,7 @@ def _visual_asset_type(chunk: dict) -> str | None:
 
 def _chunk_should_embed(chunk: dict) -> bool:
     """Chunks with a stored table/figure crop asset may appear in answers."""
-    assets = chunk.get("assets") or []
-    if not assets or not assets[0].get("asset_id"):
-        return False
-    return _visual_asset_type(chunk) is not None
+    return _primary_visual_asset(chunk) is not None
 
 
 def _embed_display_caption(chunk: dict, asset: dict | None = None) -> str | None:
@@ -57,9 +64,8 @@ def _embed_for_chunk(chunk: dict) -> dict | None:
     if not page or not document_id:
         return None
 
-    assets = chunk.get("assets") or []
-    if assets and assets[0].get("asset_id"):
-        asset = assets[0]
+    asset = _primary_visual_asset(chunk)
+    if asset and asset.get("asset_id"):
         caption = _embed_display_caption(chunk, asset)
         asset_type = asset.get("type") or visual_type
         embed_type = "figure" if asset_type == "figure" else "table"
@@ -119,13 +125,6 @@ def _embed_dedupe_key(payload: dict) -> str:
     return f"embed:{id(payload)}"
 
 
-def _chunk_embed_keys(chunk: dict) -> list[str]:
-    payload = _embed_for_chunk(chunk)
-    if payload is None:
-        return []
-    return [_embed_dedupe_key(payload)]
-
-
 def _collapse_extra_blank_lines(text: str) -> str:
     return _EXTRA_BLANK_LINES.sub("\n\n", text).strip()
 
@@ -142,8 +141,9 @@ def auto_insert_embed_markers(answer: str, cited_chunks: list[dict]) -> str:
         index = ref - 1
         if index < 0 or index >= len(cited_chunks):
             continue
-        for key in _chunk_embed_keys(cited_chunks[index]):
-            seen_keys.add(key)
+        payload = _embed_for_chunk(cited_chunks[index])
+        if payload is not None:
+            seen_keys.add(_embed_dedupe_key(payload))
 
     inserts: list[tuple[int, str]] = []
 

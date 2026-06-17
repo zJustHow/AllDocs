@@ -7,9 +7,7 @@ from app.services.chunk_filter import ChunkFilter
 
 __all__ = [
     "ChatRequest",
-    "ChatResponse",
     "ChunkFilter",
-    "Citation",
     "DocumentResponse",
 ]
 
@@ -33,23 +31,3 @@ class ChatRequest(BaseModel):
     session_id: UUID | None = None
     doc_ids: list[UUID] = Field(default_factory=list)
     filters: ChunkFilter | None = None
-    stream: bool = False
-
-
-class Citation(BaseModel):
-    document_id: str
-    document_name: str
-    page: int | None
-    section: str | None
-    snippet: str
-    score: float | None = None
-    bbox: list[float] | None = None
-
-
-class ChatResponse(BaseModel):
-    session_id: UUID
-    answer: str
-    citations: list[Citation]
-    embeds: list[dict] = Field(default_factory=list)
-    language: str
-

@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { createPortal } from "react-dom";
 import { useI18n } from "./i18n";
 
 export interface ImageLightboxProps {
@@ -37,7 +38,7 @@ export default function ImageLightbox({
 
   if (!open) return null;
 
-  return (
+  return createPortal(
     <div className="image-lightbox-root" role="presentation">
       <button
         type="button"
@@ -51,6 +52,7 @@ export default function ImageLightbox({
           <figcaption className="image-lightbox-caption">{caption}</figcaption>
         ) : null}
       </figure>
-    </div>
+    </div>,
+    document.body,
   );
 }

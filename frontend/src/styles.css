@@ -820,6 +820,7 @@ button {
 .message.user .message-avatar {
   background: var(--surface-muted);
   color: var(--text-secondary);
+  overflow: hidden;
 }
 
 .message-body {
@@ -1275,7 +1276,11 @@ button {
 }
 
 .answer-embed--figure {
-  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: fit-content;
+  max-width: 100%;
 }
 
 .answer-embed--table {
@@ -1305,6 +1310,7 @@ button {
   width: 100%;
   max-width: min(360px, 100%);
   margin-inline: auto;
+  align-items: center;
 }
 
 .answer-media-block--compact .answer-embed-image {
@@ -1314,6 +1320,7 @@ button {
 .answer-media-figures {
   display: flex;
   flex-direction: column;
+  align-items: flex-end;
   flex: 0 0 auto;
   gap: 10px;
   width: min(240px, 38%);
@@ -1378,9 +1385,6 @@ button {
   border-color: var(--accent);
 }
 
-.answer-embed--figure .answer-embed-image {
-  margin-inline: auto;
-}
 
 .answer-embed--table .answer-embed-image {
   max-height: none;
@@ -1395,6 +1399,7 @@ button {
   .answer-media-figures {
     width: 100%;
     max-width: 100%;
+    align-items: center;
   }
 
   .answer-embed--figure .answer-embed-image {
@@ -1403,19 +1408,23 @@ button {
 }
 
 .answer-embed figcaption {
+  align-self: stretch;
   margin-top: 6px;
+  text-align: center;
   color: var(--text-secondary);
   font-size: 0.82rem;
 }
 
 .answer-embed-link {
-  display: inline-block;
-  margin-top: 6px;
+  display: block;
+  width: 100%;
+  margin: 0;
   padding: 0;
   border: none;
   background: none;
   color: var(--accent);
-  font-size: 0.82rem;
+  font-size: inherit;
+  text-align: center;
   cursor: pointer;
 }
 

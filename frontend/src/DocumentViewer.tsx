@@ -38,6 +38,8 @@ const BASE_RENDER_SCALE = 2;
 const ZOOM_DEBOUNCE_MS = 250;
 const PAGE_LOAD_BUFFER = 2;
 const DEFAULT_PAGE_ASPECT = 1.414;
+const BBOX_LAYOUT_SETTLE_MS = 80;
+const BBOX_INITIAL_NAV_MS = 500;
 
 function pagesNear(center: number, pageCount: number): number[] {
   const pages: number[] = [];
@@ -70,6 +72,7 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
   const pageRefs = useRef(new Map<number, HTMLDivElement>());
   const scrollSyncLockRef = useRef(false);
   const currentPageRef = useRef(currentPage);
+  const bboxNavStartedAtRef = useRef(0);
   const targetBboxKey = useMemo(
     () => (isValidBbox(target.bbox) ? target.bbox.join(",") : ""),
     [target.bbox],
@@ -261,6 +264,70 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
     if (previewMode !== "pdf") return;
     updateHighlight();
   }, [previewMode, updateHighlight, targetBboxKey, target.page, zoom, renderScale]);
+
+  useEffect(() => {
+    bboxNavStartedAtRef.current = performance.now();
+  }, [target.documentId, target.page, targetBboxKey]);
+
+  useEffect(() => {
+    if (previewMode !== "pdf" || !isValidBbox(target.bbox) || target.page === null) {
+      return;
+    }
+
+    const page = target.page;
+    let observer: ResizeObserver | null = null;
+    let settleTimer: ReturnType<typeof setTimeout> | null = null;
+    let cancelled = false;
+
+    const scheduleScroll = () => {
+      if (performance.now() - bboxNavStartedAtRef.current > BBOX_INITIAL_NAV_MS) {
+        return;
+      }
+      if (settleTimer) clearTimeout(settleTimer);
+      settleTimer = window.setTimeout(() => {
+        if (!cancelled) scrollToTarget("auto");
+      }, BBOX_LAYOUT_SETTLE_MS);
+    };
+
+    const attach = (): boolean => {
+      const pageEl = pageRefs.current.get(page);
+      const img = pageEl?.querySelector("img");
+      if (!img || cancelled) return false;
+
+      const onResize = () => {
+        updateHighlight();
+        scheduleScroll();
+      };
+
+      observer = new ResizeObserver(onResize);
+      observer.observe(img);
+      onResize();
+      return true;
+    };
+
+    if (!attach()) {
+      let attempts = 0;
+      const retry = () => {
+        if (cancelled || attempts >= 24) return;
+        attempts += 1;
+        if (!attach()) requestAnimationFrame(retry);
+      };
+      requestAnimationFrame(retry);
+    }
+
+    return () => {
+      cancelled = true;
+      if (settleTimer) clearTimeout(settleTimer);
+      observer?.disconnect();
+    };
+  }, [
+    previewMode,
+    target.page,
+    targetBboxKey,
+    updateHighlight,
+    scrollToTarget,
+    loadedPages,
+  ]);
 
   useEffect(() => {
     const scrollEl = scrollRef.current;

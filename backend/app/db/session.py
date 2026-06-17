@@ -1,6 +1,5 @@
 from collections.abc import AsyncGenerator
 
-from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.config import get_settings
@@ -25,67 +24,3 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
 async def init_db() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-        await conn.execute(
-            text("ALTER TABLE documents ADD COLUMN IF NOT EXISTS ocr_pages INTEGER DEFAULT 0")
-        )
-        await conn.execute(
-            text("ALTER TABLE documents ADD COLUMN IF NOT EXISTS progress INTEGER DEFAULT 0")
-        )
-        await conn.execute(
-            text(
-                "ALTER TABLE documents ADD COLUMN IF NOT EXISTS progress_message VARCHAR(256)"
-            )
-        )
-        await conn.execute(
-            text("ALTER TABLE documents ADD COLUMN IF NOT EXISTS toc_entries JSONB")
-        )
-        await conn.execute(
-            text(
-                "ALTER TABLE documents ADD COLUMN IF NOT EXISTS content_type "
-                "VARCHAR(128) DEFAULT 'application/pdf'"
-            )
-        )
-        await conn.execute(
-            text(
-                """
-                DO $$ BEGIN
-                    ALTER TYPE documentstatus ADD VALUE 'deleting';
-                EXCEPTION
-                    WHEN duplicate_object THEN NULL;
-                END $$;
-                """
-            )
-        )
-        await conn.execute(
-            text("ALTER TABLE messages ADD COLUMN IF NOT EXISTS embeds JSONB")
-        )
-        await conn.execute(
-            text("ALTER TABLE chunks ADD COLUMN IF NOT EXISTS caption TEXT")
-        )
-        await conn.execute(
-            text("ALTER TABLE chunk_assets ADD COLUMN IF NOT EXISTS caption TEXT")
-        )
-        await conn.execute(
-            text("ALTER TABLE chunks DROP COLUMN IF EXISTS chunk_type")
-        )
-        await conn.execute(
-            text("ALTER TABLE chunks ADD COLUMN IF NOT EXISTS layout_bbox JSONB")
-        )
-        await conn.execute(
-            text(
-                """
-                DO $$ BEGIN
-                    IF EXISTS (
-                        SELECT 1
-                        FROM pg_constraint
-                        WHERE conname = 'chunk_assets_pkey'
-                          AND conrelid = 'chunk_assets'::regclass
-                          AND array_length(conkey, 1) = 1
-                    ) THEN
-                        ALTER TABLE chunk_assets DROP CONSTRAINT chunk_assets_pkey;
-                        ALTER TABLE chunk_assets ADD PRIMARY KEY (id, chunk_id);
-                    END IF;
-                END $$;
-                """
-            )
-        )
