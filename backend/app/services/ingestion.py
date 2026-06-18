@@ -466,20 +466,89 @@ def _truncate_section_path(path: str) -> str:
     return path[: _SECTION_PATH_MAX_LEN - 1] + "…"
 
 
-def _dest_to_page_y(page: fitz.Page, dest: dict) -> float | None:
-    """Convert a PDF bookmark destination to MuPDF top-left Y."""
+def _dest_raw_point(dest: dict) -> tuple[float, float] | None:
     to = dest.get("to")
     if to is None:
         return None
     try:
         if hasattr(to, "x"):
-            pdf_point = fitz.Point(float(to.x), float(to.y))
-        else:
-            pdf_point = fitz.Point(float(to[0]), float(to[1]))
+            return float(to.x), float(to.y)
+        return float(to[0]), float(to[1])
     except (TypeError, ValueError, IndexError):
         return None
-    mupdf_point = pdf_point * page.transformation_matrix
-    return float(mupdf_point.y)
+
+
+def _dest_y_from_pdf_space(page: fitz.Page, raw_x: float, raw_y: float) -> float:
+    pdf_point = fitz.Point(raw_x, raw_y)
+    return float((pdf_point * page.transformation_matrix).y)
+
+
+def _count_non_decreasing(values: list[float]) -> int:
+    if len(values) < 2:
+        return 0
+    return sum(1 for index in range(len(values) - 1) if values[index] <= values[index + 1])
+
+
+def _toc_dest_coordinate_votes(page: fitz.Page, raw_ys: list[float]) -> tuple[int, int]:
+    """Score top-down vs PDF-space interpretation for one page's bookmark Y values.
+
+    Returns (top_down_votes, pdf_space_votes). Multi-bookmark pages vote via
+    monotonic pairs in outline order; single-bookmark pages add one zone vote.
+    """
+    if not raw_ys:
+        return 0, 0
+
+    page_height = float(page.rect.height)
+    flipped_ys = [_dest_y_from_pdf_space(page, 0.0, raw_y) for raw_y in raw_ys]
+    top_down_votes = _count_non_decreasing(raw_ys)
+    pdf_votes = _count_non_decreasing(flipped_ys)
+
+    if len(raw_ys) == 1:
+        raw_y = raw_ys[0]
+        flipped_y = flipped_ys[0]
+        near_top_raw = raw_y <= page_height * 0.45
+        near_bottom_flipped = flipped_y >= page_height * 0.55
+        near_top_flipped = flipped_y <= page_height * 0.45
+        near_bottom_raw = raw_y >= page_height * 0.55
+        if near_top_raw and near_bottom_flipped:
+            top_down_votes += 1
+        elif near_top_flipped and near_bottom_raw:
+            pdf_votes += 1
+
+    return top_down_votes, pdf_votes
+
+
+def _document_toc_dest_already_top_down(
+    doc: fitz.Document,
+    page_raw_ys: dict[int, list[float]],
+) -> bool:
+    """Vote across every page that has bookmark Y values in the outline."""
+    top_down_total = 0
+    pdf_total = 0
+    for page_num, raw_ys in page_raw_ys.items():
+        top_down_votes, pdf_votes = _toc_dest_coordinate_votes(doc[page_num - 1], raw_ys)
+        top_down_total += top_down_votes
+        pdf_total += pdf_votes
+    if top_down_total != pdf_total:
+        return top_down_total > pdf_total
+    # Tie: keep PDF-space conversion for backward compatibility.
+    return False
+
+
+def _dest_to_page_y(
+    page: fitz.Page,
+    dest: dict,
+    *,
+    already_top_down: bool = False,
+) -> float | None:
+    """Convert a PDF bookmark destination to MuPDF top-left Y."""
+    point = _dest_raw_point(dest)
+    if point is None:
+        return None
+    raw_x, raw_y = point
+    if already_top_down:
+        return raw_y
+    return _dest_y_from_pdf_space(page, raw_x, raw_y)
 
 
 def _parse_raw_toc(doc: fitz.Document) -> list[tuple[int, str, int, float | None]]:
@@ -487,19 +556,37 @@ def _parse_raw_toc(doc: fitz.Document) -> list[tuple[int, str, int, float | None
     if not raw_toc:
         return []
 
-    parsed: list[tuple[int, str, int, float | None]] = []
+    page_raw_ys: dict[int, list[float]] = {}
+    pending_rows: list[tuple[int, str, int, dict | None, float | None]] = []
+
     for row in raw_toc:
         level = int(row[0])
         title = str(row[1]).strip()
         page = max(1, int(row[2]))
-        y: float | None = None
         dest = row[3] if len(row) > 3 else None
+        raw_y: float | None = None
         if isinstance(dest, dict):
             dest_page = dest.get("page")
             if dest_page is not None and int(dest_page) >= 0:
                 page = int(dest_page) + 1
             if 1 <= page <= doc.page_count:
-                y = _dest_to_page_y(doc[page - 1], dest)
+                point = _dest_raw_point(dest)
+                if point is not None:
+                    raw_y = point[1]
+                    page_raw_ys.setdefault(page, []).append(raw_y)
+        pending_rows.append((level, title, page, dest, raw_y))
+
+    document_already_top_down = _document_toc_dest_already_top_down(doc, page_raw_ys)
+
+    parsed: list[tuple[int, str, int, float | None]] = []
+    for level, title, page, dest, raw_y in pending_rows:
+        y: float | None = None
+        if isinstance(dest, dict) and raw_y is not None and 1 <= page <= doc.page_count:
+            y = _dest_to_page_y(
+                doc[page - 1],
+                dest,
+                already_top_down=document_already_top_down,
+            )
         parsed.append((level, title, page, y))
     return parsed
 

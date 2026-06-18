@@ -13,10 +13,7 @@ import {
 } from "./citations";
 import type { ViewerTarget } from "./citations";
 import { useI18n } from "./i18n";
-import {
-  getCachedMarkdownHtml,
-  setCachedMarkdownHtml,
-} from "./markdownCache";
+import { getCachedMarkdownHtml, setCachedMarkdownHtml } from "./markdownCache";
 import type { Citation } from "./types";
 
 interface MarkdownTextProps {
@@ -53,10 +50,7 @@ function renderMarkdownHtml(content: string, inline: boolean): string {
   return setCachedMarkdownHtml(content, inline, html);
 }
 
-function citationTooltip(
-  citation: Citation,
-  pageHint: string,
-): string {
+function citationTooltip(citation: Citation, pageHint: string): string {
   return `${citation.document_name}${pageHint}${
     citation.section ? ` · ${citation.section}` : ""
   }\n${formatCitationSnippetExcerpt(citation.snippet)}`;
