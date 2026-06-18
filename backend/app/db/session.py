@@ -24,3 +24,21 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
 async def init_db() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await conn.run_sync(_ensure_chunk_asset_columns)
+
+
+def _ensure_chunk_asset_columns(sync_conn) -> None:
+    from sqlalchemy import inspect, text
+
+    inspector = inspect(sync_conn)
+    if "chunk_assets" not in inspector.get_table_names():
+        return
+    columns = {column["name"] for column in inspector.get_columns("chunk_assets")}
+    if "figure_number" not in columns:
+        sync_conn.execute(
+            text("ALTER TABLE chunk_assets ADD COLUMN figure_number VARCHAR(32)")
+        )
+    if "figure_caption" not in columns:
+        sync_conn.execute(
+            text("ALTER TABLE chunk_assets ADD COLUMN figure_caption TEXT")
+        )

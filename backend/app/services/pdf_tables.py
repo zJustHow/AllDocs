@@ -10,7 +10,10 @@ import fitz
 
 from app.config import Settings
 from app.services.asset_dedupe import AssetBindTracker
+from app.services.pdf_attach_reading_order import pick_preceding_chunk
 from app.services.pdf_embedded_images import ParsedAttachedAsset
+from app.services.pdf_header_footer import HeaderFooterFilter
+
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +31,8 @@ class EmbeddedTable:
     png_bytes: bytes
     width: int
     height: int
+    figure_number: str | None = None
+    caption_text: str | None = None
 
 
 def _rect_area(bbox: tuple[float, float, float, float]) -> float:
@@ -70,8 +75,12 @@ def table_bboxes_on_page(
 def filter_page_blocks(
     page: fitz.Page,
     exclude_bboxes: list[tuple[float, float, float, float]],
+    hf: HeaderFooterFilter | None = None,
 ) -> list[tuple[float, float, float, float, str]]:
-    """Return text blocks with table/figure regions removed."""
+    """Return text blocks with table/figure regions and header/footer removed."""
+    from app.services.pdf_captions import is_caption_text
+    from app.services.pdf_header_footer import should_drop_block
+
     blocks = page.get_text("blocks")
     extracted: list[tuple[float, float, float, float, str]] = []
     for block in blocks:
@@ -81,8 +90,13 @@ def filter_page_blocks(
         if _overlaps_table_region(bbox, exclude_bboxes):
             continue
         text = str(block[4]).strip()
-        if text:
-            extracted.append((bbox[0], bbox[1], bbox[2], bbox[3], text))
+        if not text:
+            continue
+        if should_drop_block(bbox, text, page, hf):
+            continue
+        if is_caption_text(text):
+            continue
+        extracted.append((bbox[0], bbox[1], bbox[2], bbox[3], text))
     extracted.sort(key=lambda item: (item[1], item[3]))
     return extracted
 
@@ -90,8 +104,9 @@ def filter_page_blocks(
 def filter_page_text(
     page: fitz.Page,
     exclude_bboxes: list[tuple[float, float, float, float]],
+    hf: HeaderFooterFilter | None = None,
 ) -> str:
-    blocks = filter_page_blocks(page, exclude_bboxes)
+    blocks = filter_page_blocks(page, exclude_bboxes, hf=hf)
     if blocks:
         return "\n".join(text for *_, text in blocks)
     return ""
@@ -198,55 +213,6 @@ def extract_pdf_tables(
     return tables
 
 
-def _chunk_layout_bbox(chunk) -> tuple[float, float, float, float] | None:
-    bbox = getattr(chunk, "asset_bbox", None)
-    if bbox and len(bbox) == 4:
-        return tuple(float(value) for value in bbox)
-    return None
-
-
-def _vertical_distance(
-    target_y: float,
-    bbox: tuple[float, float, float, float],
-) -> float:
-    y0, y1 = bbox[1], bbox[3]
-    if y0 <= target_y <= y1:
-        return 0.0
-    return min(abs(target_y - y0), abs(target_y - y1))
-
-
-def _is_attach_candidate(chunk) -> bool:
-    page = getattr(chunk, "page", None)
-    if page is None:
-        return False
-    if getattr(chunk, "asset_png", None):
-        return False
-    return True
-
-
-def _pick_nearest_chunk(table: EmbeddedTable, candidates: list) -> object | None:
-    table_y = (table.bbox[1] + table.bbox[3]) / 2
-    pool = [chunk for chunk in candidates if _is_attach_candidate(chunk)]
-    if not pool:
-        return None
-
-    if table.section:
-        section_pool = [chunk for chunk in pool if chunk.section == table.section]
-        if section_pool:
-            pool = section_pool
-
-    def rank(chunk: object) -> tuple[float, int, int]:
-        bbox = _chunk_layout_bbox(chunk)
-        if bbox:
-            distance = _vertical_distance(table_y, bbox)
-            prefer_above = 0 if bbox[3] <= table_y else 1
-            return (distance, prefer_above, int(getattr(chunk, "chunk_index", 0)))
-        slot = int(getattr(chunk, "chunk_index", 0))
-        return (float("inf"), 1, slot)
-
-    return min(pool, key=rank)
-
-
 def _table_to_attached_asset(table: EmbeddedTable) -> ParsedAttachedAsset:
     return ParsedAttachedAsset(
         asset_type="table",
@@ -256,6 +222,8 @@ def _table_to_attached_asset(table: EmbeddedTable) -> ParsedAttachedAsset:
         width=table.width,
         height=table.height,
         text_summary=table.summary,
+        figure_caption=table.caption_text,
+        figure_number=table.figure_number,
     )
 
 
@@ -263,31 +231,20 @@ def attach_tables_to_chunks(
     tables: list[EmbeddedTable],
     chunks: list,
 ) -> list[EmbeddedTable]:
-    """Attach tables to nearby text chunks; return orphans."""
+    """Attach tables to preceding text chunks by reading order; return orphans."""
     if not tables:
         return []
 
-    by_page: dict[int, list] = {}
-    for chunk in chunks:
-        page = getattr(chunk, "page", None)
-        if page is None:
-            continue
-        by_page.setdefault(int(page), []).append(chunk)
-
-    tables_by_page: dict[int, list[EmbeddedTable]] = {}
-    for table in tables:
-        tables_by_page.setdefault(table.page, []).append(table)
-    for page_tables in tables_by_page.values():
-        page_tables.sort(key=lambda item: item.sort_key)
-
     orphans: list[EmbeddedTable] = []
-    for page, page_tables in tables_by_page.items():
-        candidates = by_page.get(page, [])
-        for table in page_tables:
-            target = _pick_nearest_chunk(table, candidates)
-            if target is None:
-                orphans.append(table)
-                continue
-            target.attached_assets.append(_table_to_attached_asset(table))
+    for table in sorted(tables, key=lambda item: (item.page, item.sort_key)):
+        target = pick_preceding_chunk(
+            chunks,
+            page=table.page,
+            section=table.section,
+        )
+        if target is None:
+            orphans.append(table)
+            continue
+        target.attached_assets.append(_table_to_attached_asset(table))
 
     return orphans

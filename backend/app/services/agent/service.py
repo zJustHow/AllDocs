@@ -17,8 +17,6 @@ from app.services.agent.tools import (
 from app.services.chunk_filter import ChunkFilter
 from app.services.citations_util import finalize_answer
 from app.services.llm import LLMService
-from app.services.embeds_util import evidence_has_visual
-from app.services.vision_util import VisionImage, collect_vision_asset_ids, prepare_vision_images
 
 from app.services.rag import RAGService, detect_language, resolve_retrieval_fallback
 
@@ -44,31 +42,17 @@ class AgentRAGService:
         question: str,
         evidence: list[dict],
         chat_history: list[dict[str, str]] | None,
-        vision_images: list[VisionImage] | None = None,
         *,
         lang: str | None = None,
     ) -> AsyncIterator[str]:
         context = self.rag.build_context(evidence)
         response_lang = lang or detect_language(question)
-        use_vision = (
-            self.settings.llm_vision_enabled
-            and vision_images
-        )
-        include_embed_rules = not use_vision and evidence_has_visual(evidence)
-        stream = (
-            self.llm.chat_stream_vision(
-                question, context, vision_images, chat_history, lang=response_lang
-            )
-            if use_vision
-            else self.llm.chat_stream(
-                question,
-                context,
-                chat_history,
-                include_embed_rules=include_embed_rules,
-                lang=response_lang,
-            )
-        )
-        async for delta in stream:
+        async for delta in self.llm.chat_stream(
+            question,
+            context,
+            chat_history,
+            lang=response_lang,
+        ):
             yield delta
 
     async def run(
@@ -298,29 +282,15 @@ class AgentRAGService:
             )
 
         context = self.rag.build_context(state.evidence)
-        vision_images = await prepare_vision_images(db, state.evidence, self.settings)
-        use_vision = self.settings.llm_vision_enabled and bool(vision_images)
-        allowed_embed_asset_ids = (
-            collect_vision_asset_ids(state.evidence, vision_images)
-            if use_vision
-            else None
+        answer = await self.llm.chat(
+            question,
+            context,
+            chat_history,
+            lang=lang,
         )
-        if use_vision:
-            answer = await self.llm.chat_vision(
-                question, context, vision_images, chat_history, lang=lang
-            )
-        else:
-            answer = await self.llm.chat(
-                question,
-                context,
-                chat_history,
-                include_embed_rules=evidence_has_visual(state.evidence),
-                lang=lang,
-            )
         answer, public_citations, embeds = finalize_answer(
             answer,
             state.evidence,
-            allowed_embed_asset_ids=allowed_embed_asset_ids,
         )
 
         trace = [

@@ -135,7 +135,7 @@ def _resolve_job_image(
                 file_bytes,
                 filename,
                 int(chunk.page),
-                scale=settings.llm_vision_render_scale,
+                scale=settings.ingest_caption_render_scale,
             ),
             media_type="image/png",
         )

@@ -165,9 +165,13 @@ class RAGService:
             chunk, document = rows[chunk_id]
             chunk_assets = assets_by_chunk.get(chunk_id, [])
             asset_captions = [asset.caption for asset in chunk_assets if asset.caption]
+            asset_figure_captions = [
+                asset.figure_caption for asset in chunk_assets if asset.figure_caption
+            ]
             merged_into_text = captions_merged_into_text(
                 chunk.text,
                 chunk_caption=chunk.caption,
+                asset_figure_captions=asset_figure_captions,
                 asset_captions=asset_captions,
             )
             body_text = (
@@ -176,6 +180,7 @@ class RAGService:
                 else format_context_body(
                     chunk.text,
                     caption=chunk.caption,
+                    asset_figure_captions=asset_figure_captions,
                     asset_captions=asset_captions,
                 )
             )
@@ -185,6 +190,7 @@ class RAGService:
                 else chunk_rerank_text(
                     chunk.text,
                     caption=chunk.caption,
+                    asset_figure_captions=asset_figure_captions,
                     asset_captions=asset_captions,
                 )
             )
@@ -194,6 +200,7 @@ class RAGService:
                 else chunk_display_snippet(
                     chunk.text,
                     caption=chunk.caption,
+                    asset_figure_captions=asset_figure_captions,
                     asset_captions=asset_captions,
                 )
             )
@@ -219,6 +226,8 @@ class RAGService:
                             "url": asset_url(asset.id),
                             "object_key": asset.object_key,
                             "caption": asset.caption,
+                            "figure_caption": asset.figure_caption,
+                            "figure_number": asset.figure_number,
                             "bbox": asset.bbox,
                         }
                         for asset in chunk_assets

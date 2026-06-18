@@ -7,24 +7,37 @@ def captions_merged_into_text(
     text: str,
     *,
     chunk_caption: str | None = None,
+    asset_figure_captions: list[str] | None = None,
     asset_captions: list[str] | None = None,
 ) -> bool:
     """True when separate caption fields are already reflected in chunk.text."""
     if chunk_caption and chunk_caption.strip() and chunk_caption.strip() not in text:
         return False
+    for figure_caption in asset_figure_captions or []:
+        if figure_caption and figure_caption.strip() and figure_caption.strip() not in text:
+            return False
     for caption in asset_captions or []:
         if caption and caption.strip() and caption.strip() not in text:
             return False
-    return bool((chunk_caption and chunk_caption.strip()) or asset_captions)
+    return bool(
+        (chunk_caption and chunk_caption.strip())
+        or asset_figure_captions
+        or asset_captions
+    )
 
 
 def merge_captions(
     chunk_caption: str | None,
     asset_captions: list[str] | None = None,
+    *,
+    asset_figure_captions: list[str] | None = None,
 ) -> str:
     parts: list[str] = []
     if chunk_caption and chunk_caption.strip():
         parts.append(chunk_caption.strip())
+    for figure_caption in asset_figure_captions or []:
+        if figure_caption and figure_caption.strip() and figure_caption.strip() not in parts:
+            parts.append(figure_caption.strip())
     for caption in asset_captions or []:
         if caption and caption.strip() and caption.strip() not in parts:
             parts.append(caption.strip())
@@ -36,6 +49,7 @@ def chunk_embedding_text(
     section: str | None,
     *,
     caption: str | None = None,
+    asset_figure_captions: list[str] | None = None,
     asset_captions: list[str] | None = None,
 ) -> str:
     parts: list[str] = []
@@ -44,7 +58,11 @@ def chunk_embedding_text(
     body = text.strip()
     if body:
         parts.append(body)
-    visual = merge_captions(caption, asset_captions)
+    visual = merge_captions(
+        caption,
+        asset_captions,
+        asset_figure_captions=asset_figure_captions,
+    )
     if visual:
         parts.append(f"[visual] {visual}")
     return "\n".join(parts) if parts else text
@@ -54,9 +72,14 @@ def chunk_rerank_text(
     text: str,
     *,
     caption: str | None = None,
+    asset_figure_captions: list[str] | None = None,
     asset_captions: list[str] | None = None,
 ) -> str:
-    visual = merge_captions(caption, asset_captions)
+    visual = merge_captions(
+        caption,
+        asset_captions,
+        asset_figure_captions=asset_figure_captions,
+    )
     if not visual:
         return text
     if not text.strip():
@@ -67,18 +90,29 @@ def chunk_rerank_text(
 def chunk_fulltext_caption(
     caption: str | None,
     asset_captions: list[str] | None = None,
+    *,
+    asset_figure_captions: list[str] | None = None,
 ) -> str:
-    return merge_captions(caption, asset_captions)
+    return merge_captions(
+        caption,
+        asset_captions,
+        asset_figure_captions=asset_figure_captions,
+    )
 
 
 def chunk_display_snippet(
     text: str,
     *,
     caption: str | None = None,
+    asset_figure_captions: list[str] | None = None,
     asset_captions: list[str] | None = None,
     limit: int = 300,
 ) -> str:
-    visual = merge_captions(caption, asset_captions)
+    visual = merge_captions(
+        caption,
+        asset_captions,
+        asset_figure_captions=asset_figure_captions,
+    )
     if visual and not text.strip():
         return visual[:limit]
     if visual:
@@ -91,9 +125,14 @@ def format_context_body(
     text: str,
     *,
     caption: str | None = None,
+    asset_figure_captions: list[str] | None = None,
     asset_captions: list[str] | None = None,
 ) -> str:
-    visual = merge_captions(caption, asset_captions)
+    visual = merge_captions(
+        caption,
+        asset_captions,
+        asset_figure_captions=asset_figure_captions,
+    )
     parts: list[str] = []
     if text.strip():
         parts.append(text.strip())

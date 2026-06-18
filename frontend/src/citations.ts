@@ -1,5 +1,6 @@
 import type { Citation, MessageEmbed } from "./types";
 import {
+  embedDedupeKey,
   formatEmbedMarker,
   inlineCitationMarkerSource,
   inlineCitationRefPattern,
@@ -378,8 +379,22 @@ export type MessageSegment =
   | { type: "citation"; value: string; citation: Citation }
   | { type: "embed"; value: string; embed: MessageEmbed };
 
-function findEmbed(ref: number, embeds: MessageEmbed[]): MessageEmbed | null {
-  return embeds.find((item) => item.ref === ref) ?? null;
+function findEmbedsForRef(ref: number, embeds: MessageEmbed[]): MessageEmbed[] {
+  return embeds.filter((item) => item.ref === ref);
+}
+
+function appendEmbedsForRef(
+  segments: MessageSegment[],
+  ref: number,
+  embeds: MessageEmbed[],
+  shownEmbedKeys: Set<string>,
+): void {
+  for (const embed of findEmbedsForRef(ref, embeds)) {
+    const key = embedDedupeKey(embed);
+    if (shownEmbedKeys.has(key)) continue;
+    shownEmbedKeys.add(key);
+    segments.push({ type: "embed", value: "", embed });
+  }
 }
 
 export function splitMessageWithCitations(
@@ -390,6 +405,7 @@ export function splitMessageWithCitations(
   const hideUnmatched = options?.hideUnmatched ?? false;
   const embeds = options?.embeds ?? [];
   const pattern = new RegExp(messageTokenPattern.source, "g");
+  const shownEmbedKeys = new Set<string>();
 
   if (!citations.length && !embeds.length) {
     return [{ type: "text", value: stripInlineCitationMarkers(content) }];
@@ -409,12 +425,7 @@ export function splitMessageWithCitations(
 
     const embedRef = match[1];
     if (embedRef) {
-      const embed = findEmbed(Number(embedRef), embeds);
-      if (embed) {
-        segments.push({ type: "embed", value: match[0], embed });
-      } else if (!hideUnmatched) {
-        segments.push({ type: "text", value: match[0] });
-      }
+      appendEmbedsForRef(segments, Number(embedRef), embeds, shownEmbedKeys);
       lastIndex = match.index + match[0].length;
       continue;
     }
@@ -425,6 +436,12 @@ export function splitMessageWithCitations(
       const citation = citations[index];
       if (citation) {
         segments.push({ type: "citation", value: match[0], citation });
+        appendEmbedsForRef(
+          segments,
+          Number(numericRef),
+          embeds,
+          shownEmbedKeys,
+        );
       } else if (!hideUnmatched) {
         segments.push({ type: "text", value: match[0] });
       }

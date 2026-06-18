@@ -49,6 +49,8 @@ class _PendingAssetUpload:
     width: int | None
     height: int | None
     text_summary: str = ""
+    figure_caption: str | None = None
+    figure_number: str | None = None
     needs_upload: bool = True
 
 
@@ -70,6 +72,8 @@ def _collect_pending_asset_uploads(
         width: int | None,
         height: int | None,
         text_summary: str = "",
+        figure_caption: str | None = None,
+        figure_number: str | None = None,
     ) -> None:
         asset_id, object_key, needs_upload = registry.resolve(png_bytes)
         pending.append(
@@ -84,22 +88,13 @@ def _collect_pending_asset_uploads(
                 width=width,
                 height=height,
                 text_summary=text_summary,
+                figure_caption=figure_caption,
+                figure_number=figure_number,
                 needs_upload=needs_upload,
             )
         )
 
     for parsed, chunk in zip(parsed_chunks, chunk_rows, strict=True):
-        if parsed.asset_png and parsed.asset_bbox and parsed.page is not None:
-            append_asset(
-                chunk_id=chunk.id,
-                png_bytes=parsed.asset_png,
-                asset_type=parsed.primary_asset_type or "figure",
-                page=parsed.page,
-                bbox=list(parsed.asset_bbox),
-                width=parsed.asset_width,
-                height=parsed.asset_height,
-                text_summary=parsed.primary_asset_summary.strip(),
-            )
         for attached in parsed.attached_assets:
             append_asset(
                 chunk_id=chunk.id,
@@ -110,6 +105,8 @@ def _collect_pending_asset_uploads(
                 width=attached.width,
                 height=attached.height,
                 text_summary=attached.text_summary,
+                figure_caption=attached.figure_caption,
+                figure_number=attached.figure_number,
             )
     return pending
 
@@ -230,6 +227,11 @@ def process_document(document_id: str) -> None:
             _upload_assets_parallel(storage, pending_assets)
             for item in pending_assets:
                 initial_caption = item.text_summary.strip() if item.text_summary.strip() else None
+                initial_figure_caption = (
+                    item.figure_caption.strip()
+                    if item.figure_caption and item.figure_caption.strip()
+                    else None
+                )
                 db.add(
                     ChunkAsset(
                         id=item.asset_id,
@@ -242,6 +244,8 @@ def process_document(document_id: str) -> None:
                         width=item.width,
                         height=item.height,
                         caption=initial_caption,
+                        figure_caption=initial_figure_caption,
+                        figure_number=item.figure_number,
                     )
                 )
             db.flush()
@@ -277,6 +281,13 @@ def process_document(document_id: str) -> None:
                     if asset.caption
                 ]
 
+            def _asset_figure_captions(chunk_id: uuid.UUID) -> list[str]:
+                return [
+                    asset.figure_caption
+                    for asset in assets_by_chunk.get(str(chunk_id), [])
+                    if asset.figure_caption
+                ]
+
             _set_progress(db, document, 65, "生成向量")
             if _abort_if_deleting(db, document):
                 db.rollback()
@@ -287,6 +298,7 @@ def process_document(document_id: str) -> None:
                     chunk.section,
                     caption=chunk.caption,
                     asset_captions=_asset_captions(chunk.id),
+                    asset_figure_captions=_asset_figure_captions(chunk.id),
                 )
                 for chunk in chunk_rows
             ]
@@ -343,6 +355,7 @@ def process_document(document_id: str) -> None:
                         chunk_fulltext_caption(
                             chunk.caption,
                             _asset_captions(chunk.id),
+                            asset_figure_captions=_asset_figure_captions(chunk.id),
                         )
                         for chunk in chunk_rows
                     ],

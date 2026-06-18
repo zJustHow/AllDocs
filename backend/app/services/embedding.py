@@ -27,12 +27,14 @@ def chunk_embedding_text(
     section: str | None,
     *,
     caption: str | None = None,
+    asset_figure_captions: list[str] | None = None,
     asset_captions: list[str] | None = None,
 ) -> str:
     return _chunk_embedding_text(
         text,
         section,
         caption=caption,
+        asset_figure_captions=asset_figure_captions,
         asset_captions=asset_captions,
     )
 

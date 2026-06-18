@@ -75,6 +75,8 @@ class ChunkAsset(Base):
     width: Mapped[int | None] = mapped_column(Integer, nullable=True)
     height: Mapped[int | None] = mapped_column(Integer, nullable=True)
     caption: Mapped[str | None] = mapped_column(Text, nullable=True)
+    figure_caption: Mapped[str | None] = mapped_column(Text, nullable=True)
+    figure_number: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
     chunk: Mapped["Chunk"] = relationship(back_populates="assets")
 

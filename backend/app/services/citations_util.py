@@ -56,29 +56,17 @@ def renumber_answer_citations(answer: str, context_chunks: list[dict]) -> tuple[
 def finalize_answer(
     answer: str,
     context_chunks: list[dict],
-    *,
-    allowed_embed_asset_ids: frozenset[str] | None = None,
 ) -> tuple[str, list[dict], list[dict]]:
     from app.services.embeds_util import (
-        auto_insert_embed_markers,
-        dedupe_answer_embed_markers,
+        build_passive_embeds,
         public_embeds,
-        renumber_embed_markers,
+        strip_answer_embed_markers,
     )
 
     answer = normalize_answer_citations(answer)
-    answer, cited_chunks, citation_renumber = renumber_answer_citations(answer, context_chunks)
-    answer = renumber_embed_markers(answer, citation_renumber)
-    answer = auto_insert_embed_markers(
-        answer,
-        cited_chunks,
-        allowed_embed_asset_ids=allowed_embed_asset_ids,
-    )
-    answer, embeds = dedupe_answer_embed_markers(
-        answer,
-        cited_chunks,
-        allowed_embed_asset_ids=allowed_embed_asset_ids,
-    )
+    answer, cited_chunks, _citation_renumber = renumber_answer_citations(answer, context_chunks)
+    answer = strip_answer_embed_markers(answer)
+    embeds = build_passive_embeds(cited_chunks)
     return answer, public_citations(cited_chunks), public_embeds(embeds)
 
 

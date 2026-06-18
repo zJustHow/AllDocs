@@ -10,7 +10,10 @@ import fitz
 from app.config import Settings
 from app.services.asset_dedupe import AssetBindTracker
 
+from app.services.pdf_attach_reading_order import pick_preceding_chunk
+
 _OVERLAP_SKIP_RATIO = 0.35
+
 
 @dataclass(frozen=True)
 class EmbeddedFigure:
@@ -22,6 +25,8 @@ class EmbeddedFigure:
     png_bytes: bytes
     width: int
     height: int
+    figure_number: str | None = None
+    caption_text: str | None = None
 
 
 @dataclass(frozen=True)
@@ -33,6 +38,8 @@ class ParsedAttachedAsset:
     width: int
     height: int
     text_summary: str = ""
+    figure_caption: str | None = None
+    figure_number: str | None = None
 
 
 def _bbox_key(bbox: tuple[float, float, float, float]) -> tuple[int, int, int, int]:
@@ -166,6 +173,8 @@ def _figure_to_attached_asset(figure: EmbeddedFigure) -> ParsedAttachedAsset:
         width=figure.width,
         height=figure.height,
         text_summary=figure.text.strip(),
+        figure_caption=figure.caption_text,
+        figure_number=figure.figure_number,
     )
 
 
@@ -198,66 +207,7 @@ def _figure_overlaps_table_asset(figure: EmbeddedFigure, chunk) -> bool:
             continue
         if overlap / max(_rect_area(figure.bbox), 1.0) >= _OVERLAP_SKIP_RATIO:
             return True
-    chunk_bbox = getattr(chunk, "asset_bbox", None)
-    if not chunk_bbox:
-        return False
-    overlap = _rect_intersection_area(figure.bbox, chunk_bbox)
-    if overlap <= 0:
-        return False
-    return overlap / max(_rect_area(figure.bbox), 1.0) >= _OVERLAP_SKIP_RATIO
-
-
-def _chunk_layout_bbox(chunk) -> tuple[float, float, float, float] | None:
-    bbox = getattr(chunk, "asset_bbox", None)
-    if bbox and len(bbox) == 4:
-        return tuple(float(value) for value in bbox)
-    return None
-
-
-def _vertical_distance(
-    figure_y: float,
-    bbox: tuple[float, float, float, float],
-) -> float:
-    y0, y1 = bbox[1], bbox[3]
-    if y0 <= figure_y <= y1:
-        return 0.0
-    return min(abs(figure_y - y0), abs(figure_y - y1))
-
-
-def _is_attach_candidate(chunk) -> bool:
-    page = getattr(chunk, "page", None)
-    if page is None:
-        return False
-    if getattr(chunk, "asset_png", None):
-        return False
-    return True
-
-
-def _pick_nearest_chunk(figure: EmbeddedFigure, candidates: list) -> object | None:
-    figure_y = (figure.bbox[1] + figure.bbox[3]) / 2
-    pool = [chunk for chunk in candidates if _is_attach_candidate(chunk)]
-    if not pool:
-        return None
-
-    if figure.section:
-        section_pool = [chunk for chunk in pool if chunk.section == figure.section]
-        if section_pool:
-            pool = section_pool
-
-    bbox_pool = [chunk for chunk in pool if _chunk_layout_bbox(chunk)]
-    if bbox_pool:
-        pool = bbox_pool
-
-    def rank(chunk: object) -> tuple[float, int, int]:
-        bbox = _chunk_layout_bbox(chunk)
-        if bbox:
-            distance = _vertical_distance(figure_y, bbox)
-            prefer_above = 0 if bbox[3] <= figure_y else 1
-            return (distance, prefer_above, int(getattr(chunk, "chunk_index", 0)))
-        slot = int(getattr(chunk, "chunk_index", 0))
-        return (float("inf"), 1, slot)
-
-    return min(pool, key=rank)
+    return False
 
 
 def figure_overlaps_bboxes(
@@ -277,33 +227,28 @@ def attach_figures_to_chunks(
     figures: list[EmbeddedFigure],
     chunks: list,
 ) -> list[EmbeddedFigure]:
-    """Attach figures to nearby text chunks; return orphans."""
+    """Attach figures to preceding text chunks by reading order; return orphans."""
     if not figures:
         return []
-    by_page: dict[int, list] = {}
-    for chunk in chunks:
-        page = getattr(chunk, "page", None)
-        if page is None:
-            continue
-        by_page.setdefault(int(page), []).append(chunk)
-
-    figures_by_page: dict[int, list[EmbeddedFigure]] = {}
-    for figure in figures:
-        page_chunks = by_page.get(figure.page, [])
-        if any(_figure_overlaps_table_asset(figure, chunk) for chunk in page_chunks):
-            continue
-        figures_by_page.setdefault(figure.page, []).append(figure)
-    for page_figures in figures_by_page.values():
-        page_figures.sort(key=lambda item: item.sort_key)
 
     orphans: list[EmbeddedFigure] = []
-    for page, page_figures in figures_by_page.items():
-        candidates = by_page.get(page, [])
-        for figure in page_figures:
-            target = _pick_nearest_chunk(figure, candidates)
-            if target is None:
-                orphans.append(figure)
-                continue
-            target.attached_assets.append(_figure_to_attached_asset(figure))
+    for figure in sorted(figures, key=lambda item: (item.page, item.sort_key)):
+        page_chunks = [
+            chunk
+            for chunk in chunks
+            if getattr(chunk, "page", None) == figure.page
+        ]
+        if any(_figure_overlaps_table_asset(figure, chunk) for chunk in page_chunks):
+            continue
+
+        target = pick_preceding_chunk(
+            chunks,
+            page=figure.page,
+            section=figure.section,
+        )
+        if target is None:
+            orphans.append(figure)
+            continue
+        target.attached_assets.append(_figure_to_attached_asset(figure))
 
     return orphans

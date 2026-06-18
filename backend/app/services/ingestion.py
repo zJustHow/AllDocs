@@ -12,14 +12,19 @@ from app.services.ocr import OCRService
 from app.services.pdf_embedded_images import (
     EmbeddedFigure,
     ParsedAttachedAsset,
+    _figure_to_attached_asset,
     attach_figures_to_chunks,
     extract_pdf_embedded_figures,
     figure_bboxes_on_page,
     figure_overlaps_bboxes,
 )
+from app.services.pdf_captions import apply_page_caption_matches, extract_page_captions
+from app.services.pdf_refs import attach_by_explicit_refs
 from app.services.asset_dedupe import AssetBindTracker
+from app.services.pdf_header_footer import HeaderFooterFilter, build_header_footer_filter
 from app.services.pdf_tables import (
     EmbeddedTable,
+    _table_to_attached_asset,
     extract_pdf_tables,
     attach_tables_to_chunks,
     filter_page_blocks,
@@ -54,12 +59,6 @@ class ParsedChunk:
     section: str | None
     chunk_index: int
     layout_bbox: tuple[float, float, float, float] | None = None
-    asset_bbox: tuple[float, float, float, float] | None = None
-    asset_png: bytes | None = None
-    asset_width: int | None = None
-    asset_height: int | None = None
-    primary_asset_type: str | None = None
-    primary_asset_summary: str = ""
     attached_assets: list[ParsedAttachedAsset] = field(default_factory=list)
 
 
@@ -179,8 +178,9 @@ def _merge_bboxes(
 def _page_content_bbox(
     page: fitz.Page,
     exclude_bboxes: list[tuple[float, float, float, float]],
+    hf: HeaderFooterFilter | None = None,
 ) -> tuple[float, float, float, float] | None:
-    blocks = filter_page_blocks(page, exclude_bboxes)
+    blocks = filter_page_blocks(page, exclude_bboxes, hf=hf)
     merged = _merge_bboxes([block[:4] for block in blocks])
     if merged:
         return merged
@@ -251,18 +251,14 @@ def _bbox_for_offset(
     return bbox
 
 
-def _extract_native_page_text(page: fitz.Page) -> str:
-    blocks = page.get_text("blocks")
-    texts: list[str] = []
-    for block in blocks:
-        if len(block) < 5:
-            continue
-        text = str(block[4]).strip()
-        if text:
-            texts.append(text)
-    if texts:
-        return "\n".join(texts)
-    return page.get_text().strip()
+def _extract_native_page_text(
+    page: fitz.Page,
+    hf: HeaderFooterFilter | None = None,
+) -> str:
+    blocks = filter_page_blocks(page, [], hf=hf)
+    if blocks:
+        return "\n".join(text for *_, text in blocks)
+    return ""
 
 
 def _extract_page_text_blocks(page: fitz.Page) -> list[tuple[float, float, str]]:
@@ -601,36 +597,26 @@ def _merge_pdf_layout_chunks(
 
 
 def _orphan_figure_chunk(figure: EmbeddedFigure) -> ParsedChunk:
-    """Standalone figure chunk; OCR clip text stays on asset caption, not chunk.text."""
+    """Standalone figure chunk; caption stays on attached asset, not chunk.text."""
     return ParsedChunk(
         text="",
         page=figure.page,
         section=figure.section,
         chunk_index=0,
         layout_bbox=figure.bbox,
-        primary_asset_type="figure",
-        primary_asset_summary=figure.text.strip(),
-        asset_bbox=figure.bbox,
-        asset_png=figure.png_bytes,
-        asset_width=figure.width,
-        asset_height=figure.height,
+        attached_assets=[_figure_to_attached_asset(figure)],
     )
 
 
 def _orphan_table_chunk(table: EmbeddedTable) -> ParsedChunk:
-    """Standalone table chunk; summary stays on asset caption, not chunk.text."""
+    """Standalone table chunk; summary stays on attached asset, not chunk.text."""
     return ParsedChunk(
         text="",
         page=table.page,
         section=table.section,
         chunk_index=0,
         layout_bbox=table.bbox,
-        primary_asset_type="table",
-        primary_asset_summary=table.summary,
-        asset_bbox=table.bbox,
-        asset_png=table.png_bytes,
-        asset_width=table.width,
-        asset_height=table.height,
+        attached_assets=[_table_to_attached_asset(table)],
     )
 
 
@@ -665,15 +651,19 @@ class IngestionService:
         self.settings = settings or get_settings()
         self.ocr = OCRService(self.settings) if self.settings.ocr_enabled else None
 
-    def _extract_page_text(self, page: fitz.Page) -> tuple[str, bool]:
-        native_text = _extract_native_page_text(page)
+    def _extract_page_text(
+        self,
+        page: fitz.Page,
+        hf: HeaderFooterFilter | None = None,
+    ) -> tuple[str, bool]:
+        native_text = _extract_native_page_text(page, hf=hf)
         if not _page_needs_ocr(native_text, self.settings):
             return native_text, False
 
         if self.ocr is None:
             return native_text, False
 
-        ocr_text = self.ocr.recognize_page(page)
+        ocr_text = self.ocr.recognize_page(page, hf=hf)
         if len(ocr_text.strip()) > len(native_text.strip()):
             return ocr_text, True
         return native_text, False
@@ -688,6 +678,14 @@ class IngestionService:
         toc_entries = build_toc_entries(doc)
         toc_anchors = build_toc_anchors(doc)
         use_y_split = any(anchor.has_y for anchor in toc_anchors)
+        skip_front_matter = lambda page_number: should_skip_front_matter(
+            page_number, toc_entries
+        )
+        hf_filter = build_header_footer_filter(
+            doc,
+            self.settings,
+            should_skip_page=skip_front_matter,
+        )
 
         def section_resolver(page_number: int, y: float | None = None) -> str | None:
             if y is not None and use_y_split:
@@ -705,9 +703,7 @@ class IngestionService:
             doc,
             settings=self.settings,
             section_resolver=section_resolver,
-            should_skip_page=lambda page_number: should_skip_front_matter(
-                page_number, toc_entries
-            ),
+            should_skip_page=skip_front_matter,
             bind_tracker=bind_tracker,
         )
         tables_by_page = {
@@ -719,9 +715,7 @@ class IngestionService:
             doc,
             settings=self.settings,
             section_resolver=section_resolver,
-            should_skip_page=lambda page_number: should_skip_front_matter(
-                page_number, toc_entries
-            ),
+            should_skip_page=skip_front_matter,
             bind_tracker=bind_tracker,
         )
         embedded_figures = [
@@ -731,6 +725,34 @@ class IngestionService:
                 figure, tables_by_page.get(figure.page, [])
             )
         ]
+
+        figures_by_page_number: dict[int, list[EmbeddedFigure]] = {}
+        tables_by_page_number: dict[int, list[EmbeddedTable]] = {}
+        for figure in embedded_figures:
+            figures_by_page_number.setdefault(figure.page, []).append(figure)
+        for table in extracted_tables:
+            tables_by_page_number.setdefault(table.page, []).append(table)
+
+        updated_figures: list[EmbeddedFigure] = []
+        updated_tables: list[EmbeddedTable] = []
+        for page_index in range(page_count):
+            page_number = page_index + 1
+            if should_skip_front_matter(page_number, toc_entries):
+                continue
+            page = doc[page_index]
+            page_figures = figures_by_page_number.get(page_number, [])
+            page_tables = tables_by_page_number.get(page_number, [])
+            page_captions = extract_page_captions(page, page_number)
+            matched_figures, matched_tables = apply_page_caption_matches(
+                page_captions,
+                page_figures,
+                page_tables,
+            )
+            updated_figures.extend(matched_figures)
+            updated_tables.extend(matched_tables)
+
+        embedded_figures = updated_figures
+        extracted_tables = updated_tables
         figures_by_page = {
             page: figure_bboxes_on_page(embedded_figures, page)
             for page in {figure.page for figure in embedded_figures}
@@ -749,12 +771,14 @@ class IngestionService:
             )
 
             if exclude_bboxes and not self.settings.ocr_force:
-                page_text = filter_page_text(page, exclude_bboxes)
+                page_text = filter_page_text(page, exclude_bboxes, hf=hf_filter)
                 used_ocr = False
             else:
-                page_text, used_ocr = self._extract_page_text(page)
+                page_text, used_ocr = self._extract_page_text(page, hf=hf_filter)
                 if exclude_bboxes and page_text.strip():
-                    page_text = filter_page_text(page, exclude_bboxes) or page_text
+                    page_text = (
+                        filter_page_text(page, exclude_bboxes, hf=hf_filter) or page_text
+                    )
 
             if used_ocr:
                 ocr_pages += 1
@@ -764,7 +788,7 @@ class IngestionService:
                 continue
 
             if use_y_split and not used_ocr and page_text.strip():
-                blocks = filter_page_blocks(page, exclude_bboxes)
+                blocks = filter_page_blocks(page, exclude_bboxes, hf=hf_filter)
                 if blocks:
                     for section, segment_text, segment_bbox in _segment_page_by_anchors(
                         toc_anchors,
@@ -782,7 +806,7 @@ class IngestionService:
                             fallback_section,
                             page_text.strip(),
                             page_number,
-                            _page_content_bbox(page, exclude_bboxes),
+                            _page_content_bbox(page, exclude_bboxes, hf=hf_filter),
                         )
                     )
             elif page_text.strip():
@@ -791,7 +815,7 @@ class IngestionService:
                         fallback_section,
                         page_text.strip(),
                         page_number,
-                        _page_content_bbox(page, exclude_bboxes),
+                        _page_content_bbox(page, exclude_bboxes, hf=hf_filter),
                     )
                 )
             if on_page_progress is not None:
@@ -803,10 +827,16 @@ class IngestionService:
 
         page_chunks = _build_chunks_from_pages(pages, self.settings) if pages else []
 
-        orphan_tables = attach_tables_to_chunks(extracted_tables, page_chunks)
+        remaining_figures, remaining_tables = attach_by_explicit_refs(
+            page_chunks,
+            embedded_figures,
+            extracted_tables,
+        )
+
+        orphan_tables = attach_tables_to_chunks(remaining_tables, page_chunks)
 
         orphan_figures = attach_figures_to_chunks(
-            embedded_figures,
+            remaining_figures,
             page_chunks,
         )
 

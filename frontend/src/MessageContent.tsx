@@ -2,7 +2,6 @@ import { memo, useState } from "react";
 import ImageLightbox from "./ImageLightbox";
 import {
   embedDedupeKey,
-  isCompactMediaText,
   reassignEmbedsAcrossSections,
   segmentsToRenderableContent,
   splitContentIntoSections,
@@ -119,56 +118,79 @@ function SectionView({
   citations,
   onOpenDocument,
 }: SectionViewProps) {
-  const proseContent = segmentsToRenderableContent(segments);
-  const sectionEmbeds = segments
-    .filter(
-      (segment): segment is Extract<MessageSegment, { type: "embed" }> =>
-        segment.type === "embed",
-    )
-    .map((segment) => segment.embed);
-  const hasInlineRefs = segments.some(
-    (segment) => segment.type === "citation" || segment.type === "embed",
-  );
+  const blocks: Array<
+    | { kind: "prose"; segments: MessageSegment[] }
+    | { kind: "embeds"; embeds: MessageEmbed[] }
+  > = [];
+  let proseBatch: MessageSegment[] = [];
 
-  if (!proseContent.trim() && sectionEmbeds.length === 0) {
+  const flushProse = () => {
+    if (!proseBatch.length) return;
+    blocks.push({ kind: "prose", segments: proseBatch });
+    proseBatch = [];
+  };
+
+  for (const segment of segments) {
+    if (segment.type === "embed") {
+      flushProse();
+      const last = blocks[blocks.length - 1];
+      if (last?.kind === "embeds") {
+        last.embeds.push(segment.embed);
+      } else {
+        blocks.push({ kind: "embeds", embeds: [segment.embed] });
+      }
+      continue;
+    }
+    proseBatch.push(segment);
+  }
+  flushProse();
+
+  if (!blocks.length) {
     return null;
   }
 
-  const markdown = proseContent.trim() ? (
-    <MarkdownText
-      content={proseContent}
-      inline={hasInlineRefs}
-      citations={citations}
-      onOpenDocument={onOpenDocument}
-    />
-  ) : null;
-
-  if (sectionEmbeds.length === 0) {
-    return <div className="answer-prose">{markdown}</div>;
-  }
-
-  const isTable = sectionEmbeds.some((embed) => embed.type === "table");
-  const compact =
-    isCompactMediaText(
-      segments.filter((segment) => segment.type !== "embed"),
-    ) && !isTable;
-
   return (
-    <div
-      className={`answer-media-block${
-        isTable ? " answer-media-block--table" : ""
-      }${compact ? " answer-media-block--compact" : ""}`}
-    >
-      {markdown ? <div className="answer-media-text">{markdown}</div> : null}
-      <div className="answer-media-figures">
-        {sectionEmbeds.map((embed) => (
-          <AnswerEmbedFigure
-            key={embedDedupeKey(embed)}
-            embed={embed}
-            onOpenDocument={onOpenDocument}
-          />
-        ))}
-      </div>
+    <div className="answer-section-flow">
+      {blocks.map((block, index) => {
+        if (block.kind === "prose") {
+          const proseContent = segmentsToRenderableContent(block.segments);
+          if (!proseContent.trim()) return null;
+          const hasInlineRefs = block.segments.some(
+            (segment) =>
+              segment.type === "citation" || segment.type === "embed",
+          );
+          return (
+            <div key={`prose-${index}`} className="answer-prose">
+              <MarkdownText
+                content={proseContent}
+                inline={hasInlineRefs}
+                citations={citations}
+                onOpenDocument={onOpenDocument}
+              />
+            </div>
+          );
+        }
+
+        const isTable = block.embeds.some((embed) => embed.type === "table");
+        const compact = block.embeds.length === 1 && !isTable;
+
+        return (
+          <div
+            key={`embeds-${index}`}
+            className={`answer-media-figures${
+              isTable ? " answer-media-block--table" : ""
+            }${compact ? " answer-media-block--compact" : ""}`}
+          >
+            {block.embeds.map((embed) => (
+              <AnswerEmbedFigure
+                key={embedDedupeKey(embed)}
+                embed={embed}
+                onOpenDocument={onOpenDocument}
+              />
+            ))}
+          </div>
+        );
+      })}
     </div>
   );
 }

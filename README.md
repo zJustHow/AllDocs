@@ -178,8 +178,9 @@ flowchart TD
 - **内嵌位图**：提取为 `figure` asset；扫描整页图通常因面积过大被跳过
 - **前置页**：自动跳过「第一章」之前的封面/版权等（可调整书签规避）
 - **目录页**：带点线引导符的目录样式页自动忽略
+- **页眉页脚**：裁切上下边距区域，并剔除跨页重复的页眉页脚文本与页码（见 [手册编写规范 · 页眉页脚](docs/manual-writing-guide.md#35-页眉与页脚)）
 
-实现参考：`backend/app/services/ingestion.py`、`pdf_tables.py`、`pdf_embedded_images.py`、`workers/tasks.py`。
+实现参考：`backend/app/services/ingestion.py`、`pdf_header_footer.py`、`pdf_tables.py`、`pdf_embedded_images.py`、`workers/tasks.py`。
 
 ---
 
@@ -206,12 +207,11 @@ flowchart TD
 | 配置组 | 关键变量 |
 |--------|----------|
 | LLM | `LLM_API_BASE_URL`、`LLM_API_KEY`、`LLM_MODEL` |
-| Vision | `LLM_VISION_ENABLED`、`LLM_VISION_*`（合成阶段看图） |
-| 入库 Caption | `INGEST_CAPTION_ENABLED`、`INGEST_CAPTION_*` |
+| 入库 Caption | `INGEST_CAPTION_ENABLED`、`INGEST_CAPTION_*`（入库 VLM 描述，可选） |
 | Embedding / Rerank | `EMBEDDING_MODEL`、`RERANK_MODEL`、`RERANK_ENABLED` |
 | 远程推理 | `INFERENCE_URL`（可选，见 `docker compose --profile inference`） |
 | RAG | `RAG_CHUNK_SIZE`、`RAG_RETRIEVE_K`、`RAG_TOP_K`、`HYBRID_ENABLED` |
-| OCR / PDF | `OCR_*`、`PDF_EXTRACT_TABLES`、`PDF_EXTRACT_EMBEDDED_IMAGES` |
+| OCR / PDF | `OCR_*`、`PDF_EXTRACT_TABLES`、`PDF_EXTRACT_EMBEDDED_IMAGES`、`PDF_FILTER_HEADER_FOOTER`、`PDF_*_MARGIN_RATIO` |
 | 基础设施 | `POSTGRES_URL`、`QDRANT_URL`、`ELASTICSEARCH_URL`、`MINIO_*` |
 
 完整列表见 [`.env.example`](.env.example)。

@@ -8,7 +8,7 @@ import logging
 from openai import OpenAI
 
 from app.config import Settings, get_settings
-from app.services.vision_api import caption_api_base_url, caption_api_key, caption_model_name
+from app.services.caption_api import caption_api_base_url, caption_api_key, caption_model_name
 
 logger = logging.getLogger(__name__)
 

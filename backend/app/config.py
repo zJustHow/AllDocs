@@ -9,12 +9,6 @@ class Settings(BaseSettings):
     llm_api_base_url: str = "https://api.deepseek.com/v1"
     llm_api_key: str = ""
     llm_model: str = "deepseek-chat"
-    llm_vision_enabled: bool = False
-    llm_vision_api_base_url: str = ""
-    llm_vision_api_key: str = ""
-    llm_vision_model: str = ""
-    llm_vision_max_images: int = 4
-    llm_vision_render_scale: float = 2.0
 
     inference_url: str = ""
     inference_timeout_seconds: float = 120.0
@@ -81,10 +75,17 @@ class Settings(BaseSettings):
     pdf_table_min_cols: int = 2
     pdf_table_render_scale: float = 2.0
 
+    pdf_filter_header_footer: bool = True
+    pdf_header_margin_ratio: float = 0.08
+    pdf_footer_margin_ratio: float = 0.08
+    pdf_hf_min_repeat_pages: int = 3
+    pdf_hf_min_repeat_ratio: float = 0.35
+
     ingest_caption_enabled: bool = False
     ingest_caption_api_base_url: str = ""
     ingest_caption_api_key: str = ""
     ingest_caption_model: str = ""
+    ingest_caption_render_scale: float = 2.0
     ingest_caption_max_per_doc: int = 20
     ingest_caption_min_text_chars: int = 50
 
