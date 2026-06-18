@@ -27,6 +27,9 @@ from app.services.vector_store import VectorStore
 DetectorFactory.seed = 0
 logger = logging.getLogger(__name__)
 
+# Internal delimiter between evidence blocks in <context>; not shown to users.
+_CONTEXT_CHUNK_SEPARATOR = "\n\n<!-- chunk -->\n\n"
+
 
 def parse_chunk_uuids(chunk_ids: list[str]) -> tuple[list[UUID], list[str]]:
     """Return valid UUIDs and any IDs that failed to parse."""
@@ -448,4 +451,4 @@ class RAGService:
             if item.get("assets"):
                 header += " (visual)"
             parts.append(f"{header}\n{item['text']}")
-        return "\n\n---\n\n".join(parts)
+        return _CONTEXT_CHUNK_SEPARATOR.join(parts)

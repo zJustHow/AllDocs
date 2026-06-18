@@ -90,6 +90,7 @@ function AnswerEmbedFigure({ embed, onOpenDocument }: AnswerEmbedFigureProps) {
         <button
           type="button"
           className="answer-embed-link"
+          title={linkLabel}
           onClick={() => onOpenDocument(embedToViewerTarget(embed))}
         >
           {linkLabel}

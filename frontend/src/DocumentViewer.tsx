@@ -526,7 +526,6 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
       <div className="doc-viewer-top">
         <div className="doc-viewer-meta">
           <span className="doc-viewer-name">{target.documentName}</span>
-          {target.section ? <span className="doc-viewer-section">{target.section}</span> : null}
         </div>
         <button className="doc-viewer-close" onClick={onClose} aria-label={t("viewer.close")}>
           <CloseIcon />
@@ -705,9 +704,16 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
         </div>
       </div>
 
-      {target.snippet && (
+      {(target.section || target.snippet) && (
         <div className="doc-viewer-snippet">
-          <p>{formatCitationSnippetExcerpt(target.snippet)}</p>
+          {target.section ? (
+            <p className="doc-viewer-caption" title={target.section}>
+              {target.section}
+            </p>
+          ) : null}
+          {target.snippet ? (
+            <p>{formatCitationSnippetExcerpt(target.snippet)}</p>
+          ) : null}
         </div>
       )}
     </aside>

@@ -284,12 +284,7 @@ export function splitMessageWithCitations(
     if (embedRef) {
       flushEmbedsForCurrentSentence();
       if (attachEmbedsToCitations) {
-        appendEmbedsForRef(
-          segments,
-          Number(embedRef),
-          embeds,
-          shownEmbedKeys,
-        );
+        appendEmbedsForRef(segments, Number(embedRef), embeds, shownEmbedKeys);
       }
       lastIndex = match.index + match[0].length;
       continue;
