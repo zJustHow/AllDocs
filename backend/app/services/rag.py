@@ -218,16 +218,17 @@ class RAGService:
                     "text": body_text,
                     "index_text": index_text,
                     "layout_bbox": chunk.layout_bbox,
+                    "sub_index": chunk.sub_index,
                     "assets": [
                         {
                             "asset_id": str(asset.id),
                             "type": asset.asset_type,
                             "page": asset.page,
                             "url": asset_url(asset.id),
-                            "object_key": asset.object_key,
                             "caption": asset.caption,
                             "figure_caption": asset.figure_caption,
                             "figure_number": asset.figure_number,
+                            "content_hash": asset.content_hash,
                             "bbox": asset.bbox,
                         }
                         for asset in chunk_assets

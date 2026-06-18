@@ -54,6 +54,7 @@ class Chunk(Base):
     chunk_index: Mapped[int] = mapped_column(Integer)
     caption: Mapped[str | None] = mapped_column(Text, nullable=True)
     layout_bbox: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    sub_index: Mapped[list | None] = mapped_column(JSONB, nullable=True)
 
     document: Mapped["Document"] = relationship(back_populates="chunks")
     assets: Mapped[list["ChunkAsset"]] = relationship(
@@ -77,6 +78,7 @@ class ChunkAsset(Base):
     caption: Mapped[str | None] = mapped_column(Text, nullable=True)
     figure_caption: Mapped[str | None] = mapped_column(Text, nullable=True)
     figure_number: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     chunk: Mapped["Chunk"] = relationship(back_populates="assets")
 

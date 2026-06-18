@@ -32,6 +32,9 @@ function summarizeActionInput(action: string, input: Record<string, unknown>): s
     const after = typeof input.after === "number" ? input.after : 1;
     return [`±${before}/${after} around ${input.chunk_id.slice(0, 8)}…`];
   }
+  if (action === "ask_user" && typeof input.question === "string") {
+    return [input.question];
+  }
   if (action === "finish" && typeof input.reason === "string") {
     return [input.reason];
   }

@@ -1256,19 +1256,9 @@ button {
 
 /* ── Message sections & citation badges ── */
 
-.message-section:not(:last-child) {
-  padding-bottom: 12px;
-  margin-bottom: 12px;
-  border-bottom: 1px solid var(--line);
-}
-
 .message-section-body {
   display: flow-root;
   line-height: 1.65;
-}
-
-.answer-media-text .markdown-preview hr {
-  display: none;
 }
 
 .citation-link {
@@ -1354,6 +1344,31 @@ button {
   max-width: 240px;
 }
 
+.answer-media-figures--row {
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: flex-start;
+  width: 100%;
+  max-width: 100%;
+  margin: 8px 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  gap: 12px;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+}
+
+.answer-media-figures--row .answer-embed--figure {
+  flex: 0 0 auto;
+  width: auto;
+  max-width: min(280px, 70vw);
+}
+
+.answer-media-figures--row .answer-embed-image {
+  max-height: 220px;
+  max-width: min(280px, 70vw);
+}
+
 .answer-media-block--table .answer-media-figures {
   width: 100%;
   max-width: 100%;
@@ -1423,7 +1438,7 @@ button {
     flex-direction: column;
   }
 
-  .answer-media-figures {
+  .answer-media-figures:not(.answer-media-figures--row) {
     width: 100%;
     max-width: 100%;
     align-items: center;
@@ -1431,6 +1446,11 @@ button {
 
   .answer-embed--figure .answer-embed-image {
     max-height: 360px;
+  }
+
+  .answer-media-figures--row .answer-embed-image {
+    max-height: 200px;
+    max-width: min(240px, 75vw);
   }
 }
 

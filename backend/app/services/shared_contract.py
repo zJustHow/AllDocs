@@ -39,11 +39,6 @@ def inline_citation_marker_pattern() -> re.Pattern[str]:
 
 
 @lru_cache
-def embed_marker_pattern() -> re.Pattern[str]:
-    return re.compile(load_markers()["regex"]["embedMarker"])
-
-
-@lru_cache
 def embed_marker_loose_pattern() -> re.Pattern[str]:
     return re.compile(load_markers()["regex"]["embedMarkerLoose"])
 
@@ -57,39 +52,21 @@ def citation_ref_pattern(ref: int) -> re.Pattern[str]:
     return re.compile(rf"\[\s*{ref}\s*\]|【\s*{ref}\s*】")
 
 
-def format_embed_marker(ref: int) -> str:
-    return load_markers()["embed"]["markerTemplate"].replace("{ref}", str(ref))
-
-
-def normalized_bbox_key(bbox: list | tuple | None) -> str | None:
-    if not bbox or len(bbox) != 4:
-        return None
-    decimals = int(load_markers()["embed"]["bboxRoundDecimals"])
-    return ",".join(str(round(float(value), decimals)) for value in bbox)
-
-
 def embed_dedupe_key(payload: dict[str, Any]) -> str:
+    content_hash = payload.get("content_hash")
+    if content_hash:
+        return f"hash:{content_hash}"
+
     asset_id = payload.get("asset_id")
     if asset_id:
         return f"asset:{asset_id}"
-
-    embed_type = payload.get("type") or "figure"
-    document_id = payload.get("document_id")
-    page = payload.get("page")
-    bbox_key = normalized_bbox_key(payload.get("bbox"))
-
-    if embed_type == "figure" and document_id and page is not None:
-        if bbox_key:
-            return f"figure:{document_id}:{page}:{bbox_key}"
-        return f"figure:{document_id}:{page}"
-
-    if embed_type == "table" and document_id and page is not None and bbox_key:
-        return f"table:{document_id}:{page}:{bbox_key}"
 
     url = payload.get("url")
     if url:
         return f"url:{url}"
 
+    document_id = payload.get("document_id")
+    page = payload.get("page")
     if document_id and page is not None:
         return f"page:{document_id}:{page}"
     return f"embed:{id(payload)}"

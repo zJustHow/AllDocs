@@ -20,7 +20,6 @@ from app.services.pdf_embedded_images import (
 )
 from app.services.pdf_captions import apply_page_caption_matches, extract_page_captions
 from app.services.pdf_refs import attach_by_explicit_refs
-from app.services.asset_dedupe import AssetBindTracker
 from app.services.pdf_header_footer import HeaderFooterFilter, build_header_footer_filter
 from app.services.pdf_tables import (
     EmbeddedTable,
@@ -52,6 +51,16 @@ _CHAPTER_TITLE_RE = re.compile(
 _MD_HEADING_RE = re.compile(r"^(#{1,6})\s+(.+)$")
 
 
+BlockSpan = tuple[int, int, float, float]
+PageRow = tuple[
+    str | None,
+    str,
+    int,
+    tuple[float, float, float, float] | None,
+    list[BlockSpan] | None,
+]
+
+
 @dataclass
 class ParsedChunk:
     text: str
@@ -59,6 +68,8 @@ class ParsedChunk:
     section: str | None
     chunk_index: int
     layout_bbox: tuple[float, float, float, float] | None = None
+    sort_key: float | None = None
+    layout_y1: float | None = None
     attached_assets: list[ParsedAttachedAsset] = field(default_factory=list)
 
 
@@ -162,6 +173,46 @@ def _split_text_with_offsets(
     return chunks
 
 
+def _block_spans_from_joined_blocks(
+    texts: list[str],
+    block_bounds: list[tuple[float, float]],
+) -> list[BlockSpan]:
+    spans: list[BlockSpan] = []
+    offset = 0
+    for index, (text, (y0, y1)) in enumerate(zip(texts, block_bounds, strict=True)):
+        if index > 0:
+            offset += 1
+        start = offset
+        offset += len(text)
+        spans.append((start, offset, y0, y1))
+    return spans
+
+
+def _y_bounds_for_range(
+    block_spans: list[BlockSpan],
+    start: int,
+    end: int,
+) -> tuple[float, float] | None:
+    y0_values: list[float] = []
+    y1_values: list[float] = []
+    for span_start, span_end, y0, y1 in block_spans:
+        if span_end <= start or span_start >= end:
+            continue
+        y0_values.append(y0)
+        y1_values.append(y1)
+    if not y0_values:
+        return None
+    return (min(y0_values), max(y1_values))
+
+
+def _layout_y_bounds(
+    layout_bbox: tuple[float, float, float, float] | None,
+) -> tuple[float | None, float | None]:
+    if layout_bbox is None:
+        return None, None
+    return float(layout_bbox[1]), float(layout_bbox[3])
+
+
 def _merge_bboxes(
     bboxes: list[tuple[float, float, float, float]],
 ) -> tuple[float, float, float, float] | None:
@@ -189,43 +240,47 @@ def _page_content_bbox(
 
 
 def _group_contiguous_sections(
-    pages: list[tuple[str | None, str, int, tuple[float, float, float, float] | None]],
-) -> list[tuple[str | None, list[tuple[int, str, tuple[float, float, float, float] | None]]]]:
+    pages: list[PageRow],
+) -> list[tuple[str | None, list[tuple[int, str, tuple[float, float, float, float] | None, list[BlockSpan] | None]]]]:
     if not pages:
         return []
 
     groups: list[
-        tuple[str | None, list[tuple[int, str, tuple[float, float, float, float] | None]]]
+        tuple[str | None, list[tuple[int, str, tuple[float, float, float, float] | None, list[BlockSpan] | None]]]
     ] = []
     current_section = pages[0][0]
-    current_pages: list[tuple[int, str, tuple[float, float, float, float] | None]] = [
-        (pages[0][2], pages[0][1], pages[0][3])
+    current_pages: list[tuple[int, str, tuple[float, float, float, float] | None, list[BlockSpan] | None]] = [
+        (pages[0][2], pages[0][1], pages[0][3], pages[0][4])
     ]
 
-    for section, text, page, bbox in pages[1:]:
+    for section, text, page, bbox, block_spans in pages[1:]:
         if section != current_section:
             groups.append((current_section, current_pages))
             current_section = section
             current_pages = []
-        current_pages.append((page, text, bbox))
+        current_pages.append((page, text, bbox, block_spans))
     groups.append((current_section, current_pages))
     return groups
 
 
 def _concat_pages(
-    pages: list[tuple[int, str, tuple[float, float, float, float] | None]],
+    pages: list[tuple[int, str, tuple[float, float, float, float] | None, list[BlockSpan] | None]],
     separator: str = _PAGE_SEPARATOR,
-) -> tuple[str, list[tuple[int, int, tuple[float, float, float, float] | None]]]:
+) -> tuple[str, list[tuple[int, int, tuple[float, float, float, float] | None]], list[BlockSpan]]:
     spans: list[tuple[int, int, tuple[float, float, float, float] | None]] = []
+    block_spans: list[BlockSpan] = []
     parts: list[str] = []
     offset = 0
-    for index, (page, text, bbox) in enumerate(pages):
+    for index, (page, text, bbox, page_block_spans) in enumerate(pages):
         if index > 0:
             offset += len(separator)
         spans.append((page, offset, bbox))
+        if page_block_spans:
+            for span_start, span_end, y0, y1 in page_block_spans:
+                block_spans.append((offset + span_start, offset + span_end, y0, y1))
         parts.append(text)
         offset += len(text)
-    return separator.join(parts), spans
+    return separator.join(parts), spans, block_spans
 
 
 def _page_for_offset(spans: list[tuple[int, int, tuple[float, float, float, float] | None]], offset: int) -> int:
@@ -280,35 +335,64 @@ def _segment_page_by_anchors(
     page_number: int,
     blocks: list[tuple[float, float, float, float, str]],
     fallback_section: str | None,
-) -> list[tuple[str | None, str, tuple[float, float, float, float] | None]]:
+) -> list[tuple[str | None, str, tuple[float, float, float, float] | None, list[BlockSpan]]]:
     if not blocks:
         return []
 
-    segments: list[tuple[str | None, list[str], list[tuple[float, float, float, float]]]] = []
+    segments: list[
+        tuple[str | None, list[str], list[tuple[float, float, float, float]], list[tuple[float, float]]]
+    ] = []
     current_section: str | None = None
     current_texts: list[str] = []
     current_bboxes: list[tuple[float, float, float, float]] = []
+    current_bounds: list[tuple[float, float]] = []
 
     for x0, y0, x1, y1, text in blocks:
         mid_y = (y0 + y1) / 2
         section = section_at_position(anchors, page_number, mid_y) or fallback_section
         block_bbox = (x0, y0, x1, y1)
         if section != current_section and current_texts:
-            segments.append((current_section, current_texts, current_bboxes))
+            segments.append((current_section, current_texts, current_bboxes, current_bounds))
             current_texts = []
             current_bboxes = []
+            current_bounds = []
         current_section = section
         current_texts.append(text)
         current_bboxes.append(block_bbox)
+        current_bounds.append((y0, y1))
 
     if current_texts:
-        segments.append((current_section, current_texts, current_bboxes))
+        segments.append((current_section, current_texts, current_bboxes, current_bounds))
 
     return [
-        (section, "\n".join(texts), _merge_bboxes(bboxes))
-        for section, texts, bboxes in segments
+        (
+            section,
+            "\n".join(texts),
+            _merge_bboxes(bboxes),
+            _block_spans_from_joined_blocks(texts, bounds),
+        )
+        for section, texts, bboxes, bounds in segments
         if texts
     ]
+
+
+def _page_row_from_blocks(
+    section: str | None,
+    page_number: int,
+    blocks: list[tuple[float, float, float, float, str]],
+    layout_bbox: tuple[float, float, float, float] | None,
+) -> PageRow | None:
+    texts = [text for *_, text in blocks]
+    if not texts:
+        return None
+    bounds = [(y0, y1) for _, y0, _, y1, _ in blocks]
+    return (
+        section,
+        "\n".join(texts),
+        page_number,
+        layout_bbox,
+        _block_spans_from_joined_blocks(texts, bounds),
+    )
 
 
 def _page_needs_ocr(native_text: str, settings: Settings) -> bool:
@@ -505,8 +589,8 @@ def _strip_html(raw_html: str) -> str:
 
 def _pages_with_bbox(
     pages: list[tuple[str | None, str, int]],
-) -> list[tuple[str | None, str, int, tuple[float, float, float, float] | None]]:
-    return [(section, text, page, None) for section, text, page in pages]
+) -> list[PageRow]:
+    return [(section, text, page, None, None) for section, text, page in pages]
 
 
 def _flush_text_buffer(
@@ -604,6 +688,8 @@ def _orphan_figure_chunk(figure: EmbeddedFigure) -> ParsedChunk:
         section=figure.section,
         chunk_index=0,
         layout_bbox=figure.bbox,
+        sort_key=float(figure.bbox[1]),
+        layout_y1=float(figure.bbox[3]),
         attached_assets=[_figure_to_attached_asset(figure)],
     )
 
@@ -616,30 +702,40 @@ def _orphan_table_chunk(table: EmbeddedTable) -> ParsedChunk:
         section=table.section,
         chunk_index=0,
         layout_bbox=table.bbox,
+        sort_key=float(table.bbox[1]),
+        layout_y1=float(table.bbox[3]),
         attached_assets=[_table_to_attached_asset(table)],
     )
 
 
 def _build_chunks_from_pages(
-    pages: list[tuple[str | None, str, int, tuple[float, float, float, float] | None]],
+    pages: list[PageRow],
     settings: Settings,
 ) -> list[ParsedChunk]:
     parsed_chunks: list[ParsedChunk] = []
     chunk_index = 0
     for section, page_group in _group_contiguous_sections(pages):
-        section_text, page_spans = _concat_pages(page_group)
+        section_text, page_spans, block_spans = _concat_pages(page_group)
         for offset, piece in _split_text_with_offsets(
             section_text,
             settings.rag_chunk_size,
             settings.rag_chunk_overlap,
         ):
+            layout_bbox = _bbox_for_offset(page_spans, offset)
+            y_bounds = _y_bounds_for_range(block_spans, offset, offset + len(piece))
+            if y_bounds is not None:
+                sort_key, layout_y1 = y_bounds
+            else:
+                sort_key, layout_y1 = _layout_y_bounds(layout_bbox)
             parsed_chunks.append(
                 ParsedChunk(
                     text=piece,
                     page=_page_for_offset(page_spans, offset),
                     section=section,
                     chunk_index=chunk_index,
-                    layout_bbox=_bbox_for_offset(page_spans, offset),
+                    layout_bbox=layout_bbox,
+                    sort_key=sort_key,
+                    layout_y1=layout_y1,
                 )
             )
             chunk_index += 1
@@ -694,9 +790,7 @@ class IngestionService:
                     return resolved
             return section_for_page(toc_entries, page_number)
 
-        bind_tracker = AssetBindTracker()
-
-        pages: list[tuple[str | None, str, int, tuple[float, float, float, float] | None]] = []
+        pages: list[PageRow] = []
         ocr_pages = 0
 
         extracted_tables = extract_pdf_tables(
@@ -704,7 +798,6 @@ class IngestionService:
             settings=self.settings,
             section_resolver=section_resolver,
             should_skip_page=skip_front_matter,
-            bind_tracker=bind_tracker,
         )
         tables_by_page = {
             page: table_bboxes_on_page(extracted_tables, page)
@@ -716,7 +809,6 @@ class IngestionService:
             settings=self.settings,
             section_resolver=section_resolver,
             should_skip_page=skip_front_matter,
-            bind_tracker=bind_tracker,
         )
         embedded_figures = [
             figure
@@ -790,7 +882,7 @@ class IngestionService:
             if use_y_split and not used_ocr and page_text.strip():
                 blocks = filter_page_blocks(page, exclude_bboxes, hf=hf_filter)
                 if blocks:
-                    for section, segment_text, segment_bbox in _segment_page_by_anchors(
+                    for section, segment_text, segment_bbox, block_spans in _segment_page_by_anchors(
                         toc_anchors,
                         page_number,
                         blocks,
@@ -798,7 +890,13 @@ class IngestionService:
                     ):
                         if segment_text.strip():
                             pages.append(
-                                (section, segment_text.strip(), page_number, segment_bbox)
+                                (
+                                    section,
+                                    segment_text.strip(),
+                                    page_number,
+                                    segment_bbox,
+                                    block_spans,
+                                )
                             )
                 elif page_text.strip():
                     pages.append(
@@ -807,17 +905,19 @@ class IngestionService:
                             page_text.strip(),
                             page_number,
                             _page_content_bbox(page, exclude_bboxes, hf=hf_filter),
+                            None,
                         )
                     )
             elif page_text.strip():
-                pages.append(
-                    (
-                        fallback_section,
-                        page_text.strip(),
-                        page_number,
-                        _page_content_bbox(page, exclude_bboxes, hf=hf_filter),
-                    )
+                blocks = filter_page_blocks(page, exclude_bboxes, hf=hf_filter)
+                row = _page_row_from_blocks(
+                    fallback_section,
+                    page_number,
+                    blocks,
+                    _page_content_bbox(page, exclude_bboxes, hf=hf_filter),
                 )
+                if row is not None:
+                    pages.append(row)
             if on_page_progress is not None:
                 on_page_progress(page_number, page_count)
 

@@ -14,8 +14,3 @@ def chunk_visual_assets(chunk: dict) -> list[dict]:
         if asset_type in VISUAL_ASSET_TYPES:
             assets.append(asset)
     return assets
-
-
-def primary_visual_asset(chunk: dict) -> dict | None:
-    assets = chunk_visual_assets(chunk)
-    return assets[0] if assets else None

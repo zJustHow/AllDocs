@@ -143,6 +143,23 @@ async def voice_websocket(websocket: WebSocket) -> None:
                 ):
                     event_type = event["type"]
 
+                    if event_type == "clarify":
+                        content = event["content"]
+                        await _send_json(websocket, {"type": "answer_delta", "content": content})
+                        if with_audio:
+                            await _synthesize_sentence(websocket, speech, content, lang)
+                        await persist_turn(db, session.id, question, content, [])
+                        await _send_json(
+                            websocket,
+                            {
+                                "type": "done",
+                                "session_id": str(session.id),
+                                "citations": [],
+                                "language": lang,
+                            },
+                        )
+                        break
+
                     if event_type == "fallback":
                         content = event["content"]
                         await _send_json(websocket, {"type": "answer_delta", "content": content})

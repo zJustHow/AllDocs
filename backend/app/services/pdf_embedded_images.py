@@ -8,8 +8,6 @@ from dataclasses import dataclass
 import fitz
 
 from app.config import Settings
-from app.services.asset_dedupe import AssetBindTracker
-
 from app.services.pdf_attach_reading_order import pick_preceding_chunk
 
 _OVERLAP_SKIP_RATIO = 0.35
@@ -73,7 +71,6 @@ def extract_pdf_embedded_figures(
     settings: Settings,
     section_resolver: Callable[[int, float | None], str | None],
     should_skip_page: Callable[[int], bool] | None = None,
-    bind_tracker: AssetBindTracker | None = None,
 ) -> list[EmbeddedFigure]:
     if not settings.pdf_extract_embedded_images:
         return []
@@ -86,7 +83,6 @@ def extract_pdf_embedded_figures(
     figures: list[EmbeddedFigure] = []
     seen_placements: set[tuple[int, int, tuple[int, int, int, int]]] = set()
     png_cache: dict[int, tuple[bytes, int, int]] = {}
-    tracker = bind_tracker or AssetBindTracker()
 
     for page_index in range(doc.page_count):
         page_number = page_index + 1
@@ -140,9 +136,6 @@ def extract_pdf_embedded_figures(
                 display_width = max(1.0, bbox[2] - bbox[0])
                 display_height = max(1.0, bbox[3] - bbox[1])
                 if display_width < min_width or display_height < min_height:
-                    continue
-
-                if not tracker.claim(png_bytes):
                     continue
 
                 mid_y = (bbox[1] + bbox[3]) / 2
@@ -245,6 +238,8 @@ def attach_figures_to_chunks(
             chunks,
             page=figure.page,
             section=figure.section,
+            asset_bbox=figure.bbox,
+            asset_sort_key=figure.sort_key,
         )
         if target is None:
             orphans.append(figure)

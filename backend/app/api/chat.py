@@ -80,6 +80,20 @@ async def chat(
                 lang,
             ):
                 event_type = event["type"]
+                if event_type == "clarify":
+                    content = event["content"]
+                    yield _sse({"type": "delta", "content": content})
+                    yield _sse(
+                        {
+                            "type": "done",
+                            "session_id": str(session.id),
+                            "citations": [],
+                            "language": event["language"],
+                        }
+                    )
+                    await persist_turn(db, session.id, payload.message, content, [])
+                    return
+
                 if event_type == "fallback":
                     content = event["content"]
                     yield _sse({"type": "delta", "content": content})

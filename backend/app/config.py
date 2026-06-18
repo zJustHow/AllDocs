@@ -89,6 +89,8 @@ class Settings(BaseSettings):
     ingest_caption_max_per_doc: int = 20
     ingest_caption_min_text_chars: int = 50
 
+    rag_step_align_min_score: float = 0.42
+
 
 @lru_cache
 def get_settings() -> Settings:

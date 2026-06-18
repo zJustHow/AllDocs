@@ -6,20 +6,11 @@ from app.services.shared_contract import (
     strip_inline_markers,
 )
 
-TRAILING_SOURCES_SECTION = re.compile(
-    r"\n+(?:#{1,3}\s*)?(?:来源|引用|References|Sources)\s*[:：]?\s*\n[\s\S]*$",
-    re.IGNORECASE,
-)
 INLINE_CITATION_REF = inline_citation_ref_pattern()
 
 def strip_inline_citation_markers(content: str) -> str:
     """Remove inline [n] / 【n】 / {{embed:n}} markers (e.g. before TTS)."""
     return strip_inline_markers(content)
-
-
-def normalize_answer_citations(answer: str) -> str:
-    """Keep inline [n] markers and drop trailing source-list sections."""
-    return TRAILING_SOURCES_SECTION.sub("", answer).strip()
 
 
 def renumber_answer_citations(answer: str, context_chunks: list[dict]) -> tuple[str, list[dict], dict[int, int]]:
@@ -57,16 +48,11 @@ def finalize_answer(
     answer: str,
     context_chunks: list[dict],
 ) -> tuple[str, list[dict], list[dict]]:
-    from app.services.embeds_util import (
-        build_passive_embeds,
-        public_embeds,
-        strip_answer_embed_markers,
-    )
+    from app.services.answer_alignment import build_aligned_embeds
+    from app.services.embeds_util import public_embeds
 
-    answer = normalize_answer_citations(answer)
     answer, cited_chunks, _citation_renumber = renumber_answer_citations(answer, context_chunks)
-    answer = strip_answer_embed_markers(answer)
-    embeds = build_passive_embeds(cited_chunks)
+    embeds = build_aligned_embeds(answer, cited_chunks)
     return answer, public_citations(cited_chunks), public_embeds(embeds)
 
 

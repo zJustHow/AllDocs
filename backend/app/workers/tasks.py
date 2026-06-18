@@ -1,3 +1,4 @@
+import hashlib
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -16,7 +17,7 @@ from app.services.embedding import chunk_embedding_text
 from app.services.embedding_provider import get_embedding_service
 from app.services.fulltext_store import FulltextStore
 from app.services.ingest_caption import apply_ingest_captions
-from app.services.asset_dedupe import AssetDedupeRegistry
+from app.services.chunk_alignment import build_chunk_sub_index
 from app.services.chunk_index import chunk_fulltext_caption
 from app.services.ingestion import IngestionService, toc_entry_to_dict
 from app.services.infra_init import ensure_external_stores
@@ -37,6 +38,10 @@ _PROGRESS_PAGE_INTERVAL = 5
 _UPLOAD_WORKERS = 8
 
 
+def _asset_content_hash(png_bytes: bytes) -> str:
+    return hashlib.sha256(png_bytes).hexdigest()
+
+
 @dataclass(frozen=True)
 class _PendingAssetUpload:
     asset_id: uuid.UUID
@@ -51,7 +56,7 @@ class _PendingAssetUpload:
     text_summary: str = ""
     figure_caption: str | None = None
     figure_number: str | None = None
-    needs_upload: bool = True
+    content_hash: str = ""
 
 
 def _collect_pending_asset_uploads(
@@ -59,7 +64,6 @@ def _collect_pending_asset_uploads(
     parsed_chunks,
     chunk_rows: list[Chunk],
 ) -> list[_PendingAssetUpload]:
-    registry = AssetDedupeRegistry(doc_uuid)
     pending: list[_PendingAssetUpload] = []
 
     def append_asset(
@@ -75,7 +79,9 @@ def _collect_pending_asset_uploads(
         figure_caption: str | None = None,
         figure_number: str | None = None,
     ) -> None:
-        asset_id, object_key, needs_upload = registry.resolve(png_bytes)
+        asset_id = uuid.uuid4()
+        content_hash = _asset_content_hash(png_bytes)
+        object_key = f"{doc_uuid}/assets/{asset_id}.png"
         pending.append(
             _PendingAssetUpload(
                 asset_id=asset_id,
@@ -90,7 +96,7 @@ def _collect_pending_asset_uploads(
                 text_summary=text_summary,
                 figure_caption=figure_caption,
                 figure_number=figure_number,
-                needs_upload=needs_upload,
+                content_hash=content_hash,
             )
         )
 
@@ -112,16 +118,15 @@ def _collect_pending_asset_uploads(
 
 
 def _upload_assets_parallel(storage: StorageService, pending: list[_PendingAssetUpload]) -> None:
-    to_upload = [item for item in pending if item.needs_upload]
-    if not to_upload:
+    if not pending:
         return
-    workers = min(_UPLOAD_WORKERS, len(to_upload))
+    workers = min(_UPLOAD_WORKERS, len(pending))
 
     def _upload_one(item: _PendingAssetUpload) -> None:
         storage.upload(item.object_key, item.png_bytes, "image/png")
 
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        list(pool.map(_upload_one, to_upload))
+        list(pool.map(_upload_one, pending))
 
 
 def _set_progress(
@@ -246,6 +251,7 @@ def process_document(document_id: str) -> None:
                         caption=initial_caption,
                         figure_caption=initial_figure_caption,
                         figure_number=item.figure_number,
+                        content_hash=item.content_hash,
                     )
                 )
             db.flush()
@@ -287,6 +293,12 @@ def process_document(document_id: str) -> None:
                     for asset in assets_by_chunk.get(str(chunk_id), [])
                     if asset.figure_caption
                 ]
+
+            for chunk in chunk_rows:
+                chunk.sub_index = build_chunk_sub_index(
+                    chunk.text,
+                    assets_by_chunk.get(str(chunk.id), []),
+                )
 
             _set_progress(db, document, 65, "生成向量")
             if _abort_if_deleting(db, document):

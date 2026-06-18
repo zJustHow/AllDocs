@@ -1,15 +1,10 @@
-"""Build passive visual embeds from cited chunks."""
+"""Helpers for serializing answer embed payloads."""
 
 from __future__ import annotations
 
-import re
-
 from app.services.asset_urls import asset_url
-from app.services.shared_contract import embed_dedupe_key, embed_marker_loose_pattern
+from app.services.shared_contract import embed_dedupe_key
 from app.services.visual_asset_util import VISUAL_ASSET_TYPES, chunk_visual_assets
-
-_EXTRA_BLANK_LINES = re.compile(r"\n{3,}")
-_EMBED_MARKER_LOOSE = embed_marker_loose_pattern()
 
 
 def _embed_display_caption(chunk: dict, asset: dict) -> str | None:
@@ -29,9 +24,10 @@ def _embed_display_caption(chunk: dict, asset: dict) -> str | None:
     return None
 
 
-def _embed_for_asset(chunk: dict, asset: dict) -> dict | None:
+def _embed_for_asset(chunk: dict, asset: dict, *, ref: int) -> dict | None:
     document_id = chunk.get("document_id")
-    if not document_id:
+    asset_id = asset.get("asset_id")
+    if not document_id or not asset_id:
         return None
 
     asset_type = asset.get("type") or "figure"
@@ -42,18 +38,16 @@ def _embed_for_asset(chunk: dict, asset: dict) -> dict | None:
     if page is None:
         return None
 
-    asset_id = asset.get("asset_id")
-    if not asset_id:
-        return None
-
     embed_type = "figure" if asset_type == "figure" else "table"
     return {
+        "ref": ref,
         "document_id": str(document_id),
         "document_name": chunk.get("document_name"),
         "page": int(page),
         "type": embed_type,
         "url": asset.get("url") or asset_url(str(asset_id)),
         "asset_id": str(asset_id),
+        "content_hash": asset.get("content_hash"),
         "bbox": asset.get("bbox"),
         "caption": _embed_display_caption(chunk, asset),
         "figure_caption": asset.get("figure_caption"),
@@ -61,40 +55,35 @@ def _embed_for_asset(chunk: dict, asset: dict) -> dict | None:
     }
 
 
-def build_passive_embeds(cited_chunks: list[dict]) -> list[dict]:
-    """Attach every visual asset for each cited chunk (passive display)."""
+def build_citation_embeds(cited_chunks: list[dict]) -> list[dict]:
+    """Attach visual assets from cited chunks to their [n] reference."""
     embeds: list[dict] = []
     seen_keys: set[str] = set()
-
     for ref, chunk in enumerate(cited_chunks, start=1):
         for asset in chunk_visual_assets(chunk):
-            payload = _embed_for_asset(chunk, asset)
+            payload = _embed_for_asset(chunk, asset, ref=ref)
             if payload is None:
                 continue
             dedupe_key = embed_dedupe_key(payload)
             if dedupe_key in seen_keys:
                 continue
             seen_keys.add(dedupe_key)
-            embeds.append({"ref": ref, **payload})
-
+            embeds.append(payload)
     return embeds
-
-
-def strip_answer_embed_markers(answer: str) -> str:
-    text = _EMBED_MARKER_LOOSE.sub("", answer)
-    return _EXTRA_BLANK_LINES.sub("\n\n", text).strip()
 
 
 def public_embeds(embeds: list[dict]) -> list[dict]:
     return [
         {
             "ref": item["ref"],
+            "block_index": item.get("block_index"),
             "document_id": item["document_id"],
             "document_name": item.get("document_name"),
             "page": item["page"],
             "type": item.get("type", "page"),
             "url": item["url"],
             "asset_id": item.get("asset_id"),
+            "content_hash": item.get("content_hash"),
             "bbox": item.get("bbox"),
             "caption": item.get("caption"),
             "figure_caption": item.get("figure_caption"),

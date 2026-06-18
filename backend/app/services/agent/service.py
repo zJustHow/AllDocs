@@ -127,6 +127,39 @@ class AgentRAGService:
                 },
             )
 
+            if action == "ask_user":
+                state.done = True
+                clarification = str(action_input.get("question") or "").strip()
+                step = AgentStep(
+                    step=step_num,
+                    thought=thought,
+                    action=action,
+                    action_input=action_input,
+                    observation="等待用户补充信息。",
+                    reasoning_content=reasoning_content,
+                )
+                state.steps.append(step)
+                await self._emit_step(
+                    on_step,
+                    {
+                        "type": "agent_step",
+                        "step": step.step,
+                        "thought": step.thought,
+                        "reasoning": step.reasoning_content,
+                        "action": step.action,
+                        "action_input": step.action_input,
+                        "observation": step.observation,
+                    },
+                )
+                return AgentResult(
+                    answer="",
+                    citations=[],
+                    language=lang,
+                    steps=state.steps,
+                    evidence=state.evidence,
+                    clarification=clarification or None,
+                )
+
             if action == "finish":
                 state.done = True
                 step = AgentStep(

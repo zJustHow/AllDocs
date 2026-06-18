@@ -175,6 +175,31 @@ AGENT_TOOL_DEFINITIONS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "ask_user",
+            "description": (
+                "向用户提出一个澄清问题并结束检索。"
+                "仅在问题缺少关键信息（型号、报警码、功能模块等），"
+                "且已尝试换 query 检索仍无法消歧时使用；只问一点，不要猜测或编造。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "question": {
+                        "type": "string",
+                        "description": "向用户提出的具体问题（只问一点）",
+                    },
+                    "reason": {
+                        "type": "string",
+                        "description": "为何需要澄清（供 trace 使用，不直接展示给用户）",
+                    },
+                },
+                "required": ["question"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "finish",
             "description": "证据已足够，结束检索并进入回答阶段。",
             "parameters": {

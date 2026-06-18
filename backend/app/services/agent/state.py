@@ -23,6 +23,7 @@ class AgentResult:
     evidence: list[dict]
     embeds: list[dict] = field(default_factory=list)
     fallback_message: str | None = None
+    clarification: str | None = None
 
 
 @dataclass

@@ -9,7 +9,6 @@ from dataclasses import dataclass
 import fitz
 
 from app.config import Settings
-from app.services.asset_dedupe import AssetBindTracker
 from app.services.pdf_attach_reading_order import pick_preceding_chunk
 from app.services.pdf_embedded_images import ParsedAttachedAsset
 from app.services.pdf_header_footer import HeaderFooterFilter
@@ -148,14 +147,12 @@ def extract_pdf_tables(
     settings: Settings,
     section_resolver: Callable[[int, float | None], str | None],
     should_skip_page: Callable[[int], bool] | None = None,
-    bind_tracker: AssetBindTracker | None = None,
 ) -> list[EmbeddedTable]:
     if not settings.pdf_extract_tables:
         return []
 
     tables: list[EmbeddedTable] = []
     scale = settings.pdf_table_render_scale
-    tracker = bind_tracker or AssetBindTracker()
 
     for page_index in range(doc.page_count):
         page_number = page_index + 1
@@ -191,9 +188,6 @@ def extract_pdf_tables(
                     page_number,
                     exc_info=True,
                 )
-                continue
-
-            if not tracker.claim(png_bytes):
                 continue
 
             mid_y = (bbox[1] + bbox[3]) / 2
@@ -241,6 +235,8 @@ def attach_tables_to_chunks(
             chunks,
             page=table.page,
             section=table.section,
+            asset_bbox=table.bbox,
+            asset_sort_key=table.sort_key,
         )
         if target is None:
             orphans.append(table)

@@ -23,7 +23,9 @@ export interface Citation {
 
 export interface MessageEmbed {
   ref: number;
+  block_index?: number | null;
   asset_id?: string | null;
+  content_hash?: string | null;
   document_id: string;
   document_name?: string | null;
   page: number;

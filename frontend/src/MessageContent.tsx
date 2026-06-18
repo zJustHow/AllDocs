@@ -2,9 +2,9 @@ import { memo, useState } from "react";
 import ImageLightbox from "./ImageLightbox";
 import {
   embedDedupeKey,
-  reassignEmbedsAcrossSections,
+  isOrphanInlineSuffix,
+  isTrailingPunctuationOnly,
   segmentsToRenderableContent,
-  splitContentIntoSections,
   splitMessageWithCitations,
   type MessageSegment,
 } from "./citations";
@@ -145,6 +145,37 @@ function SectionView({
   }
   flushProse();
 
+  while (blocks.length >= 2) {
+    const trailing = blocks[blocks.length - 1];
+    const beforeTrailing = blocks[blocks.length - 2];
+    if (
+      trailing.kind !== "prose" ||
+      beforeTrailing.kind !== "embeds" ||
+      blocks.length < 3
+    ) {
+      break;
+    }
+
+    const trailingText = segmentsToRenderableContent(trailing.segments);
+    if (
+      !isTrailingPunctuationOnly(trailingText) &&
+      !isOrphanInlineSuffix(trailing.segments)
+    ) {
+      break;
+    }
+
+    const anchor = blocks[blocks.length - 3];
+    if (anchor.kind !== "prose") {
+      break;
+    }
+
+    blocks[blocks.length - 3] = {
+      kind: "prose",
+      segments: [...anchor.segments, ...trailing.segments],
+    };
+    blocks.pop();
+  }
+
   if (!blocks.length) {
     return null;
   }
@@ -173,13 +204,16 @@ function SectionView({
 
         const isTable = block.embeds.some((embed) => embed.type === "table");
         const compact = block.embeds.length === 1 && !isTable;
+        const isGallery = block.embeds.length > 1 && !isTable;
 
         return (
           <div
             key={`embeds-${index}`}
             className={`answer-media-figures${
               isTable ? " answer-media-block--table" : ""
-            }${compact ? " answer-media-block--compact" : ""}`}
+            }${compact ? " answer-media-block--compact" : ""}${
+              isGallery ? " answer-media-figures--row" : ""
+            }`}
           >
             {block.embeds.map((embed) => (
               <AnswerEmbedFigure
@@ -203,43 +237,26 @@ function MessageContent({
 }: MessageContentProps) {
   if (!content.trim()) return null;
 
-  const sections = splitContentIntoSections(content);
-  const segmentsBySection = sections.map((sectionText) =>
-    splitMessageWithCitations(sectionText, citations, {
-      hideUnmatched: true,
-      embeds,
-    }),
-  );
-  const reassignedSegments = reassignEmbedsAcrossSections(
-    sections,
-    segmentsBySection,
-  );
   const seenEmbedKeys = new Set<string>();
+  const segments = splitMessageWithCitations(content, citations, {
+    hideUnmatched: true,
+    embeds,
+  }).filter((segment) => {
+    if (segment.type !== "embed") return true;
+    const embedKey = embedDedupeKey(segment.embed);
+    if (seenEmbedKeys.has(embedKey)) return false;
+    seenEmbedKeys.add(embedKey);
+    return true;
+  });
 
   return (
-    <>
-      {reassignedSegments.map((segments, sectionIndex) => {
-        const filteredSegments = segments.filter((segment) => {
-          if (segment.type !== "embed") return true;
-          const embedKey = embedDedupeKey(segment.embed);
-          if (seenEmbedKeys.has(embedKey)) return false;
-          seenEmbedKeys.add(embedKey);
-          return true;
-        });
-
-        return (
-          <div key={sectionIndex} className="message-section">
-            <div className="message-section-body">
-              <SectionView
-                segments={filteredSegments}
-                citations={citations}
-                onOpenDocument={onOpenDocument}
-              />
-            </div>
-          </div>
-        );
-      })}
-    </>
+    <div className="message-section-body">
+      <SectionView
+        segments={segments}
+        citations={citations}
+        onOpenDocument={onOpenDocument}
+      />
+    </div>
   );
 }
 

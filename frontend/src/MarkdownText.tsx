@@ -8,7 +8,6 @@ import {
   formatCitationLabel,
   formatCitationSnippetExcerpt,
   injectCitationPlaceholders,
-  mergeOrphanCitationParagraphs,
   replaceCitationPlaceholdersWithButtons,
 } from "./citations";
 import type { ViewerTarget } from "./citations";
@@ -87,7 +86,6 @@ function MarkdownText({
           return citationTooltip(citation, pageHint);
         },
       });
-      rendered = mergeOrphanCitationParagraphs(rendered);
     }
 
     return rendered;

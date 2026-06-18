@@ -5,13 +5,11 @@ declare module "@shared/markers.json" {
     regex: {
       inlineCitationRef: string;
       inlineCitationMarker: string;
-      embedMarker: string;
       embedMarkerLoose: string;
       messageToken: string;
     };
     embed: {
       markerTemplate: string;
-      bboxRoundDecimals: number;
     };
   };
   export default value;

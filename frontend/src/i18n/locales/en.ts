@@ -75,6 +75,7 @@ const en = {
       search_chunks_batch: "Parallel search",
       read_chunks: "Read chunks",
       read_neighbor_chunks: "Neighbor chunks",
+      ask_user: "Ask user",
       finish: "Finish",
     },
   },

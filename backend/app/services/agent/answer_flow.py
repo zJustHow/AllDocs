@@ -46,6 +46,14 @@ async def _stream_synthesis(
     settings: Settings,
     lang: str,
 ) -> AsyncIterator[dict]:
+    if result.clarification:
+        yield {
+            "type": "clarify",
+            "content": result.clarification,
+            "language": lang,
+        }
+        return
+
     if result.fallback_message:
         yield {
             "type": "fallback",
