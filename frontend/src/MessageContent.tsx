@@ -8,7 +8,7 @@ import {
   splitMessageWithCitations,
   type MessageSegment,
 } from "./citations";
-import type { ViewerTarget } from "./citations";
+import { type ViewerTarget, embedToViewerTarget } from "./citations";
 import { useI18n } from "./i18n";
 import MarkdownText from "./MarkdownText";
 import type { Citation, MessageEmbed } from "./types";
@@ -90,15 +90,7 @@ function AnswerEmbedFigure({ embed, onOpenDocument }: AnswerEmbedFigureProps) {
         <button
           type="button"
           className="answer-embed-link"
-          onClick={() =>
-            onOpenDocument({
-              documentId: embed.document_id,
-              documentName: embed.document_name ?? "",
-              page: embed.page,
-              section: embed.caption ?? null,
-              bbox: embed.bbox ?? null,
-            })
-          }
+          onClick={() => onOpenDocument(embedToViewerTarget(embed))}
         >
           {linkLabel}
         </button>

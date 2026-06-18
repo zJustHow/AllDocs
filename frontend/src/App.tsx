@@ -18,6 +18,7 @@ import {
 import { createAssistantStreamController } from "./chatStream";
 import Composer from "./Composer";
 import { type ViewerTarget } from "./citations";
+import { highlightRegionsKey } from "./viewerPosition";
 import { loadSupportedFormats } from "./fileTypes";
 import { useI18n, type Locale } from "./i18n";
 import {
@@ -684,7 +685,7 @@ export default function App() {
         <div className={`doc-viewer-slot ${viewerOpen ? "is-open" : ""}`}>
           <Suspense fallback={null}>
             <DocumentViewer
-              key={`${viewerTarget.documentId}:${viewerTarget.page ?? 0}:${viewerTarget.bbox?.join(",") ?? ""}`}
+              key={`${viewerTarget.documentId}:${viewerTarget.page ?? 0}:${highlightRegionsKey(viewerTarget.regions)}`}
               target={viewerTarget}
               onClose={closeViewer}
             />

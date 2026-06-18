@@ -5,6 +5,7 @@ import {
   messageTokenPattern,
   stripInlineMarkers,
 } from "./shared/contract";
+import type { BboxRegion } from "./viewerPosition";
 
 export { embedDedupeKey } from "./shared/contract";
 
@@ -16,7 +17,7 @@ export interface ViewerTarget {
   section: string | null;
   snippet?: string;
   pageCount?: number | null;
-  bbox?: number[] | null;
+  regions: BboxRegion[];
 }
 
 export function stripInlineCitationMarkers(content: string): string {
@@ -30,13 +31,13 @@ export function formatCitationLabel(index: number): string {
 const SNIPPET_LEADING_PUNCT = /^[,.;:!?。，；：！？…、（【「『《"''']/;
 const SNIPPET_TRAILING_PUNCT = /[,.;:!?。，；：！？…、）】」』》"''']$/;
 const TRAILING_PUNCT_ONLY = /^[\s,.;:!?。，；：！？…、）】」』《"''']+$/;
-/** Flush citation-linked embeds once the preceding sentence ends. */
-const INLINE_RUN_BOUNDARY = /(?<=[。！？!?；;])\s*/;
+/** Flush embeds once the preceding sentence ends (Chinese + English punctuation). */
+const INLINE_RUN_BOUNDARY = /(?<=[。！？.!?；;:])\s*/;
 
 function appendTextSegment(
   segments: MessageSegment[],
   text: string,
-  flushPendingEmbeds: () => void,
+  flushEmbedsForCurrentSentence: () => void,
 ): void {
   if (!text) return;
 
@@ -52,7 +53,7 @@ function appendTextSegment(
       segments.push({ type: "text", value: rest.slice(0, match.index) });
     }
 
-    flushPendingEmbeds();
+    flushEmbedsForCurrentSentence();
     rest = rest.slice(match.index + match[0].length);
   }
 }
@@ -128,7 +129,23 @@ export function citationToViewerTarget(citation: Citation): ViewerTarget {
     page: citation.page,
     section: citation.section,
     snippet: citation.snippet,
-    bbox: citation.bbox ?? null,
+    regions: citation.regions.map((region) => ({
+      page: region.page,
+      bbox: region.bbox as BboxRegion["bbox"],
+    })),
+  };
+}
+
+export function embedToViewerTarget(embed: MessageEmbed): ViewerTarget {
+  return {
+    documentId: embed.document_id,
+    documentName: embed.document_name ?? "",
+    page: embed.page,
+    section: embed.caption ?? null,
+    regions: embed.regions.map((region) => ({
+      page: region.page,
+      bbox: region.bbox as BboxRegion["bbox"],
+    })),
   };
 }
 
@@ -184,8 +201,25 @@ export type MessageSegment =
   | { type: "citation"; value: string; citation: Citation }
   | { type: "embed"; value: string; embed: MessageEmbed };
 
-function findEmbedsForRef(ref: number, embeds: MessageEmbed[]): MessageEmbed[] {
-  return embeds.filter((item) => item.ref === ref);
+function findEmbedsForSentence(
+  sentenceIndex: number,
+  embeds: MessageEmbed[],
+): MessageEmbed[] {
+  return embeds.filter((item) => item.sentence_index === sentenceIndex);
+}
+
+function appendEmbedsForSentence(
+  segments: MessageSegment[],
+  sentenceIndex: number,
+  embeds: MessageEmbed[],
+  shownEmbedKeys: Set<string>,
+): void {
+  for (const embed of findEmbedsForSentence(sentenceIndex, embeds)) {
+    const key = embedDedupeKey(embed);
+    if (shownEmbedKeys.has(key)) continue;
+    shownEmbedKeys.add(key);
+    segments.push({ type: "embed", value: "", embed });
+  }
 }
 
 function appendEmbedsForRef(
@@ -194,7 +228,7 @@ function appendEmbedsForRef(
   embeds: MessageEmbed[],
   shownEmbedKeys: Set<string>,
 ): void {
-  for (const embed of findEmbedsForRef(ref, embeds)) {
+  for (const embed of embeds.filter((item) => item.ref === ref)) {
     const key = embedDedupeKey(embed);
     if (shownEmbedKeys.has(key)) continue;
     shownEmbedKeys.add(key);
@@ -222,26 +256,19 @@ export function splitMessageWithCitations(
   }
 
   const segments: MessageSegment[] = [];
-  const pendingEmbedRefs: number[] = [];
-  const pendingEmbedRefSet = new Set<number>();
+  let currentSentenceIndex = 0;
   let lastIndex = 0;
   let match: RegExpExecArray | null;
 
-  const flushPendingEmbeds = () => {
+  const flushEmbedsForCurrentSentence = () => {
     if (!attachEmbedsToCitations) return;
-    for (const ref of pendingEmbedRefs) {
-      appendEmbedsForRef(segments, ref, embeds, shownEmbedKeys);
-    }
-    pendingEmbedRefs.length = 0;
-    pendingEmbedRefSet.clear();
-  };
-
-  const queueEmbedsForRef = (ref: number) => {
-    if (!attachEmbedsToCitations) return;
-    if (!findEmbedsForRef(ref, embeds).length) return;
-    if (pendingEmbedRefSet.has(ref)) return;
-    pendingEmbedRefSet.add(ref);
-    pendingEmbedRefs.push(ref);
+    appendEmbedsForSentence(
+      segments,
+      currentSentenceIndex,
+      embeds,
+      shownEmbedKeys,
+    );
+    currentSentenceIndex += 1;
   };
 
   while ((match = pattern.exec(content)) !== null) {
@@ -249,15 +276,20 @@ export function splitMessageWithCitations(
       appendTextSegment(
         segments,
         content.slice(lastIndex, match.index),
-        flushPendingEmbeds,
+        flushEmbedsForCurrentSentence,
       );
     }
 
     const embedRef = match[1];
     if (embedRef) {
-      flushPendingEmbeds();
+      flushEmbedsForCurrentSentence();
       if (attachEmbedsToCitations) {
-        appendEmbedsForRef(segments, Number(embedRef), embeds, shownEmbedKeys);
+        appendEmbedsForRef(
+          segments,
+          Number(embedRef),
+          embeds,
+          shownEmbedKeys,
+        );
       }
       lastIndex = match.index + match[0].length;
       continue;
@@ -269,7 +301,6 @@ export function splitMessageWithCitations(
       const citation = citations[index];
       if (citation) {
         segments.push({ type: "citation", value: match[0], citation });
-        queueEmbedsForRef(Number(numericRef));
       } else if (!hideUnmatched) {
         segments.push({ type: "text", value: match[0] });
       }
@@ -286,9 +317,13 @@ export function splitMessageWithCitations(
   }
 
   if (lastIndex < content.length) {
-    appendTextSegment(segments, content.slice(lastIndex), flushPendingEmbeds);
+    appendTextSegment(
+      segments,
+      content.slice(lastIndex),
+      flushEmbedsForCurrentSentence,
+    );
   }
-  flushPendingEmbeds();
+  flushEmbedsForCurrentSentence();
 
   return segments.length
     ? absorbTrailingPunctuationBeforeEmbeds(segments)

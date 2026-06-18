@@ -9,6 +9,7 @@ import fitz
 
 from app.config import Settings
 from app.services.pdf_attach_reading_order import pick_preceding_chunk
+from app.services.pdf_geometry import rect_area, rect_intersection_area
 
 _OVERLAP_SKIP_RATIO = 0.35
 
@@ -42,11 +43,6 @@ class ParsedAttachedAsset:
 
 def _bbox_key(bbox: tuple[float, float, float, float]) -> tuple[int, int, int, int]:
     return tuple(int(round(value)) for value in bbox)
-
-
-def _rect_area(bbox: tuple[float, float, float, float]) -> float:
-    x0, y0, x1, y1 = bbox
-    return max(0.0, x1 - x0) * max(0.0, y1 - y0)
 
 
 def _xref_to_png(doc: fitz.Document, xref: int) -> tuple[bytes, int, int] | None:
@@ -130,7 +126,7 @@ def extract_pdf_embedded_figures(
                     continue
                 seen_placements.add(key)
 
-                if _rect_area(bbox) / page_area > max_coverage:
+                if rect_area(bbox) / page_area > max_coverage:
                     continue
 
                 display_width = max(1.0, bbox[2] - bbox[0])
@@ -178,27 +174,14 @@ def figure_bboxes_on_page(
     return [figure.bbox for figure in figures if figure.page == page_number]
 
 
-def _rect_intersection_area(
-    a: tuple[float, float, float, float],
-    b: tuple[float, float, float, float],
-) -> float:
-    x0 = max(a[0], b[0])
-    y0 = max(a[1], b[1])
-    x1 = min(a[2], b[2])
-    y1 = min(a[3], b[3])
-    if x1 <= x0 or y1 <= y0:
-        return 0.0
-    return (x1 - x0) * (y1 - y0)
-
-
 def _figure_overlaps_table_asset(figure: EmbeddedFigure, chunk) -> bool:
     for attached in getattr(chunk, "attached_assets", []) or []:
         if attached.asset_type != "table":
             continue
-        overlap = _rect_intersection_area(figure.bbox, attached.bbox)
+        overlap = rect_intersection_area(figure.bbox, attached.bbox)
         if overlap <= 0:
             continue
-        if overlap / max(_rect_area(figure.bbox), 1.0) >= _OVERLAP_SKIP_RATIO:
+        if overlap / max(rect_area(figure.bbox), 1.0) >= _OVERLAP_SKIP_RATIO:
             return True
     return False
 
@@ -208,10 +191,10 @@ def figure_overlaps_bboxes(
     bboxes: list[tuple[float, float, float, float]],
 ) -> bool:
     for bbox in bboxes:
-        overlap = _rect_intersection_area(figure.bbox, bbox)
+        overlap = rect_intersection_area(figure.bbox, bbox)
         if overlap <= 0:
             continue
-        if overlap / max(_rect_area(figure.bbox), 1.0) >= _OVERLAP_SKIP_RATIO:
+        if overlap / max(rect_area(figure.bbox), 1.0) >= _OVERLAP_SKIP_RATIO:
             return True
     return False
 

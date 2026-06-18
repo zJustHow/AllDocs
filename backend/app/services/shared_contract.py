@@ -43,15 +43,6 @@ def embed_marker_loose_pattern() -> re.Pattern[str]:
     return re.compile(load_markers()["regex"]["embedMarkerLoose"])
 
 
-@lru_cache
-def message_token_pattern() -> re.Pattern[str]:
-    return re.compile(load_markers()["regex"]["messageToken"])
-
-
-def citation_ref_pattern(ref: int) -> re.Pattern[str]:
-    return re.compile(rf"\[\s*{ref}\s*\]|【\s*{ref}\s*】")
-
-
 def embed_dedupe_key(payload: dict[str, Any]) -> str:
     content_hash = payload.get("content_hash")
     if content_hash:

@@ -11,6 +11,7 @@ import fitz
 from app.config import Settings
 from app.services.pdf_attach_reading_order import pick_preceding_chunk
 from app.services.pdf_embedded_images import ParsedAttachedAsset
+from app.services.pdf_geometry import rect_area, rect_intersection_area
 from app.services.pdf_header_footer import HeaderFooterFilter
 
 
@@ -34,31 +35,13 @@ class EmbeddedTable:
     caption_text: str | None = None
 
 
-def _rect_area(bbox: tuple[float, float, float, float]) -> float:
-    x0, y0, x1, y1 = bbox
-    return max(0.0, x1 - x0) * max(0.0, y1 - y0)
-
-
-def _rect_intersection_area(
-    a: tuple[float, float, float, float],
-    b: tuple[float, float, float, float],
-) -> float:
-    x0 = max(a[0], b[0])
-    y0 = max(a[1], b[1])
-    x1 = min(a[2], b[2])
-    y1 = min(a[3], b[3])
-    if x1 <= x0 or y1 <= y0:
-        return 0.0
-    return (x1 - x0) * (y1 - y0)
-
-
 def _overlaps_table_region(
     bbox: tuple[float, float, float, float],
     table_bboxes: list[tuple[float, float, float, float]],
 ) -> bool:
-    area = max(_rect_area(bbox), 1.0)
+    area = max(rect_area(bbox), 1.0)
     for table_bbox in table_bboxes:
-        overlap = _rect_intersection_area(bbox, table_bbox)
+        overlap = rect_intersection_area(bbox, table_bbox)
         if overlap / area >= _BLOCK_OVERLAP_RATIO:
             return True
     return False
@@ -177,7 +160,7 @@ def extract_pdf_tables(
                 continue
 
             bbox = tuple(float(value) for value in table.bbox)
-            if _rect_area(bbox) <= 0:
+            if rect_area(bbox) <= 0:
                 continue
 
             try:

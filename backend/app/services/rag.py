@@ -218,6 +218,7 @@ class RAGService:
                     "text": body_text,
                     "index_text": index_text,
                     "layout_bbox": chunk.layout_bbox,
+                    "layout_regions": chunk.layout_regions,
                     "sub_index": chunk.sub_index,
                     "assets": [
                         {

@@ -15,7 +15,6 @@ from app.services.agent.tools import (
     merge_chunks_into_evidence,
 )
 from app.services.chunk_filter import ChunkFilter
-from app.services.citations_util import finalize_answer
 from app.services.llm import LLMService
 
 from app.services.rag import RAGService, detect_language, resolve_retrieval_fallback
@@ -61,10 +60,8 @@ class AgentRAGService:
         question: str,
         doc_ids: list[UUID] | None = None,
         filters: ChunkFilter | None = None,
-        chat_history: list[dict[str, str]] | None = None,
         *,
         on_step: OnAgentStep | None = None,
-        skip_synthesis: bool = False,
     ) -> AgentResult:
         lang = detect_language(question)
         state = AgentState()
@@ -305,27 +302,6 @@ class AgentRAGService:
                 fallback_message=fallback,
             )
 
-        if skip_synthesis:
-            return AgentResult(
-                answer="",
-                citations=[],
-                language=lang,
-                steps=state.steps,
-                evidence=state.evidence,
-            )
-
-        context = self.rag.build_context(state.evidence)
-        answer = await self.llm.chat(
-            question,
-            context,
-            chat_history,
-            lang=lang,
-        )
-        answer, public_citations, embeds = finalize_answer(
-            answer,
-            state.evidence,
-        )
-
         trace = [
             {
                 "step": step.step,
@@ -338,9 +314,8 @@ class AgentRAGService:
         logger.info("Agent completed: steps=%d evidence=%d trace=%s", len(state.steps), len(state.evidence), json.dumps(trace, ensure_ascii=False))
 
         return AgentResult(
-            answer=answer,
-            citations=public_citations,
-            embeds=embeds,
+            answer="",
+            citations=[],
             language=lang,
             steps=state.steps,
             evidence=state.evidence,

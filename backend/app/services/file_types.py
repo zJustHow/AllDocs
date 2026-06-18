@@ -55,21 +55,6 @@ def supported_formats_label() -> str:
     return ", ".join(ext.lstrip(".") for ext in SUPPORTED_EXTENSIONS)
 
 
-def preview_mode(filename: str, content_type: str | None = None) -> str:
-    ext = get_extension(filename)
-    detected = detect_file_type(filename)
-
-    if content_type and content_type.startswith("image/"):
-        return "image"
-    if ext == ".pdf" or content_type == "application/pdf":
-        return "pdf"
-    if content_type in {"text/plain", "text/markdown"}:
-        return "text"
-    if detected:
-        return detected.preview_mode
-    return "unsupported"
-
-
 def upload_accept() -> str:
     content_types = sorted({item.content_type for item in SUPPORTED_FILE_TYPES.values()})
     return ",".join([*SUPPORTED_EXTENSIONS, *content_types])

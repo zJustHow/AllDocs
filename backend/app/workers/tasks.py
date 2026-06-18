@@ -223,6 +223,7 @@ def process_document(document_id: str) -> None:
                     section=parsed.section,
                     chunk_index=parsed.chunk_index,
                     layout_bbox=list(parsed.layout_bbox) if parsed.layout_bbox else None,
+                    layout_regions=parsed.layout_regions,
                 )
                 db.add(chunk)
                 chunk_rows.append(chunk)

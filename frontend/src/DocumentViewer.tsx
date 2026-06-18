@@ -21,10 +21,12 @@ import {
 import { warmPageImage } from "./pageImageCache";
 import {
   bboxToOverlayStyle,
+  highlightRegionsKey,
   isValidBbox,
+  resolveHighlightRegions,
   scrollToPageElement,
   scrollToPageRegion,
-  type Bbox,
+  type BboxRegion,
 } from "./viewerPosition";
 
 interface DocumentViewerProps {
@@ -55,6 +57,16 @@ function pagesNear(center: number, pageCount: number): number[] {
   return pages;
 }
 
+function pagesForRegions(regions: BboxRegion[], pageCount: number): number[] {
+  const pages = new Set<number>();
+  for (const region of regions) {
+    for (const page of pagesNear(region.page, pageCount)) {
+      pages.add(page);
+    }
+  }
+  return [...pages];
+}
+
 export default function DocumentViewer({ target, onClose }: DocumentViewerProps) {
   const { t } = useI18n();
   const previewMode = getPreviewMode(target.documentName, target.contentType);
@@ -68,16 +80,20 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
   const [pageAspect, setPageAspect] = useState(DEFAULT_PAGE_ASPECT);
   const [loadedPages, setLoadedPages] = useState<Set<number>>(() => new Set());
   const [scrollWidth, setScrollWidth] = useState(0);
-  const [highlightStyle, setHighlightStyle] = useState<CSSProperties | null>(null);
+  const [highlightStylesByPage, setHighlightStylesByPage] = useState<
+    Map<number, CSSProperties[]>
+  >(() => new Map());
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const pageRefs = useRef(new Map<number, HTMLDivElement>());
   const scrollSyncLockRef = useRef(false);
   const currentPageRef = useRef(currentPage);
   const bboxNavStartedAtRef = useRef(0);
-  const targetBboxKey = useMemo(
-    () => (isValidBbox(target.bbox) ? target.bbox.join(",") : ""),
-    [target.bbox],
+  const highlightRegions = useMemo(() => resolveHighlightRegions(target), [target]);
+  const primaryRegion = highlightRegions[0] ?? null;
+  const targetRegionsKey = useMemo(
+    () => highlightRegionsKey(highlightRegions),
+    [highlightRegions],
   );
 
   const pageCount = target.pageCount ?? null;
@@ -160,7 +176,10 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
       const scrollEl = scrollRef.current;
       if (!scrollEl || pageCount === null) return;
 
-      const page = Math.min(Math.max(1, target.page ?? 1), pageCount);
+      const page = Math.min(
+        Math.max(1, primaryRegion?.page ?? target.page ?? 1),
+        pageCount,
+      );
       ensurePagesLoaded(page);
 
       const attempt = (retries = 0) => {
@@ -172,10 +191,11 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
           return;
         }
 
+        const scrollBbox = primaryRegion?.bbox ?? null;
         const regionScrolled = scrollToPageRegion(
           scrollEl,
           pageEl,
-          isValidBbox(target.bbox) ? target.bbox : null,
+          isValidBbox(scrollBbox) ? scrollBbox : null,
           renderScale,
           behavior,
         );
@@ -192,7 +212,7 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
 
         if (
           !regionScrolled &&
-          isValidBbox(target.bbox) &&
+          isValidBbox(scrollBbox) &&
           retries < SCROLL_TO_TARGET_MAX_RETRIES
         ) {
           requestAnimationFrame(() => attempt(retries + 1));
@@ -201,7 +221,7 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
 
       attempt();
     },
-    [ensurePagesLoaded, pageCount, renderScale, target.bbox, target.page],
+    [ensurePagesLoaded, pageCount, primaryRegion, renderScale, target.page],
   );
 
   const scrollToPage = useCallback(
@@ -211,7 +231,7 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
 
       const next = Math.min(Math.max(1, page), pageCount);
       ensurePagesLoaded(next);
-      setHighlightStyle(null);
+      setHighlightStylesByPage(new Map());
 
       const scroll = () => {
         const pageEl = pageRefs.current.get(next);
@@ -235,29 +255,38 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
     [ensurePagesLoaded, pageCount],
   );
 
-  const updateHighlight = useCallback(() => {
-    if (!isValidBbox(target.bbox) || target.page === null) {
-      setHighlightStyle(null);
+  const updateHighlights = useCallback(() => {
+    if (!highlightRegions.length) {
+      setHighlightStylesByPage(new Map());
       return;
     }
 
-    const pageEl = pageRefs.current.get(target.page);
-    const img = pageEl?.querySelector("img");
-    if (!img || !img.complete || img.naturalWidth <= 0 || img.offsetHeight <= 0) {
-      setHighlightStyle(null);
-      return;
+    const styles = new Map<number, CSSProperties[]>();
+    for (const region of highlightRegions) {
+      const pageEl = pageRefs.current.get(region.page);
+      const img = pageEl?.querySelector("img");
+      if (!img || !img.complete || img.naturalWidth <= 0 || img.offsetHeight <= 0) {
+        continue;
+      }
+      const style = bboxToOverlayStyle(region.bbox, img, renderScale);
+      const existing = styles.get(region.page) ?? [];
+      existing.push(style);
+      styles.set(region.page, existing);
     }
-
-    setHighlightStyle(bboxToOverlayStyle(target.bbox as Bbox, img, renderScale));
-  }, [renderScale, target.bbox, target.page]);
+    setHighlightStylesByPage(styles);
+  }, [highlightRegions, renderScale]);
 
   useEffect(() => {
     if (previewMode !== "pdf" || pageCount === null) return;
     const page = Math.min(Math.max(1, target.page ?? 1), pageCount);
     setCurrentPage(page);
     setPageInput(String(page));
-    setLoadedPages(new Set(pagesNear(page, pageCount)));
-  }, [previewMode, pageCount, target.documentId, target.page]);
+    const pagesToLoad = new Set(pagesNear(page, pageCount));
+    for (const regionPage of pagesForRegions(highlightRegions, pageCount)) {
+      pagesToLoad.add(regionPage);
+    }
+    setLoadedPages(pagesToLoad);
+  }, [highlightRegions, previewMode, pageCount, target.documentId, target.page]);
 
   useLayoutEffect(() => {
     if (previewMode !== "pdf" || pageCount === null) return;
@@ -268,25 +297,25 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
     scrollToTarget,
     target.documentId,
     target.page,
-    targetBboxKey,
+    targetRegionsKey,
   ]);
 
   useLayoutEffect(() => {
     if (previewMode !== "pdf") return;
-    updateHighlight();
-  }, [previewMode, updateHighlight, targetBboxKey, target.page, zoom, renderScale]);
+    updateHighlights();
+  }, [previewMode, updateHighlights, targetRegionsKey, zoom, renderScale]);
 
   useEffect(() => {
     bboxNavStartedAtRef.current = performance.now();
-  }, [target.documentId, target.page, targetBboxKey]);
+  }, [target.documentId, target.page, targetRegionsKey]);
 
   useEffect(() => {
-    if (previewMode !== "pdf" || !isValidBbox(target.bbox) || target.page === null) {
+    if (previewMode !== "pdf" || !highlightRegions.length) {
       return;
     }
 
-    const page = target.page;
-    let observer: ResizeObserver | null = null;
+    const observedPages = new Set(highlightRegions.map((region) => region.page));
+    const observers: ResizeObserver[] = [];
     let settleTimer: ReturnType<typeof setTimeout> | null = null;
     let cancelled = false;
 
@@ -301,19 +330,24 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
     };
 
     const attach = (): boolean => {
-      const pageEl = pageRefs.current.get(page);
-      const img = pageEl?.querySelector("img");
-      if (!img || cancelled) return false;
+      let attached = false;
+      for (const page of observedPages) {
+        const pageEl = pageRefs.current.get(page);
+        const img = pageEl?.querySelector("img");
+        if (!img || cancelled) continue;
 
-      const onResize = () => {
-        updateHighlight();
-        scheduleScroll();
-      };
+        const onResize = () => {
+          updateHighlights();
+          scheduleScroll();
+        };
 
-      observer = new ResizeObserver(onResize);
-      observer.observe(img);
-      onResize();
-      return true;
+        const observer = new ResizeObserver(onResize);
+        observer.observe(img);
+        observers.push(observer);
+        onResize();
+        attached = true;
+      }
+      return attached;
     };
 
     if (!attach()) {
@@ -329,13 +363,15 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
     return () => {
       cancelled = true;
       if (settleTimer) clearTimeout(settleTimer);
-      observer?.disconnect();
+      for (const observer of observers) {
+        observer.disconnect();
+      }
     };
   }, [
+    highlightRegions,
     previewMode,
-    target.page,
-    targetBboxKey,
-    updateHighlight,
+    targetRegionsKey,
+    updateHighlights,
     scrollToTarget,
     loadedPages,
   ]);
@@ -376,20 +412,20 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
     if (previewMode !== "pdf" || pageCount === null || scrollWidth <= 0) return;
     const timer = window.setTimeout(() => {
       scrollToTarget("auto");
-      if (isValidBbox(target.bbox)) {
-        updateHighlight();
+      if (highlightRegions.length) {
+        updateHighlights();
       }
     }, 60);
     return () => window.clearTimeout(timer);
   }, [
+    highlightRegions,
     pageCount,
     previewMode,
     renderScale,
     scrollToTarget,
     scrollWidth,
-    target.bbox,
     target.page,
-    updateHighlight,
+    updateHighlights,
     zoom,
   ]);
 
@@ -513,11 +549,7 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
                       renderScale,
                     );
                     const isLoaded = loadedPages.has(page);
-                    const showHighlight =
-                      isLoaded &&
-                      target.page === page &&
-                      isValidBbox(target.bbox) &&
-                      highlightStyle;
+                    const pageHighlights = highlightStylesByPage.get(page) ?? [];
 
                     return (
                       <div
@@ -546,20 +578,27 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
                                   event.currentTarget.naturalWidth,
                                   event.currentTarget.naturalHeight,
                                 );
-                                if (target.page === page) {
-                                  updateHighlight();
-                                  scrollToTarget("auto");
+                                if (
+                                  highlightRegions.some((region) => region.page === page)
+                                ) {
+                                  updateHighlights();
+                                  if (primaryRegion?.page === page) {
+                                    scrollToTarget("auto");
+                                  }
                                 }
                               }}
                               onError={() => setError(t("errors.loadDocumentFailed"))}
                             />
-                            {showHighlight ? (
-                              <div
-                                className="doc-viewer-highlight"
-                                style={highlightStyle ?? undefined}
-                                aria-hidden="true"
-                              />
-                            ) : null}
+                            {isLoaded
+                              ? pageHighlights.map((style, index) => (
+                                  <div
+                                    key={`${page}-${index}`}
+                                    className="doc-viewer-highlight"
+                                    style={style}
+                                    aria-hidden="true"
+                                  />
+                                ))
+                              : null}
                           </div>
                         ) : (
                           <div

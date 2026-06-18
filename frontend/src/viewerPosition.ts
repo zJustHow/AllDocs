@@ -1,7 +1,25 @@
 export type Bbox = [number, number, number, number];
 
+export interface BboxRegion {
+  page: number;
+  bbox: Bbox;
+}
+
 export function isValidBbox(bbox: number[] | null | undefined): bbox is Bbox {
   return Array.isArray(bbox) && bbox.length === 4 && bbox.every(Number.isFinite);
+}
+
+export function resolveHighlightRegions(target: {
+  regions: BboxRegion[];
+}): BboxRegion[] {
+  return target.regions.filter(
+    (region): region is BboxRegion =>
+      Number.isFinite(region.page) && isValidBbox(region.bbox),
+  );
+}
+
+export function highlightRegionsKey(regions: BboxRegion[]): string {
+  return regions.map((region) => `${region.page}:${region.bbox.join(",")}`).join("|");
 }
 
 function isNormalizedBbox(bbox: Bbox): boolean {

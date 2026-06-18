@@ -2,6 +2,7 @@ import { memo, useCallback, useMemo, type MouseEvent } from "react";
 import type { Components } from "react-markdown";
 import ReactMarkdown from "react-markdown";
 import { renderToStaticMarkup } from "react-dom/server";
+import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import {
   citationToViewerTarget,
@@ -20,14 +21,17 @@ import type { Citation } from "./types";
 
 interface MarkdownTextProps {
   content: string;
-  /** Use span instead of p for paragraph nodes so text can flow inline with citation badges. */
+  /** Use span.md-inline instead of p so citation badges stay in-flow; CSS gives block layout. */
   inline?: boolean;
   citations?: Citation[];
   onOpenDocument?: (target: ViewerTarget) => void;
 }
 
 // Single-tilde strikethrough (~text~) breaks numeric ranges like 1~255 / 1~8.
-const remarkPlugins = [[remarkGfm, { singleTilde: false }]] as const;
+const remarkPlugins = [
+  [remarkGfm, { singleTilde: false }],
+  remarkBreaks,
+] as const;
 
 const inlineComponents: Components = {
   p: ({ children }) => <span className="md-inline">{children}</span>,

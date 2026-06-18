@@ -61,6 +61,9 @@ PageRow = tuple[
 ]
 
 
+LayoutRegion = dict[str, int | list[float]]
+
+
 @dataclass
 class ParsedChunk:
     text: str
@@ -68,6 +71,7 @@ class ParsedChunk:
     section: str | None
     chunk_index: int
     layout_bbox: tuple[float, float, float, float] | None = None
+    layout_regions: list[LayoutRegion] | None = None
     sort_key: float | None = None
     layout_y1: float | None = None
     attached_assets: list[ParsedAttachedAsset] = field(default_factory=list)
@@ -304,6 +308,59 @@ def _bbox_for_offset(
         else:
             break
     return bbox
+
+
+def _layout_region(
+    page: int,
+    bbox: tuple[float, float, float, float],
+) -> LayoutRegion:
+    return {"page": page, "bbox": [float(value) for value in bbox]}
+
+
+def _regions_for_range(
+    page_spans: list[tuple[int, int, tuple[float, float, float, float] | None]],
+    block_spans: list[BlockSpan],
+    start: int,
+    end: int,
+    total_len: int,
+    separator_len: int = len(_PAGE_SEPARATOR),
+) -> list[LayoutRegion]:
+    """Map a chunk character range to per-page layout bboxes (supports cross-page chunks)."""
+    if not page_spans or start >= end:
+        return []
+
+    regions: list[LayoutRegion] = []
+    for index, (page, page_start, page_bbox) in enumerate(page_spans):
+        if page_bbox is None:
+            continue
+        if index + 1 < len(page_spans):
+            page_end = page_spans[index + 1][1] - separator_len
+        else:
+            page_end = total_len
+
+        overlap_start = max(start, page_start)
+        overlap_end = min(end, page_end)
+        if overlap_start >= overlap_end:
+            continue
+
+        y0_values: list[float] = []
+        y1_values: list[float] = []
+        for span_start, span_end, y0, y1 in block_spans:
+            if span_end <= overlap_start or span_start >= overlap_end:
+                continue
+            if span_end <= page_start or span_start >= page_end:
+                continue
+            y0_values.append(y0)
+            y1_values.append(y1)
+
+        if y0_values:
+            region_bbox = (page_bbox[0], min(y0_values), page_bbox[2], max(y1_values))
+        else:
+            region_bbox = page_bbox
+
+        regions.append(_layout_region(page, region_bbox))
+
+    return regions
 
 
 def _extract_native_page_text(
@@ -688,6 +745,7 @@ def _orphan_figure_chunk(figure: EmbeddedFigure) -> ParsedChunk:
         section=figure.section,
         chunk_index=0,
         layout_bbox=figure.bbox,
+        layout_regions=[_layout_region(figure.page, figure.bbox)],
         sort_key=float(figure.bbox[1]),
         layout_y1=float(figure.bbox[3]),
         attached_assets=[_figure_to_attached_asset(figure)],
@@ -702,6 +760,7 @@ def _orphan_table_chunk(table: EmbeddedTable) -> ParsedChunk:
         section=table.section,
         chunk_index=0,
         layout_bbox=table.bbox,
+        layout_regions=[_layout_region(table.page, table.bbox)],
         sort_key=float(table.bbox[1]),
         layout_y1=float(table.bbox[3]),
         attached_assets=[_table_to_attached_asset(table)],
@@ -721,8 +780,20 @@ def _build_chunks_from_pages(
             settings.rag_chunk_size,
             settings.rag_chunk_overlap,
         ):
+            chunk_end = offset + len(piece)
+            layout_regions = _regions_for_range(
+                page_spans,
+                block_spans,
+                offset,
+                chunk_end,
+                len(section_text),
+            )
             layout_bbox = _bbox_for_offset(page_spans, offset)
-            y_bounds = _y_bounds_for_range(block_spans, offset, offset + len(piece))
+            if layout_regions:
+                first_bbox = layout_regions[0]["bbox"]
+                if isinstance(first_bbox, list) and len(first_bbox) == 4:
+                    layout_bbox = tuple(float(value) for value in first_bbox)
+            y_bounds = _y_bounds_for_range(block_spans, offset, chunk_end)
             if y_bounds is not None:
                 sort_key, layout_y1 = y_bounds
             else:
@@ -734,6 +805,7 @@ def _build_chunks_from_pages(
                     section=section,
                     chunk_index=chunk_index,
                     layout_bbox=layout_bbox,
+                    layout_regions=layout_regions or None,
                     sort_key=sort_key,
                     layout_y1=layout_y1,
                 )

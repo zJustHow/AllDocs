@@ -54,6 +54,7 @@ class Chunk(Base):
     chunk_index: Mapped[int] = mapped_column(Integer)
     caption: Mapped[str | None] = mapped_column(Text, nullable=True)
     layout_bbox: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    layout_regions: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     sub_index: Mapped[list | None] = mapped_column(JSONB, nullable=True)
 
     document: Mapped["Document"] = relationship(back_populates="chunks")

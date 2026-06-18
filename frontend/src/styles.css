@@ -877,6 +877,10 @@ button {
   margin: 0 0 0.75em;
 }
 
+.message.assistant .markdown-preview .md-inline {
+  display: block;
+}
+
 .message.assistant .markdown-preview p:last-child,
 .message.assistant .markdown-preview .md-inline:last-child {
   margin-bottom: 0;

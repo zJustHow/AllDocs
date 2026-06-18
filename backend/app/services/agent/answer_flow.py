@@ -116,9 +116,7 @@ async def stream_agent_answer(
                 message,
                 doc_ids,
                 chunk_filters,
-                history,
                 on_step=queue_step,
-                skip_synthesis=True,
             )
         finally:
             await step_queue.put(None)

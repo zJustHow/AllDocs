@@ -33,11 +33,6 @@ def split_sentences(text: str) -> list[str]:
     return sentences if sentences else [text]
 
 
-def split_chunk_into_subs(text: str) -> list[str]:
-    """One sub per sentence that cites a figure/table; each sub is that sentence only."""
-    return [sentence for sentence in split_sentences(text) if extract_figure_refs(sentence)]
-
-
 def _asset_dict(asset: _AssetLike | dict[str, Any]) -> dict[str, Any]:
     if isinstance(asset, dict):
         return asset

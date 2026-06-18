@@ -18,12 +18,12 @@ export interface Citation {
   section: string | null;
   snippet: string;
   score?: number | null;
-  bbox?: number[] | null;
+  regions: Array<{ page: number; bbox: number[] }>;
 }
 
 export interface MessageEmbed {
   ref: number;
-  block_index?: number | null;
+  sentence_index?: number | null;
   asset_id?: string | null;
   content_hash?: string | null;
   document_id: string;
@@ -31,7 +31,7 @@ export interface MessageEmbed {
   page: number;
   type: "table" | "figure" | "page" | string;
   url: string;
-  bbox?: number[] | null;
+  regions: Array<{ page: number; bbox: number[] }>;
   caption?: string | null;
 }
 

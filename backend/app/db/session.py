@@ -55,3 +55,5 @@ def _ensure_chunk_asset_columns(sync_conn) -> None:
                 )
             else:
                 sync_conn.execute(text("ALTER TABLE chunks ADD COLUMN sub_index JSONB"))
+        if "layout_regions" not in chunk_columns:
+            sync_conn.execute(text("ALTER TABLE chunks ADD COLUMN layout_regions JSONB"))
