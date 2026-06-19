@@ -1,23 +1,24 @@
-import { memo, useState } from "react";
+import { memo, useMemo, useState } from "react";
 import ImageLightbox from "./ImageLightbox";
 import {
   embedDedupeKey,
   isOrphanInlineSuffix,
   isTrailingPunctuationOnly,
-  segmentsToRenderableContent,
+  proseSegmentsHaveContent,
+  segmentsDisplayText,
+  segmentsToMarkdownSource,
   splitMessageWithCitations,
   type MessageSegment,
 } from "./citations";
 import { type ViewerTarget, embedToViewerTarget } from "./citations";
 import { useI18n } from "./i18n";
-import MarkdownText from "./MarkdownText";
+import ProseBlock from "./ProseBlock";
 import type { Citation, MessageEmbed } from "./types";
 
 interface MessageContentProps {
   content: string;
   citations?: Citation[];
   embeds?: MessageEmbed[];
-  streaming?: boolean;
   onOpenDocument: (target: ViewerTarget) => void;
 }
 
@@ -149,7 +150,7 @@ function SectionView({
       break;
     }
 
-    const trailingText = segmentsToRenderableContent(trailing.segments);
+    const trailingText = segmentsDisplayText(trailing.segments);
     if (
       !isTrailingPunctuationOnly(trailingText) &&
       !isOrphanInlineSuffix(trailing.segments)
@@ -177,17 +178,12 @@ function SectionView({
     <div className="answer-section-flow">
       {blocks.map((block, index) => {
         if (block.kind === "prose") {
-          const proseContent = segmentsToRenderableContent(block.segments);
-          if (!proseContent.trim()) return null;
-          const hasInlineRefs = block.segments.some(
-            (segment) =>
-              segment.type === "citation" || segment.type === "embed",
-          );
+          if (!proseSegmentsHaveContent(block.segments)) return null;
+          const mdSource = segmentsToMarkdownSource(block.segments);
           return (
             <div key={`prose-${index}`} className="answer-prose">
-              <MarkdownText
-                content={proseContent}
-                inline={hasInlineRefs}
+              <ProseBlock
+                content={mdSource}
                 citations={citations}
                 onOpenDocument={onOpenDocument}
               />
@@ -228,19 +224,18 @@ function MessageContent({
   embeds = [],
   onOpenDocument,
 }: MessageContentProps) {
-  if (!content.trim()) return null;
+  const segments = useMemo(
+    () =>
+      content.trim()
+        ? splitMessageWithCitations(content, citations, {
+            hideUnmatched: true,
+            embeds,
+          })
+        : [],
+    [content, citations, embeds],
+  );
 
-  const seenEmbedKeys = new Set<string>();
-  const segments = splitMessageWithCitations(content, citations, {
-    hideUnmatched: true,
-    embeds,
-  }).filter((segment) => {
-    if (segment.type !== "embed") return true;
-    const embedKey = embedDedupeKey(segment.embed);
-    if (seenEmbedKeys.has(embedKey)) return false;
-    seenEmbedKeys.add(embedKey);
-    return true;
-  });
+  if (!segments.length) return null;
 
   return (
     <div className="message-section-body">

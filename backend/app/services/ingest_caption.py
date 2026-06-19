@@ -1,4 +1,4 @@
-"""Apply VLM captions to chunks and assets during ingestion."""
+"""Apply VLM captions to visual assets during ingestion."""
 
 from __future__ import annotations
 
@@ -6,35 +6,21 @@ import logging
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
-from typing import Literal
 
 from sqlalchemy.orm import Session as OrmSession
 
 from app.config import Settings
-from app.db.models import Chunk, ChunkAsset, Document
+from app.db.models import ChunkAsset, Document
 from app.services.caption import CaptionService
-from app.services.file_types import detect_file_type
-from app.services.page_render import render_page_png
 from app.services.storage import StorageService
 
 logger = logging.getLogger(__name__)
 
-_IMAGE_EXTENSIONS = frozenset({".png", ".jpg", ".jpeg", ".webp"})
 _CAPTION_WORKERS = 3
-
-
-def _image_media_type(filename: str) -> str:
-    ext = detect_file_type(filename)
-    if ext is None:
-        return "image/png"
-    if ext.extension == ".jpg":
-        return "image/jpeg"
-    return ext.content_type
 
 
 @dataclass(frozen=True)
 class _CaptionJob:
-    kind: Literal["asset", "chunk"]
     image_bytes: bytes
     media_type: str = "image/png"
 
@@ -43,112 +29,48 @@ def _run_caption_job(caption_service: CaptionService, job: _CaptionJob) -> str |
     try:
         return caption_service.caption_image(job.image_bytes, media_type=job.media_type)
     except Exception:
-        logger.warning("Caption job failed (%s)", job.kind, exc_info=True)
+        logger.warning("Asset caption job failed", exc_info=True)
         return None
 
 
 def _build_caption_jobs(
-    *,
     asset_rows: list[ChunkAsset],
-    chunk_rows: list[Chunk],
-    assets_by_chunk: dict[str, list[ChunkAsset]],
-    file_bytes: bytes,
-    filename: str,
-    settings: Settings,
-    is_image_doc: bool,
-    min_chars: int,
+    *,
     max_count: int,
-) -> list[tuple[ChunkAsset | Chunk, _CaptionJob]]:
-    jobs: list[tuple[ChunkAsset | Chunk, _CaptionJob]] = []
-    image_media_type = _image_media_type(filename)
+) -> list[ChunkAsset]:
+    planned: list[ChunkAsset] = []
     seen_asset_ids: set[uuid.UUID] = set()
 
     for asset in asset_rows:
-        if len(jobs) >= max_count:
+        if len(planned) >= max_count:
             break
         if asset.id in seen_asset_ids:
             continue
         seen_asset_ids.add(asset.id)
-        jobs.append(
-            (
-                asset,
-                _CaptionJob(kind="asset", image_bytes=b"", media_type="image/png"),
-            )
-        )
+        planned.append(asset)
 
-    for chunk in chunk_rows:
-        if len(jobs) >= max_count:
-            break
-        if assets_by_chunk.get(str(chunk.id)):
-            continue
-        text_len = len(chunk.text.strip())
-        if not is_image_doc and text_len >= min_chars:
-            continue
-        if is_image_doc:
-            jobs.append(
-                (
-                    chunk,
-                    _CaptionJob(
-                        kind="chunk",
-                        image_bytes=file_bytes,
-                        media_type=image_media_type,
-                    ),
-                )
-            )
-        elif chunk.page is not None:
-            jobs.append(
-                (
-                    chunk,
-                    _CaptionJob(kind="chunk", image_bytes=b"", media_type="image/png"),
-                )
-            )
-
-    return jobs
+    return planned
 
 
-def _resolve_job_image(
-    job: _CaptionJob,
+def _resolve_asset_image(
+    asset: ChunkAsset,
     *,
     storage: StorageService,
-    asset: ChunkAsset | None,
     asset_image_bytes: dict[str, bytes] | None,
-    file_bytes: bytes,
-    filename: str,
-    chunk: Chunk | None,
-    settings: Settings,
 ) -> _CaptionJob:
-    if job.image_bytes:
-        return job
-    if asset is not None:
-        cached = (asset_image_bytes or {}).get(str(asset.id))
-        if cached is not None:
-            return _CaptionJob(kind="asset", image_bytes=cached, media_type="image/png")
-        return _CaptionJob(
-            kind="asset",
-            image_bytes=storage.download(asset.object_key),
-            media_type="image/png",
-        )
-    if chunk is not None and chunk.page is not None:
-        return _CaptionJob(
-            kind="chunk",
-            image_bytes=render_page_png(
-                file_bytes,
-                filename,
-                int(chunk.page),
-                scale=settings.ingest_caption_render_scale,
-            ),
-            media_type="image/png",
-        )
-    raise ValueError("caption job has no image source")
+    cached = (asset_image_bytes or {}).get(str(asset.id))
+    if cached is not None:
+        return _CaptionJob(image_bytes=cached, media_type="image/png")
+    return _CaptionJob(
+        image_bytes=storage.download(asset.object_key),
+        media_type="image/png",
+    )
 
 
 def apply_ingest_captions(
     db: OrmSession,
     *,
     document: Document,
-    chunk_rows: list[Chunk],
-    file_bytes: bytes,
-    filename: str,
     settings: Settings,
     asset_image_bytes: dict[str, bytes] | None = None,
 ) -> int:
@@ -161,61 +83,36 @@ def apply_ingest_captions(
         .order_by(ChunkAsset.page)
         .all()
     )
-    assets_by_chunk: dict[str, list[ChunkAsset]] = {}
-    for asset in asset_rows:
-        assets_by_chunk.setdefault(str(asset.chunk_id), []).append(asset)
-
-    caption_service = CaptionService(settings)
-    storage = StorageService(settings)
-    max_count = settings.ingest_caption_max_per_doc
-    min_chars = settings.ingest_caption_min_text_chars
-    file_type = detect_file_type(filename)
-    is_image_doc = file_type is not None and file_type.extension in _IMAGE_EXTENSIONS
-
     planned = _build_caption_jobs(
-        asset_rows=asset_rows,
-        chunk_rows=chunk_rows,
-        assets_by_chunk=assets_by_chunk,
-        file_bytes=file_bytes,
-        filename=filename,
-        settings=settings,
-        is_image_doc=is_image_doc,
-        min_chars=min_chars,
-        max_count=max_count,
+        asset_rows,
+        max_count=settings.ingest_caption_max_per_doc,
     )
     if not planned:
         return 0
 
+    caption_service = CaptionService(settings)
+    storage = StorageService(settings)
     generated = 0
     workers = min(_CAPTION_WORKERS, len(planned))
 
-    def _caption_target(target: ChunkAsset | Chunk, job: _CaptionJob) -> tuple[ChunkAsset | Chunk, str | None]:
-        asset = target if isinstance(target, ChunkAsset) else None
-        chunk = target if isinstance(target, Chunk) else None
-        resolved = _resolve_job_image(
-            job,
+    def _caption_asset(asset: ChunkAsset) -> tuple[ChunkAsset, str | None]:
+        job = _resolve_asset_image(
+            asset,
             storage=storage,
-            asset=asset,
             asset_image_bytes=asset_image_bytes,
-            file_bytes=file_bytes,
-            filename=filename,
-            chunk=chunk,
-            settings=settings,
         )
-        return target, _run_caption_job(caption_service, resolved)
+        return asset, _run_caption_job(caption_service, job)
 
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        futures = [pool.submit(_caption_target, target, job) for target, job in planned]
+        futures = [pool.submit(_caption_asset, asset) for asset in planned]
         for future in as_completed(futures):
             target, caption = future.result()
             if not caption:
                 continue
-            if isinstance(target, ChunkAsset):
-                for asset in asset_rows:
-                    if asset.id == target.id:
-                        asset.caption = caption
-            else:
-                target.caption = caption
+            for asset in asset_rows:
+                if asset.id == target.id:
+                    asset.caption = caption
+                    break
             generated += 1
 
     if generated:

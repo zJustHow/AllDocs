@@ -1,7 +1,7 @@
 import type { Citation, MessageEmbed } from "./types";
+import { citationPlaceholder } from "./citationPlaceholders";
 import {
   embedDedupeKey,
-  inlineCitationRefPattern,
   messageTokenPattern,
   stripInlineMarkers,
 } from "./shared/contract";
@@ -20,10 +20,6 @@ export interface ViewerTarget {
   regions: BboxRegion[];
 }
 
-export function stripInlineCitationMarkers(content: string): string {
-  return stripInlineMarkers(content);
-}
-
 export function formatCitationLabel(index: number): string {
   return `[${index + 1}]`;
 }
@@ -32,7 +28,8 @@ const SNIPPET_LEADING_PUNCT = /^[,.;:!?。，；：！？…、（【「『《"'
 const SNIPPET_TRAILING_PUNCT = /[,.;:!?。，；：！？…、）】」』》"''']$/;
 const TRAILING_PUNCT_ONLY = /^[\s,.;:!?。，；：！？…、）】」』《"''']+$/;
 /** Flush embeds once the preceding sentence ends (Chinese + English punctuation). */
-const INLINE_RUN_BOUNDARY = /(?<=[。！？.!?；;:])\s*/;
+// Keep newlines so Markdown list items (e.g. after "[1]。\n- item") stay on separate lines.
+const INLINE_RUN_BOUNDARY = /(?<=[。！？.!?；;:])[ \t]*/;
 
 function appendTextSegment(
   segments: MessageSegment[],
@@ -70,56 +67,6 @@ export function formatCitationSnippetExcerpt(text: string): string {
     excerpt = `${excerpt}...`;
   }
   return excerpt;
-}
-
-const CITATION_PLACEHOLDER_PREFIX = "\uE000";
-const CITATION_PLACEHOLDER_SUFFIX = "\uE001";
-const CITATION_PLACEHOLDER_PATTERN = new RegExp(
-  `${CITATION_PLACEHOLDER_PREFIX}(\\d+)${CITATION_PLACEHOLDER_SUFFIX}`,
-  "g",
-);
-
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
-
-export function injectCitationPlaceholders(
-  content: string,
-  citations: Citation[],
-  options?: { hideUnmatched?: boolean },
-): string {
-  if (!citations.length) return content;
-
-  return content.replace(inlineCitationRefPattern, (match, n1, n2) => {
-    const index = Number(n1 ?? n2) - 1;
-    if (index < 0 || index >= citations.length) {
-      return options?.hideUnmatched ? "" : match;
-    }
-    return `${CITATION_PLACEHOLDER_PREFIX}${index}${CITATION_PLACEHOLDER_SUFFIX}`;
-  });
-}
-
-export function replaceCitationPlaceholdersWithButtons(
-  html: string,
-  citations: Citation[],
-  options: {
-    formatLabel: (index: number) => string;
-    formatTitle: (citation: Citation) => string;
-  },
-): string {
-  return html.replace(CITATION_PLACEHOLDER_PATTERN, (_, indexStr) => {
-    const index = Number(indexStr);
-    const citation = citations[index];
-    if (!citation) return "";
-
-    const label = escapeHtml(options.formatLabel(index));
-    const title = escapeHtml(options.formatTitle(citation));
-    return `<button type="button" class="citation-link" data-citation-index="${index}" title="${title}">${label}</button>`;
-  });
 }
 
 export function citationToViewerTarget(citation: Citation): ViewerTarget {
@@ -198,23 +145,40 @@ function parseInlineCitationRef(
 
 export type MessageSegment =
   | { type: "text"; value: string }
-  | { type: "citation"; value: string; citation: Citation }
+  | { type: "citation"; value: string; citation: Citation; index: number }
   | { type: "embed"; value: string; embed: MessageEmbed };
 
-function findEmbedsForSentence(
-  sentenceIndex: number,
+function indexEmbedsBySentence(
   embeds: MessageEmbed[],
-): MessageEmbed[] {
-  return embeds.filter((item) => item.sentence_index === sentenceIndex);
+): Map<number, MessageEmbed[]> {
+  const bySentence = new Map<number, MessageEmbed[]>();
+  for (const embed of embeds) {
+    if (embed.sentence_index == null) continue;
+    const bucket = bySentence.get(embed.sentence_index) ?? [];
+    bucket.push(embed);
+    bySentence.set(embed.sentence_index, bucket);
+  }
+  return bySentence;
+}
+
+function indexEmbedsByRef(embeds: MessageEmbed[]): Map<number, MessageEmbed[]> {
+  const byRef = new Map<number, MessageEmbed[]>();
+  for (const embed of embeds) {
+    if (embed.ref == null) continue;
+    const bucket = byRef.get(embed.ref) ?? [];
+    bucket.push(embed);
+    byRef.set(embed.ref, bucket);
+  }
+  return byRef;
 }
 
 function appendEmbedsForSentence(
   segments: MessageSegment[],
   sentenceIndex: number,
-  embeds: MessageEmbed[],
+  embedsBySentence: Map<number, MessageEmbed[]>,
   shownEmbedKeys: Set<string>,
 ): void {
-  for (const embed of findEmbedsForSentence(sentenceIndex, embeds)) {
+  for (const embed of embedsBySentence.get(sentenceIndex) ?? []) {
     const key = embedDedupeKey(embed);
     if (shownEmbedKeys.has(key)) continue;
     shownEmbedKeys.add(key);
@@ -225,10 +189,10 @@ function appendEmbedsForSentence(
 function appendEmbedsForRef(
   segments: MessageSegment[],
   ref: number,
-  embeds: MessageEmbed[],
+  embedsByRef: Map<number, MessageEmbed[]>,
   shownEmbedKeys: Set<string>,
 ): void {
-  for (const embed of embeds.filter((item) => item.ref === ref)) {
+  for (const embed of embedsByRef.get(ref) ?? []) {
     const key = embedDedupeKey(embed);
     if (shownEmbedKeys.has(key)) continue;
     shownEmbedKeys.add(key);
@@ -242,17 +206,17 @@ export function splitMessageWithCitations(
   options?: {
     hideUnmatched?: boolean;
     embeds?: MessageEmbed[];
-    attachEmbedsToCitations?: boolean;
   },
 ): MessageSegment[] {
   const hideUnmatched = options?.hideUnmatched ?? false;
   const embeds = options?.embeds ?? [];
-  const attachEmbedsToCitations = options?.attachEmbedsToCitations ?? true;
+  const embedsBySentence = indexEmbedsBySentence(embeds);
+  const embedsByRef = indexEmbedsByRef(embeds);
   const pattern = new RegExp(messageTokenPattern.source, "g");
   const shownEmbedKeys = new Set<string>();
 
   if (!citations.length && !embeds.length) {
-    return [{ type: "text", value: stripInlineCitationMarkers(content) }];
+    return [{ type: "text", value: stripInlineMarkers(content) }];
   }
 
   const segments: MessageSegment[] = [];
@@ -261,11 +225,10 @@ export function splitMessageWithCitations(
   let match: RegExpExecArray | null;
 
   const flushEmbedsForCurrentSentence = () => {
-    if (!attachEmbedsToCitations) return;
     appendEmbedsForSentence(
       segments,
       currentSentenceIndex,
-      embeds,
+      embedsBySentence,
       shownEmbedKeys,
     );
     currentSentenceIndex += 1;
@@ -283,9 +246,12 @@ export function splitMessageWithCitations(
     const embedRef = match[1];
     if (embedRef) {
       flushEmbedsForCurrentSentence();
-      if (attachEmbedsToCitations) {
-        appendEmbedsForRef(segments, Number(embedRef), embeds, shownEmbedKeys);
-      }
+      appendEmbedsForRef(
+        segments,
+        Number(embedRef),
+        embedsByRef,
+        shownEmbedKeys,
+      );
       lastIndex = match.index + match[0].length;
       continue;
     }
@@ -295,7 +261,7 @@ export function splitMessageWithCitations(
       const index = Number(numericRef) - 1;
       const citation = citations[index];
       if (citation) {
-        segments.push({ type: "citation", value: match[0], citation });
+        segments.push({ type: "citation", value: match[0], citation, index });
       } else if (!hideUnmatched) {
         segments.push({ type: "text", value: match[0] });
       }
@@ -303,7 +269,8 @@ export function splitMessageWithCitations(
       const inner = match[4];
       const citation = parseInlineCitationRef(inner, citations);
       if (citation) {
-        segments.push({ type: "citation", value: match[0], citation });
+        const index = citations.indexOf(citation);
+        segments.push({ type: "citation", value: match[0], citation, index });
       } else if (!hideUnmatched) {
         segments.push({ type: "text", value: match[0] });
       }
@@ -370,14 +337,10 @@ const ORPHAN_INLINE_SUFFIX =
 
 export function isOrphanInlineSuffix(segments: MessageSegment[]): boolean {
   if (!segments.length) return false;
-  return ORPHAN_INLINE_SUFFIX.test(
-    segmentsToRenderableContent(segments).trim(),
-  );
+  return ORPHAN_INLINE_SUFFIX.test(segmentsDisplayText(segments).trim());
 }
 
-export function segmentsToRenderableContent(
-  segments: MessageSegment[],
-): string {
+export function segmentsDisplayText(segments: MessageSegment[]): string {
   return segments
     .map((segment) => {
       if (segment.type === "text" || segment.type === "citation") {
@@ -386,4 +349,25 @@ export function segmentsToRenderableContent(
       return "";
     })
     .join("");
+}
+
+/** Build a single Markdown input from split segments; citations become inline placeholders. */
+export function segmentsToMarkdownSource(segments: MessageSegment[]): string {
+  return segments
+    .map((segment) => {
+      if (segment.type === "text") return segment.value;
+      if (segment.type === "citation") {
+        return segment.index >= 0 ? citationPlaceholder(segment.index) : "";
+      }
+      return "";
+    })
+    .join("");
+}
+
+export function proseSegmentsHaveContent(segments: MessageSegment[]): boolean {
+  return segments.some((segment) => {
+    if (segment.type === "text") return segment.value.trim().length > 0;
+    if (segment.type === "citation") return segment.index >= 0;
+    return false;
+  });
 }

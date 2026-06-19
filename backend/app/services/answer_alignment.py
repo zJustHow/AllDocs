@@ -19,6 +19,60 @@ from app.services.visual_asset_util import chunk_visual_assets
 
 _SENTENCE_SPLIT = re.compile(r"(?<=[。！？.!?；;:])\s*")
 _INLINE_CITATION = inline_citation_ref_pattern()
+_GFM_TABLE_SEPARATOR = re.compile(r"^\|?[\s:-]+\|[\s|:-]+$")
+
+
+def sentence_has_markdown_table(text: str) -> bool:
+    """Return True when text contains a GFM-style markdown table."""
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if len(lines) < 2:
+        return False
+    pipe_rows = [line for line in lines if line.count("|") >= 2]
+    if len(pipe_rows) >= 2:
+        return True
+    return any(_GFM_TABLE_SEPARATOR.match(line) for line in lines)
+
+
+def _text_window_for_skip(
+    sentences: list[dict[str, Any]],
+    sentence_index: int,
+    *,
+    lookback: int,
+) -> str:
+    start = max(0, sentence_index - lookback)
+    parts = [
+        str(sentences[index].get("raw_text") or sentences[index].get("text") or "")
+        for index in range(start, sentence_index + 1)
+    ]
+    return "\n".join(part for part in parts if part)
+
+
+def should_skip_table_embed(
+    asset: dict[str, Any],
+    *,
+    ref: int,
+    sentence_index: int,
+    sentences: list[dict[str, Any]],
+    settings: Settings,
+) -> bool:
+    """Skip table PNG embed when the answer already shows a markdown table nearby."""
+    if (asset.get("type") or "figure") != "table":
+        return False
+    if not settings.embed_skip_table_when_answer_has_markdown:
+        return False
+    if sentence_index < 0 or sentence_index >= len(sentences):
+        return False
+
+    sentence = sentences[sentence_index]
+    if ref not in (sentence.get("citation_refs") or []):
+        return False
+
+    window = _text_window_for_skip(
+        sentences,
+        sentence_index,
+        lookback=max(0, settings.embed_skip_table_lookback),
+    )
+    return sentence_has_markdown_table(window)
 
 
 def _extract_citation_refs(raw_text: str) -> list[int]:
@@ -192,6 +246,14 @@ def build_aligned_embeds(
             for asset_id in sub.get("asset_ids") or []:
                 asset = assets_by_id.get(str(asset_id))
                 if asset is None:
+                    continue
+                if should_skip_table_embed(
+                    asset,
+                    ref=ref,
+                    sentence_index=sentence_index,
+                    sentences=sentences,
+                    settings=settings,
+                ):
                     continue
                 payload = _embed_for_asset(
                     chunk,

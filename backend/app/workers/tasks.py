@@ -263,9 +263,6 @@ def process_document(document_id: str) -> None:
             apply_ingest_captions(
                 db,
                 document=document,
-                chunk_rows=chunk_rows,
-                file_bytes=file_bytes,
-                filename=document.name,
                 settings=settings,
                 asset_image_bytes={
                     str(item.asset_id): item.png_bytes for item in pending_assets

@@ -1,11 +1,75 @@
 import unittest
 from unittest.mock import patch
 
+from app.config import Settings
 from app.services.answer_alignment import (
     _best_sentence_for_sub,
     build_aligned_embeds,
+    sentence_has_markdown_table,
+    should_skip_table_embed,
     split_answer_sentences,
 )
+
+
+class SentenceHasMarkdownTableTests(unittest.TestCase):
+    def test_detects_pipe_rows(self) -> None:
+        text = "| 项目 | 值 |\n| --- | --- |\n| 电压 | 220V |"
+        self.assertTrue(sentence_has_markdown_table(text))
+
+    def test_rejects_single_pipe_line(self) -> None:
+        self.assertFalse(sentence_has_markdown_table("| 仅一行 |"))
+
+    def test_rejects_plain_text(self) -> None:
+        self.assertFalse(sentence_has_markdown_table("额定电压 220V。"))
+
+
+class ShouldSkipTableEmbedTests(unittest.TestCase):
+    def test_skips_when_table_is_in_lookback_window(self) -> None:
+        sentences = split_answer_sentences(
+            "| 项目 | 值 |\n| --- | --- |\n| 电压 | 220V |\n\n详见上表。[1]"
+        )
+        settings = Settings(embed_skip_table_when_answer_has_markdown=True, embed_skip_table_lookback=2)
+        asset = {"type": "table", "asset_id": "table-1"}
+
+        self.assertTrue(
+            should_skip_table_embed(
+                asset,
+                ref=1,
+                sentence_index=1,
+                sentences=sentences,
+                settings=settings,
+            )
+        )
+
+    def test_does_not_skip_without_markdown_table(self) -> None:
+        sentences = split_answer_sentences("额定电压 220V。[1]")
+        settings = Settings(embed_skip_table_when_answer_has_markdown=True)
+        asset = {"type": "table", "asset_id": "table-1"}
+
+        self.assertFalse(
+            should_skip_table_embed(
+                asset,
+                ref=1,
+                sentence_index=0,
+                sentences=sentences,
+                settings=settings,
+            )
+        )
+
+    def test_does_not_skip_figures(self) -> None:
+        sentences = split_answer_sentences("| A | B |\n|---|---|[1]")
+        settings = Settings(embed_skip_table_when_answer_has_markdown=True)
+        asset = {"type": "figure", "asset_id": "fig-1"}
+
+        self.assertFalse(
+            should_skip_table_embed(
+                asset,
+                ref=1,
+                sentence_index=0,
+                sentences=sentences,
+                settings=settings,
+            )
+        )
 
 
 class SplitAnswerSentencesTests(unittest.TestCase):
@@ -107,6 +171,84 @@ class BuildAlignedEmbedsTests(unittest.TestCase):
         self.assertEqual(by_asset["asset-zero"]["sentence_index"], 1)
         self.assertEqual(by_asset["asset-zero"]["ref"], 1)
 
+    def _table_chunk(self, *, asset_id: str, sub_text: str) -> dict:
+        return {
+            "document_id": "doc-1",
+            "document_name": "手册",
+            "page": 10,
+            "text": sub_text,
+            "sub_index": [
+                {
+                    "kind": "ref",
+                    "text": sub_text,
+                    "index_text": sub_text,
+                    "asset_ids": [asset_id],
+                }
+            ],
+            "assets": [
+                {
+                    "asset_id": asset_id,
+                    "type": "table",
+                    "figure_number": "3-1",
+                    "figure_caption": "表3-1",
+                    "page": 10,
+                    "bbox": [0.0, 0.0, 100.0, 100.0],
+                }
+            ],
+        }
+
+    def test_skips_table_embed_when_answer_already_has_markdown_table(self) -> None:
+        answer = (
+            "| 项目 | 值 |\n"
+            "| --- | --- |\n"
+            "| 电压 | 220V |\n\n"
+            "详见上表。[1]"
+        )
+        chunk = self._table_chunk(
+            asset_id="table-1",
+            sub_text="表3-1 额定参数 | 项目 | 值 |",
+        )
+        vectors = {
+            "详见上表。": [1.0, 0.0],
+            "表3-1 额定参数 | 项目 | 值 |": [0.95, 0.05],
+        }
+
+        class _FakeEmbedding:
+            def embed_queries(self, texts: list[str]) -> list[list[float]]:
+                return [vectors.get(text, [0.0, 1.0]) for text in texts]
+
+        with patch(
+            "app.services.answer_alignment.get_embedding_service",
+            return_value=_FakeEmbedding(),
+        ):
+            embeds = build_aligned_embeds(answer, [chunk])
+
+        self.assertEqual(embeds, [])
+
+    def test_keeps_table_embed_when_answer_has_no_markdown_table(self) -> None:
+        answer = "额定电压 220V，详见手册。[1]"
+        chunk = self._table_chunk(
+            asset_id="table-1",
+            sub_text="表3-1 额定电压 220V",
+        )
+        vectors = {
+            "额定电压 220V，详见手册。": [1.0, 0.0],
+            "表3-1 额定电压 220V": [0.95, 0.05],
+        }
+
+        class _FakeEmbedding:
+            def embed_queries(self, texts: list[str]) -> list[list[float]]:
+                return [vectors.get(text, [0.0, 1.0]) for text in texts]
+
+        with patch(
+            "app.services.answer_alignment.get_embedding_service",
+            return_value=_FakeEmbedding(),
+        ):
+            embeds = build_aligned_embeds(answer, [chunk])
+
+        self.assertEqual(len(embeds), 1)
+        self.assertEqual(embeds[0]["asset_id"], "table-1")
+        self.assertEqual(embeds[0]["type"], "table")
 
 class BestSentenceForSubTests(unittest.TestCase):
     def test_only_considers_sentences_with_matching_ref(self) -> None:

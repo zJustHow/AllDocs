@@ -88,7 +88,6 @@ function ChatMessageItem({
               content={content}
               citations={message.citations ?? []}
               embeds={message.embeds ?? []}
-              streaming={message.streaming}
               onOpenDocument={onOpenDocument}
             />
           ) : (

@@ -85,11 +85,12 @@ class Settings(BaseSettings):
     ingest_caption_api_base_url: str = ""
     ingest_caption_api_key: str = ""
     ingest_caption_model: str = ""
-    ingest_caption_render_scale: float = 2.0
     ingest_caption_max_per_doc: int = 20
-    ingest_caption_min_text_chars: int = 50
 
     rag_step_align_min_score: float = 0.42
+
+    embed_skip_table_when_answer_has_markdown: bool = True
+    embed_skip_table_lookback: int = 2
 
 
 @lru_cache
