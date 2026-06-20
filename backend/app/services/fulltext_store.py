@@ -120,7 +120,12 @@ class FulltextStore:
                 chunk_ids, texts, caption_values, payloads, strict=True
             )
         ]
-        bulk(self.client, actions, refresh=False)
+        bulk(
+            self.client,
+            actions,
+            refresh=False,
+            chunk_size=max(1, self.settings.elasticsearch_bulk_batch_size),
+        )
 
     def refresh_index(self) -> None:
         ensure_index(self.settings)

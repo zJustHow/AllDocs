@@ -82,8 +82,9 @@ class OCRService:
         if image is None:
             return ""
 
-        engine = _get_ocr_engine(self.settings)
-        result = engine.ocr(image, cls=True)
+        with _lock:
+            engine = _get_ocr_engine(self.settings)
+            result = engine.ocr(image, cls=True)
         effective_height = page_height
         if effective_height is None and hf is not None:
             effective_height = float(image.shape[0])

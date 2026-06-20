@@ -9,7 +9,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings, get_settings
 from app.db.models import Chunk, ChunkAsset, Document
-from app.db.session import async_session_factory
 from app.services.asset_urls import asset_url
 from app.services.chunk_index import (
     asset_caption_kwargs,
@@ -323,31 +322,20 @@ class RAGService:
             query_vector = await self._embed_query(question)
         broad_filter = chunk_filter.broad_filter()
 
-        async def retrieve_broad() -> list[dict]:
-            async with async_session_factory() as task_db:
-                return await self._retrieve_once(
-                    task_db, question, broad_filter, query_vector=query_vector
-                )
-
-        async def retrieve_strict() -> list[dict]:
-            async with async_session_factory() as task_db:
-                return await self._retrieve_once(
-                    task_db, question, chunk_filter, query_vector=query_vector
-                )
-
-        broad_chunks, strict_chunks = await asyncio.gather(
-            retrieve_broad(),
-            retrieve_strict(),
+        strict_chunks = await self._retrieve_once(
+            db, question, chunk_filter, query_vector=query_vector
         )
-
         if strict_chunks:
-            if broad_chunks and broad_filter.model_dump_json() != chunk_filter.model_dump_json():
+            if broad_filter.model_dump_json() != chunk_filter.model_dump_json():
                 logger.info(
                     "Metadata filter applied; strict=%s",
                     chunk_filter.model_dump(exclude_none=True),
                 )
             return strict_chunks
 
+        broad_chunks = await self._retrieve_once(
+            db, question, broad_filter, query_vector=query_vector
+        )
         if broad_chunks:
             logger.info(
                 "Broad retrieval fallback after strict filter returned empty; original=%s",

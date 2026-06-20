@@ -45,6 +45,9 @@ class Settings(BaseSettings):
     hybrid_enabled: bool = True
     hybrid_rrf_k: int = 60
 
+    qdrant_upsert_batch_size: int = 256
+    elasticsearch_bulk_batch_size: int = 500
+
     minio_endpoint: str = "localhost:9000"
     minio_access_key: str = "minioadmin"
     minio_secret_key: str = "minioadmin"
@@ -67,6 +70,7 @@ class Settings(BaseSettings):
     ocr_table_min_filled_cells: int = 2
     ocr_table_min_score: float = 0.0
     ocr_table_promote_max_per_doc: int = 30
+    ocr_table_timeout_seconds: float = 30.0
 
     pdf_extract_embedded_images: bool = True
     pdf_embedded_image_min_width: int = 64

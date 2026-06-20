@@ -44,7 +44,7 @@ def renumber_answer_citations(answer: str, context_chunks: list[dict]) -> tuple[
     return INLINE_CITATION_REF.sub(replace_ref, answer), new_chunks, old_to_new
 
 
-def finalize_answer(
+def _finalize_answer_sync(
     answer: str,
     context_chunks: list[dict],
 ) -> tuple[str, list[dict], list[dict]]:
@@ -54,6 +54,22 @@ def finalize_answer(
     answer, cited_chunks, _citation_renumber = renumber_answer_citations(answer, context_chunks)
     embeds = build_aligned_embeds(answer, cited_chunks)
     return answer, public_citations(cited_chunks), public_embeds(embeds)
+
+
+def finalize_answer(
+    answer: str,
+    context_chunks: list[dict],
+) -> tuple[str, list[dict], list[dict]]:
+    return _finalize_answer_sync(answer, context_chunks)
+
+
+async def finalize_answer_async(
+    answer: str,
+    context_chunks: list[dict],
+) -> tuple[str, list[dict], list[dict]]:
+    import asyncio
+
+    return await asyncio.to_thread(_finalize_answer_sync, answer, context_chunks)
 
 
 def public_citations(chunks: list[dict]) -> list[dict]:
@@ -71,4 +87,9 @@ def public_citations(chunks: list[dict]) -> list[dict]:
     ]
 
 
-__all__ = ["finalize_answer", "public_citations", "strip_inline_citation_markers"]
+__all__ = [
+    "finalize_answer",
+    "finalize_answer_async",
+    "public_citations",
+    "strip_inline_citation_markers",
+]

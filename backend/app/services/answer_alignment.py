@@ -11,6 +11,7 @@ from app.services.chunk_alignment import build_chunk_sub_index
 from app.services.embedding_provider import get_embedding_service
 from app.services.shared_contract import (
     embed_dedupe_key,
+    inline_citation_marker_pattern,
     inline_citation_ref_pattern,
     strip_inline_markers,
 )
@@ -19,6 +20,7 @@ from app.services.sentence_boundary import split_answer_text
 from app.services.visual_asset_util import chunk_visual_assets
 
 _INLINE_CITATION = inline_citation_ref_pattern()
+_INLINE_CITATION_MARKER = inline_citation_marker_pattern()
 _GFM_TABLE_SEPARATOR = re.compile(r"^\|?[\s:-]+\|[\s|:-]+$")
 
 
@@ -75,6 +77,54 @@ def should_skip_table_embed(
     return sentence_has_markdown_table(window)
 
 
+def _split_leading_inline_citations(text: str) -> tuple[str, str]:
+    """Split leading [n] / 【n】 markers (and whitespace) from the rest of a fragment."""
+    pos = 0
+    while pos < len(text):
+        match = _INLINE_CITATION.match(text, pos)
+        if match:
+            pos = match.end()
+            continue
+        if text[pos] in " \t\n\r":
+            pos += 1
+            continue
+        break
+    return text[:pos], text[pos:]
+
+
+def _is_citation_only_fragment(text: str) -> bool:
+    stripped = text.strip()
+    if not stripped:
+        return True
+    remainder = _INLINE_CITATION_MARKER.sub("", stripped)
+    return not remainder.strip()
+
+
+def _merge_orphan_inline_citations(parts: list[str]) -> list[str]:
+    """Keep inline citation markers with the sentence they annotate."""
+    if not parts:
+        return parts
+
+    merged: list[str] = []
+    for part in parts:
+        if not merged:
+            merged.append(part)
+            continue
+
+        leading, remainder = _split_leading_inline_citations(part)
+        if leading:
+            merged[-1] = merged[-1] + leading
+            if remainder.strip():
+                merged.append(remainder)
+            continue
+
+        if _is_citation_only_fragment(part):
+            merged[-1] = merged[-1] + part
+        else:
+            merged.append(part)
+    return merged
+
+
 def _extract_citation_refs(raw_text: str) -> list[int]:
     refs: list[int] = []
     seen: set[int] = set()
@@ -89,7 +139,7 @@ def _extract_citation_refs(raw_text: str) -> list[int]:
 
 def split_answer_sentences(answer: str) -> list[dict[str, Any]]:
     """Split answer into sentences; collect inline [n] refs in each sentence."""
-    parts = split_answer_text(answer)
+    parts = _merge_orphan_inline_citations(split_answer_text(answer))
     if not parts:
         return []
 

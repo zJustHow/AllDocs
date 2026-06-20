@@ -11,8 +11,10 @@ import fitz
 from app.services.pdf_embedded_images import EmbeddedFigure
 from app.services.pdf_tables import EmbeddedTable
 
+_CHAPTER_NUM = r"(?P<chapter>\d+)\s*[-–—]\s*(?P<num>\d+)"
+_CAPTION_LABEL = r"(?:图|表|(?i:figure|fig\.?|table))"
 _CAPTION_LINE_RE = re.compile(
-    r"^(?P<kind>图|表)\s*(?P<chapter>\d+)\s*[-–—]\s*(?P<num>\d+)\s*(?P<desc>.*)$"
+    rf"^(?P<kind>{_CAPTION_LABEL})\s*{_CHAPTER_NUM}\s*(?P<desc>.*)$"
 )
 _MAX_CAPTION_GAP_PT = 80.0
 
@@ -31,12 +33,19 @@ def normalize_figure_number(chapter: str, num: str) -> str:
     return f"{int(chapter)}-{int(num)}"
 
 
+def caption_kind_from_label(label: str) -> Literal["figure", "table"]:
+    normalized = label.strip().lower()
+    if normalized == "图" or normalized.startswith("fig"):
+        return "figure"
+    return "table"
+
+
 def parse_caption_line(line: str) -> tuple[Literal["figure", "table"], str, str, str] | None:
     stripped = line.strip()
     match = _CAPTION_LINE_RE.match(stripped)
     if not match:
         return None
-    kind: Literal["figure", "table"] = "figure" if match.group("kind") == "图" else "table"
+    kind = caption_kind_from_label(match.group("kind"))
     number = normalize_figure_number(match.group("chapter"), match.group("num"))
     description = match.group("desc").strip()
     return kind, number, description, stripped

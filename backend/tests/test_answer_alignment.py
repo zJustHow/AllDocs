@@ -35,7 +35,7 @@ class ShouldSkipTableEmbedTests(unittest.TestCase):
             should_skip_table_embed(
                 asset,
                 ref=1,
-                sentence_index=1,
+                sentence_index=0,
                 sentences=sentences,
                 settings=settings,
             )
@@ -73,6 +73,13 @@ class ShouldSkipTableEmbedTests(unittest.TestCase):
 
 
 class SplitAnswerSentencesTests(unittest.TestCase):
+    def test_keeps_inline_citations_after_sentence_end(self) -> None:
+        sentences = split_answer_sentences("额定电压 220V。[1]")
+
+        self.assertEqual(len(sentences), 1)
+        self.assertEqual(sentences[0]["citation_refs"], [1])
+        self.assertIn("额定电压", sentences[0]["text"])
+
     def test_splits_on_chinese_and_english_punctuation(self) -> None:
         answer = (
             "确认精度异常表现。[1][2]\n"
@@ -82,12 +89,16 @@ class SplitAnswerSentencesTests(unittest.TestCase):
 
         sentences = split_answer_sentences(answer)
 
-        self.assertEqual(len(sentences), 3)
+        self.assertEqual(len(sentences), 4)
         self.assertEqual(sentences[0]["sentence_index"], 0)
         self.assertEqual(sentences[0]["citation_refs"], [1, 2])
+        self.assertIn("确认精度异常表现", sentences[0]["text"])
         self.assertEqual(sentences[1]["citation_refs"], [1])
-        self.assertEqual(sentences[2]["citation_refs"], [3])
+        self.assertIn("机器人轴零点标定", sentences[1]["text"])
+        self.assertEqual(sentences[2]["citation_refs"], [])
         self.assertIn("Check TCP settings", sentences[2]["text"])
+        self.assertEqual(sentences[3]["citation_refs"], [3])
+        self.assertIn("verify the tool", sentences[3]["text"])
 
     def test_keeps_single_sentence_without_boundary(self) -> None:
         sentences = split_answer_sentences("仅有一句话带引用[1]")

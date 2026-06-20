@@ -22,6 +22,7 @@ from app.services.pdf_embedded_images import (
 )
 from app.services.pdf_captions import apply_page_caption_matches, extract_page_captions
 from app.services.pdf_layout_regions import layout_region
+from app.services.pdf_refs import attach_by_explicit_refs
 from app.services.pdf_raster_tables import promote_figures_to_raster_tables
 from app.services.pdf_table_merge import merge_cross_page_tables
 from app.services.pdf_header_footer import HeaderFooterFilter, build_header_footer_filter
@@ -1118,7 +1119,6 @@ class IngestionService:
                 page_figures, promoted, promote_processed = promote_figures_to_raster_tables(
                     page_figures,
                     settings=self.settings,
-                    executor=executor,
                     processed=promote_processed,
                 )
                 page_tables = [*page_tables, *promoted]

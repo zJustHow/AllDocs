@@ -15,15 +15,24 @@ from app.services.pdf_embedded_images import (
 from app.services.pdf_tables import EmbeddedTable, _table_to_attached_asset
 
 _NUMBER = r"(?P<chapter>\d+)\s*[-–—]\s*(?P<num>\d+)"
+_EN_FIG = r"(?i:figure|fig\.?)"
+_EN_TBL = r"(?i:table)"
+_EN_REF_PREFIX = r"(?i:as shown in|see|refer to|referring to)"
 _FIGURE_REF_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(rf"(?:如图|参考图|见图|参见图)\s*{_NUMBER}"),
     re.compile(rf"图\s*{_NUMBER}\s*所示"),
     re.compile(rf"图\s*{_NUMBER}(?!\s*[-–—]\s*\d)"),
+    re.compile(rf"(?:{_EN_REF_PREFIX}\s+)?{_EN_FIG}\s*{_NUMBER}"),
+    re.compile(rf"{_EN_FIG}\s*{_NUMBER}\s*(?i:shows?|below)"),
+    re.compile(rf"{_EN_FIG}\s*{_NUMBER}(?!\s*[-–—]\s*\d)"),
 )
 _TABLE_REF_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(rf"(?:见表|参考表|参见表)\s*{_NUMBER}"),
     re.compile(rf"表\s*{_NUMBER}\s*所示"),
     re.compile(rf"表\s*{_NUMBER}(?!\s*[-–—]\s*\d)"),
+    re.compile(rf"(?:{_EN_REF_PREFIX}\s+)?{_EN_TBL}\s*{_NUMBER}"),
+    re.compile(rf"{_EN_TBL}\s*{_NUMBER}\s*(?i:shows?|below)"),
+    re.compile(rf"{_EN_TBL}\s*{_NUMBER}(?!\s*[-–—]\s*\d)"),
 )
 
 AssetKind = Literal["figure", "table"]
@@ -68,11 +77,21 @@ def _reverse_mention_patterns(kind: AssetKind, figure_number: str) -> tuple[re.P
             re.compile(rf"(?:如图|参考图|见图|参见图)\s*{chapter}\s*[-–—]\s*{num}"),
             re.compile(rf"图\s*{chapter}\s*[-–—]\s*{num}\s*所示"),
             re.compile(rf"图\s*{chapter}\s*[-–—]\s*{num}(?!\s*[-–—]\s*\d)"),
+            re.compile(
+                rf"(?:{_EN_REF_PREFIX}\s+)?{_EN_FIG}\s*{chapter}\s*[-–—]\s*{num}"
+            ),
+            re.compile(rf"{_EN_FIG}\s*{chapter}\s*[-–—]\s*{num}\s*(?i:shows?|below)"),
+            re.compile(rf"{_EN_FIG}\s*{chapter}\s*[-–—]\s*{num}(?!\s*[-–—]\s*\d)"),
         )
     return (
         re.compile(rf"(?:见表|参考表|参见表)\s*{chapter}\s*[-–—]\s*{num}"),
         re.compile(rf"表\s*{chapter}\s*[-–—]\s*{num}\s*所示"),
         re.compile(rf"表\s*{chapter}\s*[-–—]\s*{num}(?!\s*[-–—]\s*\d)"),
+        re.compile(
+            rf"(?:{_EN_REF_PREFIX}\s+)?{_EN_TBL}\s*{chapter}\s*[-–—]\s*{num}"
+        ),
+        re.compile(rf"{_EN_TBL}\s*{chapter}\s*[-–—]\s*{num}\s*(?i:shows?|below)"),
+        re.compile(rf"{_EN_TBL}\s*{chapter}\s*[-–—]\s*{num}(?!\s*[-–—]\s*\d)"),
     )
 
 

@@ -26,8 +26,8 @@ class RegionsForRangeTests(unittest.TestCase):
 
     def test_cross_page_chunk_returns_multiple_regions(self) -> None:
         pages = [
-            (None, "Page one text", 1, (0.0, 0.0, 400.0, 800.0), [(0, 13, 50.0, 700.0)]),
-            (None, "Page two text", 2, (0.0, 0.0, 400.0, 800.0), [(0, 13, 60.0, 650.0)]),
+            (1, "Page one text", (0.0, 0.0, 400.0, 800.0), [(0, 13, 50.0, 700.0)]),
+            (2, "Page two text", (0.0, 0.0, 400.0, 800.0), [(0, 13, 60.0, 650.0)]),
         ]
         section_text, page_spans, block_spans = _concat_pages(pages)
         chunk_end = len(section_text)
@@ -48,8 +48,8 @@ class RegionsForRangeTests(unittest.TestCase):
 
     def test_partial_last_page_only_highlights_overlap(self) -> None:
         pages = [
-            (None, "AAAA", 1, (0.0, 0.0, 400.0, 800.0), [(0, 4, 100.0, 200.0)]),
-            (None, "BBBBCCCC", 2, (0.0, 0.0, 400.0, 800.0), [(0, 4, 120.0, 220.0), (4, 8, 300.0, 420.0)]),
+            (1, "AAAA", (0.0, 0.0, 400.0, 800.0), [(0, 4, 100.0, 200.0)]),
+            (2, "BBBBCCCC", (0.0, 0.0, 400.0, 800.0), [(0, 4, 120.0, 220.0), (4, 8, 300.0, 420.0)]),
         ]
         section_text, page_spans, block_spans = _concat_pages(pages)
         chunks = _split_text_with_offsets(section_text, chunk_size=999, overlap=0)

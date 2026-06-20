@@ -13,7 +13,7 @@ from app.db.models import Message
 from app.services.agent.service import AgentRAGService
 from app.services.agent.state import AgentResult, OnAgentStep
 from app.services.chunk_filter import ChunkFilter
-from app.services.citations_util import finalize_answer, public_citations
+from app.services.citations_util import finalize_answer_async, public_citations
 
 
 async def persist_turn(
@@ -72,7 +72,7 @@ async def _stream_synthesis(
         answer_parts.append(delta)
         yield {"type": "delta", "content": delta}
 
-    answer, refs, embeds = finalize_answer(
+    answer, refs, embeds = await finalize_answer_async(
         "".join(answer_parts),
         result.evidence,
     )

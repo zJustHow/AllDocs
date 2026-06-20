@@ -30,8 +30,12 @@ async def find_reindexable_by_name(db: AsyncSession, filename: str) -> Document 
 async def schedule_document_reindex(db: AsyncSession, document: Document) -> Document:
     if document.status == DocumentStatus.deleting:
         raise ValueError("Document is being deleted")
-    if document.status in {DocumentStatus.pending, DocumentStatus.processing}:
-        raise ValueError("Document is already being indexed")
+    if document.status == DocumentStatus.pending:
+        process_document.delay(str(document.id))
+        return document
+    if document.status == DocumentStatus.processing:
+        # Worker may have crashed mid-parse; allow reindex to recover stuck jobs.
+        pass
 
     reset_document_for_reindex(document)
     await db.commit()

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from threading import Lock
 
@@ -72,9 +73,14 @@ class TableOCRService:
         if image is None:
             return None
 
+        def _run() -> list | None:
+            with _lock:
+                engine = _get_table_engine(self.settings)
+                return engine(image)
+
         try:
-            engine = _get_table_engine(self.settings)
-            items = engine(image)
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                items = pool.submit(_run).result(timeout=self.settings.ocr_table_timeout_seconds)
         except Exception:
             logger.warning("Raster table recognition failed", exc_info=True)
             return None

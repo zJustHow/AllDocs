@@ -52,15 +52,25 @@ class VectorStore:
         payloads: list[dict],
     ) -> None:
         ensure_collection(self.settings)
-        points = [
-            qmodels.PointStruct(
-                id=str(chunk_id),
-                vector=vector,
-                payload=payload,
+        batch_size = max(1, self.settings.qdrant_upsert_batch_size)
+        for start in range(0, len(chunk_ids), batch_size):
+            batch_ids = chunk_ids[start : start + batch_size]
+            batch_vectors = vectors[start : start + batch_size]
+            batch_payloads = payloads[start : start + batch_size]
+            points = [
+                qmodels.PointStruct(
+                    id=str(chunk_id),
+                    vector=vector,
+                    payload=payload,
+                )
+                for chunk_id, vector, payload in zip(
+                    batch_ids, batch_vectors, batch_payloads, strict=True
+                )
+            ]
+            self.client.upsert(
+                collection_name=self.settings.qdrant_collection,
+                points=points,
             )
-            for chunk_id, vector, payload in zip(chunk_ids, vectors, payloads, strict=True)
-        ]
-        self.client.upsert(collection_name=self.settings.qdrant_collection, points=points)
 
     def search(
         self,

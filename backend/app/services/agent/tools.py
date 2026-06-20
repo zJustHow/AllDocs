@@ -1,4 +1,3 @@
-import asyncio
 import json
 from uuid import UUID
 
@@ -7,7 +6,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Document
-from app.db.session import async_session_factory
 from app.services.chunk_filter import ChunkFilter, chunk_asset_types
 from app.services.rag import RAGService, parse_chunk_uuids
 from app.services.toc_lookup import format_documents_outline, lookup_toc, outline_to_chunks
@@ -241,28 +239,19 @@ class AgentToolRegistry:
             queries = [str(item.get("query") or question).strip() for item in searches]
             query_vectors = await self.rag._embed_queries(queries)
 
-            async def run_one(
-                search_item: dict, query_vector: list[float]
-            ) -> tuple[str, list[dict]]:
+            results: list[tuple[str, list[dict]]] = []
+            for search_item, query_vector in zip(searches, query_vectors, strict=True):
                 query = str(search_item.get("query") or question).strip()
-                async with async_session_factory() as task_db:
-                    chunks = await self._search_chunks(
-                        task_db,
-                        query=query,
-                        question=question,
-                        doc_ids=doc_ids,
-                        explicit_filters=explicit_filters,
-                        search_input=search_item,
-                        query_vector=query_vector,
-                    )
-                return query, chunks
-
-            results = await asyncio.gather(
-                *(
-                    run_one(item, query_vector)
-                    for item, query_vector in zip(searches, query_vectors, strict=True)
+                chunks = await self._search_chunks(
+                    db,
+                    query=query,
+                    question=question,
+                    doc_ids=doc_ids,
+                    explicit_filters=explicit_filters,
+                    search_input=search_item,
+                    query_vector=query_vector,
                 )
-            )
+                results.append((query, chunks))
             merged: list[dict] = []
             for _, chunks in results:
                 merged.extend(chunks)

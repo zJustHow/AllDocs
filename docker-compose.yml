@@ -159,6 +159,7 @@ services:
       - app.workers.celery_app
       - worker
       - --loglevel=info
+      - --concurrency=1
 
 volumes:
   postgres_data:

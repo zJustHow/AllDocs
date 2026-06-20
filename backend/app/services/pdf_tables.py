@@ -9,6 +9,7 @@ from dataclasses import dataclass
 import fitz
 
 from app.config import Settings
+from app.services.pdf_attach_reading_order import attach_assets_by_reading_order
 from app.services.pdf_layout_regions import layout_regions_for_asset
 from app.services.table_html import table_dimensions_meet_minimum
 from app.services.pdf_embedded_images import ParsedAttachedAsset
