@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SetStateAction } from "react";
+import { getAgentSteps, hasAgentStepsSession } from "./agentStepsStore";
 import { createAssistantStreamController } from "./chatStream";
 import { getStreamingContent } from "./streamingContent";
 import type { ChatMessage } from "./types";
@@ -83,7 +84,7 @@ describe("createAssistantStreamController", () => {
     });
     vi.runAllTimers();
 
-    expect(ctx.messages[0]?.agentSteps).toEqual([
+    expect(getAgentSteps("assistant-1")).toEqual([
       expect.objectContaining({
         step: 1,
         thought: "Planning more",
@@ -96,6 +97,14 @@ describe("createAssistantStreamController", () => {
     const ctx = createController();
 
     ctx.controller.handlers.onDelta("Partial");
+    ctx.controller.dispatchPayload({
+      type: "agent_step",
+      step: 1,
+      thought: "Searching",
+      action: "search_chunks",
+      action_input: { query: "test" },
+      observation: "found",
+    });
     vi.runAllTimers();
     ctx.controller.dispatchPayload({
       type: "done",
@@ -111,7 +120,16 @@ describe("createAssistantStreamController", () => {
       streaming: false,
       agentRunning: false,
       content: "Final answer",
+      agentSteps: [
+        expect.objectContaining({
+          step: 1,
+          thought: "Searching",
+          action: "search_chunks",
+        }),
+      ],
     });
+    expect(hasAgentStepsSession("assistant-1")).toBe(false);
+    expect(getAgentSteps("assistant-1")).toEqual([]);
   });
 
   it("handles error payloads by surfacing streamed content", () => {
@@ -170,32 +188,6 @@ describe("createAssistantStreamController", () => {
 
     ctx.controller.dispatchPayload({ type: "citations", citations: [citation] });
     ctx.controller.dispatchPayload({ type: "embeds", embeds: [embed] });
-
-    expect(ctx.messages[0]?.citations).toEqual([citation]);
-    expect(ctx.messages[0]?.embeds).toEqual([embed]);
-  });
-
-  it("patches citations and embeds on intermediate events", () => {
-    const ctx = createController();
-    const citation = {
-      document_id: "doc-1",
-      document_name: "Manual",
-      page: 1,
-      section: null,
-      snippet: "note",
-      regions: [],
-    };
-    const embed = {
-      ref: 1,
-      document_id: "doc-1",
-      page: 1,
-      type: "figure",
-      url: "/x.png",
-      regions: [],
-    };
-
-    ctx.controller.handlers.onCitations([citation]);
-    ctx.controller.handlers.onEmbeds([embed]);
 
     expect(ctx.messages[0]?.citations).toEqual([citation]);
     expect(ctx.messages[0]?.embeds).toEqual([embed]);

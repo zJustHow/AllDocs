@@ -8,11 +8,8 @@ from unittest.mock import patch
 import fitz
 
 from app.config import Settings
-from app.services.ingestion import (
-    IngestionService,
-    _merge_pdf_layout_chunks,
-    _orphan_table_chunk,
-)
+from app.services.ingestion import IngestionService
+from app.services.ingestion_chunking import merge_pdf_layout_chunks, orphan_table_chunk
 from app.services.pdf_captions import (
     LayoutCaption,
     apply_page_caption_matches,
@@ -20,7 +17,6 @@ from app.services.pdf_captions import (
 )
 from app.services.pdf_embedded_images import EmbeddedFigure
 from app.services.pdf_refs import attach_by_explicit_refs
-from app.services.pdf_table_header_detect import discover_header_table_regions
 from app.services.pdf_tables import EmbeddedTable, extract_tables_from_page
 
 
@@ -29,8 +25,6 @@ def _ingestion_settings(**overrides: object) -> Settings:
         "ocr_enabled": False,
         "ingest_caption_enabled": False,
         "pdf_extract_tables": True,
-        "pdf_table_header_detect_enabled": True,
-        "pdf_parallel_workers": 1,
         "rag_chunk_size": 500,
     }
     base.update(overrides)
@@ -105,23 +99,12 @@ def _cross_page_table_pdf() -> bytes:
     return pdf_bytes
 
 
-def _header_guided_doc() -> fitz.Document:
-    doc = fitz.open()
-    page = doc.new_page(width=600, height=800)
-    page.insert_text((10.0, 100.0), "Status", fontsize=12)
-    page.insert_text((200.0, 100.0), "Description", fontsize=12)
-    page.insert_text((10.0, 130.0), "Idle", fontsize=10)
-    page.insert_text((200.0, 130.0), "Ready state", fontsize=10)
-    page.insert_text((10.0, 500.0), "4.6 Next section", fontsize=12)
-    return doc
-
-
 class TestRealPdfTableExtraction:
     def test_extract_tables_from_drawn_grid(self) -> None:
         doc = fitz.open(stream=_single_page_table_pdf(with_intro=False), filetype="pdf")
         try:
             page = doc[0]
-            settings = _ingestion_settings(pdf_table_header_detect_enabled=False)
+            settings = _ingestion_settings()
             tables = extract_tables_from_page(
                 page,
                 1,
@@ -136,33 +119,6 @@ class TestRealPdfTableExtraction:
         assert "Description" in tables[0].summary
         assert "Idle" in tables[0].summary
         assert tables[0].png_bytes.startswith(b"\x89PNG")
-
-    def test_header_guided_discovery_on_searchable_pdf_text(self) -> None:
-        doc = _header_guided_doc()
-        try:
-            regions = discover_header_table_regions(doc[0], settings=_ingestion_settings())
-        finally:
-            doc.close()
-
-        assert len(regions) == 1
-        assert regions[0].headers == ("Status", "Description")
-        assert len(regions[0].vertical_lines) >= 2
-        assert regions[0].clip.y1 > regions[0].clip.y0
-
-    def test_chinese_headers_are_searchable_with_cjk_font(self) -> None:
-        doc = fitz.open()
-        try:
-            page = doc.new_page(width=600, height=800)
-            page.insert_text((10.0, 100.0), "状态", fontname="china-s", fontsize=12)
-            page.insert_text((120.0, 100.0), "说明", fontname="china-s", fontsize=12)
-            hits = page.search_for("状态") + page.search_for("说明")
-            assert len(hits) == 2
-
-            regions = discover_header_table_regions(page, settings=_ingestion_settings())
-            assert len(regions) == 1
-            assert regions[0].headers == ("状态", "说明")
-        finally:
-            doc.close()
 
 
 class TestPdfCaptionTablePairing:
@@ -227,7 +183,7 @@ class TestIngestionTableHelpers:
             layout_regions=({"page": 2, "bbox": [10.0, 160.0, 500.0, 320.0]},),
         )
 
-        chunk = _orphan_table_chunk(table)
+        chunk = orphan_table_chunk(table)
 
         assert chunk.text == ""
         assert chunk.page == 2
@@ -259,9 +215,9 @@ class TestIngestionTableHelpers:
             width=100,
             height=80,
         )
-        inline = [(1, 200.0, _orphan_table_chunk(table))]
+        inline = [(1, 200.0, orphan_table_chunk(table))]
 
-        merged = _merge_pdf_layout_chunks(inline, [text_chunk])
+        merged = merge_pdf_layout_chunks(inline, [text_chunk])
 
         assert len(merged) == 2
         assert merged[0].text == ""
@@ -326,7 +282,7 @@ class TestIngestionServiceParsePdf:
     def test_parse_pdf_gracefully_disables_table_extraction_when_unavailable(self) -> None:
         service = IngestionService(settings=_ingestion_settings())
         with patch(
-            "app.services.ingestion.extract_tables_from_page",
+            "app.services.pdf_ingestion.extract_tables_from_page",
             side_effect=AttributeError("no find_tables"),
         ):
             result = service.parse_pdf(_single_page_table_pdf())
@@ -395,7 +351,7 @@ class TestIngestionServiceParsePdf:
 
         service = IngestionService(settings=_ingestion_settings())
         with patch(
-            "app.services.ingestion.route_figures_via_vlm",
+            "app.services.pdf_ingestion.route_figures_via_vlm",
             return_value=([], [promoted]),
         ):
             result = service.parse_pdf(_single_page_table_pdf(with_intro=True))
@@ -442,13 +398,13 @@ class TestIngestionServiceParsePdf:
             settings=_ingestion_settings(rag_chunk_size=70, rag_chunk_overlap=0)
         )
         with patch(
-            "app.services.ingestion.extract_figures_from_page",
+            "app.services.pdf_ingestion.extract_figures_from_page",
             return_value=[figure],
         ), patch(
-            "app.services.ingestion.extract_tables_from_page",
+            "app.services.pdf_ingestion.extract_tables_from_page",
             return_value=[],
         ), patch(
-            "app.services.ingestion.route_figures_via_vlm",
+            "app.services.pdf_ingestion.route_figures_via_vlm",
             return_value=([figure], []),
         ):
             result = service.parse_pdf(pdf_bytes)

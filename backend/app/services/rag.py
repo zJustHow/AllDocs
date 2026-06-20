@@ -8,16 +8,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings, get_settings
-from app.db.models import Chunk, ChunkAsset, Document
-from app.services.asset_urls import asset_url
-from app.services.chunk_index import (
-    asset_caption_kwargs,
-    captions_merged_into_text,
-    chunk_display_snippet,
-    chunk_rerank_text,
-    format_context_body,
-)
-from app.services.chunk_filter import ChunkFilter, filter_chunks, chunk_asset_types
+from app.db.models import Chunk, Document
+from app.services.chunk_filter import ChunkFilter, filter_chunks
+from app.services.chunk_format import format_chunk_header
+from app.services.chunk_loader import load_ranked_chunks, parse_chunk_uuids
 from app.services.embedding_provider import get_embedding_service
 from app.services.fulltext_store import FulltextStore
 from app.services.hybrid import reciprocal_rank_fusion
@@ -30,18 +24,6 @@ logger = logging.getLogger(__name__)
 
 # Internal delimiter between evidence blocks in <context>; not shown to users.
 _CONTEXT_CHUNK_SEPARATOR = "\n\n<!-- chunk -->\n\n"
-
-
-def parse_chunk_uuids(chunk_ids: list[str]) -> tuple[list[UUID], list[str]]:
-    """Return valid UUIDs and any IDs that failed to parse."""
-    valid: list[UUID] = []
-    invalid: list[str] = []
-    for chunk_id in chunk_ids:
-        try:
-            valid.append(UUID(chunk_id))
-        except ValueError:
-            invalid.append(chunk_id)
-    return valid, invalid
 
 
 def model_path_ready(model_ref: str) -> bool:
@@ -132,94 +114,13 @@ class RAGService:
                     self.settings.rerank_model,
                 )
 
-    async def _load_chunks(
+    async def load_chunks(
         self,
         db: AsyncSession,
         ranked_chunk_ids: list[str],
         score_map: dict[str, float],
     ) -> list[dict]:
-        if not ranked_chunk_ids:
-            return []
-
-        chunk_uuids, invalid_ids = parse_chunk_uuids(ranked_chunk_ids)
-        if invalid_ids:
-            logger.warning("Skipping non-UUID chunk ids: %s", invalid_ids[:5])
-        if not chunk_uuids:
-            return []
-        result = await db.execute(
-            select(Chunk, Document)
-            .join(Document, Chunk.document_id == Document.id)
-            .where(Chunk.id.in_(chunk_uuids))
-        )
-        rows = {str(chunk.id): (chunk, document) for chunk, document in result.all()}
-
-        asset_result = await db.execute(
-            select(ChunkAsset)
-            .where(ChunkAsset.chunk_id.in_(chunk_uuids))
-            .order_by(ChunkAsset.asset_type, ChunkAsset.page)
-        )
-        assets_by_chunk: dict[str, list[ChunkAsset]] = {}
-        for asset in asset_result.scalars():
-            assets_by_chunk.setdefault(str(asset.chunk_id), []).append(asset)
-
-        chunks: list[dict] = []
-        for chunk_id in ranked_chunk_ids:
-            if chunk_id not in rows:
-                continue
-            chunk, document = rows[chunk_id]
-            chunk_assets = assets_by_chunk.get(chunk_id, [])
-            caption_kwargs = asset_caption_kwargs(chunk.caption, chunk_assets)
-            merged_into_text = captions_merged_into_text(chunk.text, **caption_kwargs)
-            body_text = (
-                chunk.text
-                if merged_into_text
-                else format_context_body(chunk.text, **caption_kwargs)
-            )
-            index_text = (
-                chunk.text
-                if merged_into_text
-                else chunk_rerank_text(chunk.text, **caption_kwargs)
-            )
-            snippet = (
-                chunk.text[:300]
-                if merged_into_text
-                else chunk_display_snippet(chunk.text, **caption_kwargs)
-            )
-            chunks.append(
-                {
-                    "chunk_index": chunk.chunk_index,
-                    "chunk_id": chunk_id,
-                    "document_id": str(document.id),
-                    "document_name": document.name,
-                    "page": chunk.page,
-                    "section": chunk.section,
-                    "caption": chunk.caption,
-                    "score": score_map.get(chunk_id, 0.0),
-                    "snippet": snippet,
-                    "text": body_text,
-                    "index_text": index_text,
-                    "layout_bbox": chunk.layout_bbox,
-                    "layout_regions": chunk.layout_regions,
-                    "sub_index": chunk.sub_index,
-                    "assets": [
-                        {
-                            "asset_id": str(asset.id),
-                            "type": asset.asset_type,
-                            "page": asset.page,
-                            "url": asset_url(asset.id),
-                            "caption": asset.caption,
-                            "vlm_caption": asset.vlm_caption,
-                            "figure_caption": asset.figure_caption,
-                            "figure_number": asset.figure_number,
-                            "content_hash": asset.content_hash,
-                            "bbox": asset.bbox,
-                            "layout_regions": asset.layout_regions,
-                        }
-                        for asset in chunk_assets
-                    ],
-                }
-            )
-        return chunks
+        return await load_ranked_chunks(db, ranked_chunk_ids, score_map)
 
     async def _search_hybrid(
         self,
@@ -246,7 +147,11 @@ class RAGService:
                     retrieve_k,
                     effective_filter,
                 )
-            except Exception:
+            except Exception as exc:
+                logger.warning(
+                    "BM25 search failed; continuing with vector results only: %s",
+                    exc,
+                )
                 return []
 
         vector_hits, bm25_hits = await asyncio.gather(vector_search(), bm25_search())
@@ -270,9 +175,6 @@ class RAGService:
 
     async def embed_queries(self, texts: list[str]) -> list[list[float]]:
         return await self.embedding.embed_queries_async(texts)
-
-    async def _embed_queries(self, texts: list[str]) -> list[list[float]]:
-        return await self.embed_queries(texts)
 
     async def _rerank(self, question: str, chunks: list[dict]) -> list[dict]:
         return await self.reranker.rerank_async(question, chunks)
@@ -300,7 +202,7 @@ class RAGService:
             chunk_filter,
         )
 
-        chunks = await self._load_chunks(db, ranked_chunk_ids, score_map)
+        chunks = await self.load_chunks(db, ranked_chunk_ids, score_map)
         chunks = filter_chunks(chunks, chunk_filter)
         if not chunks:
             return []
@@ -364,14 +266,6 @@ class RAGService:
             db, question, chunk_filter, top_k=top_k, query_vector=query_vector
         ) or []
 
-    async def read_chunks(
-        self,
-        db: AsyncSession,
-        chunk_ids: list[str],
-    ) -> list[dict]:
-        score_map = {chunk_id: 1.0 for chunk_id in chunk_ids}
-        return await self._load_chunks(db, chunk_ids, score_map)
-
     async def read_neighbor_chunks(
         self,
         db: AsyncSession,
@@ -407,7 +301,7 @@ class RAGService:
             return [], "未找到相邻 chunk。"
 
         score_map = {cid: 1.0 for cid in ordered_ids}
-        return await self._load_chunks(db, ordered_ids, score_map), None
+        return await self.load_chunks(db, ordered_ids, score_map), None
 
     async def read_pages(
         self,
@@ -448,7 +342,7 @@ class RAGService:
 
         ordered_ids = [str(row[0]) for row in rows]
         score_map = {chunk_id: 1.0 for chunk_id in ordered_ids}
-        return await self._load_chunks(db, ordered_ids, score_map), None
+        return await self.load_chunks(db, ordered_ids, score_map), None
 
     async def search_keyword(
         self,
@@ -473,7 +367,7 @@ class RAGService:
 
         ranked_ids = [chunk_id for chunk_id, _ in hits]
         score_map = {chunk_id: score for chunk_id, score in hits}
-        return await self._load_chunks(db, ranked_ids, score_map)
+        return await self.load_chunks(db, ranked_ids, score_map)
 
     async def read_section(
         self,
@@ -522,15 +416,6 @@ class RAGService:
     def build_context(self, chunks: list[dict]) -> str:
         parts: list[str] = []
         for index, item in enumerate(chunks, start=1):
-            header = f"[{index}] {item['document_name']}"
-            if item.get("page"):
-                header += f" p.{item['page']}"
-            if item.get("section"):
-                header += f" §{item['section']}"
-            asset_types = chunk_asset_types(item)
-            if asset_types:
-                header += f" assets={','.join(asset_types)}"
-            if item.get("assets"):
-                header += " (visual)"
+            header = format_chunk_header(item, index=index)
             parts.append(f"{header}\n{item['text']}")
         return _CONTEXT_CHUNK_SEPARATOR.join(parts)

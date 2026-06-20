@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Document
-from app.services.ingestion import TocEntry, toc_entries_from_dicts
+from app.services.pdf_toc_types import TocEntry, toc_entries_from_dicts
 
 _CHAPTER_INDEX_RE = re.compile(r"第([一二三四五六七八九十百千零两\d]+)章")
 _SECTION_TERM_RE = re.compile(

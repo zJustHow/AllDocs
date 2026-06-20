@@ -115,7 +115,7 @@ def test_read_neighbor_chunks_returns_ordered_neighbors() -> None:
         "snippet": "anchor",
         "assets": [],
     }
-    rag._load_chunks = AsyncMock(return_value=[neighbor_chunk, anchor_chunk])
+    rag.load_chunks = AsyncMock(return_value=[neighbor_chunk, anchor_chunk])
 
     chunks, error = asyncio.run(
         rag.read_neighbor_chunks(db, str(anchor_id), before=1, after=0)
@@ -148,3 +148,26 @@ def test_search_hybrid_fuses_vector_and_bm25() -> None:
     assert "vec-1" in ranked_ids
     assert "bm25-1" in ranked_ids
     assert score_map
+
+
+def test_search_hybrid_continues_when_bm25_fails() -> None:
+    settings = Settings(inference_url="http://inference", hybrid_enabled=True)
+    with (
+        patch("app.services.embedding_provider.get_embedding_service", return_value=MagicMock()),
+        patch("app.services.rag.VectorStore", return_value=MagicMock()),
+        patch("app.services.rag.FulltextStore", return_value=MagicMock()),
+    ):
+        rag = RAGService(settings)
+
+    vector_hit = MagicMock()
+    vector_hit.id = "vec-1"
+    vector_hit.score = 0.9
+    rag.vector_store.search = MagicMock(return_value=[vector_hit])
+    rag.fulltext_store.search = MagicMock(side_effect=RuntimeError("es down"))
+
+    ranked_ids, score_map = asyncio.run(
+        rag._search_hybrid("alarm", [0.1, 0.2], retrieve_k=5, effective_filter=None)
+    )
+
+    assert ranked_ids == ["vec-1"]
+    assert score_map["vec-1"] == 0.9

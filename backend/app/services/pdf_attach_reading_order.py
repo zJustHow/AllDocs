@@ -7,8 +7,6 @@ from collections.abc import Callable
 _MAX_FALLBACK_PAGE_GAP = 2
 _SAME_PAGE_Y_TOLERANCE_PT = 4.0
 
-BlockSpan = tuple[int, int, float, float]
-
 
 def _is_attach_candidate(chunk: object) -> bool:
     page = getattr(chunk, "page", None)

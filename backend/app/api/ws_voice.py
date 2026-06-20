@@ -15,9 +15,12 @@ from app.services.agent.answer_flow import persist_turn, stream_agent_answer
 from app.services.citations_util import strip_inline_citation_markers
 from app.services.deps import get_agent_service
 from app.services.rag import detect_language
-from app.services.speech import SpeechService
+from app.services.speech import SpeechService, is_whisper_ready, wait_whisper_ready
 
 router = APIRouter(tags=["voice-ws"])
+
+_WHISPER_READY_TIMEOUT = 300.0
+_TRANSCRIBE_TIMEOUT = 120.0
 
 _SENTENCE_SPLIT = re.compile(r"(?<=[。！？.!?])\s*")
 
@@ -83,11 +86,44 @@ async def voice_websocket(websocket: WebSocket) -> None:
             doc_ids_raw = payload.get("doc_ids", [])
             filters_raw = payload.get("filters")
             with_audio = payload.get("with_audio", True)
+            mime_type = payload.get("mime_type")
+            language_hint = payload.get("language")
+
+            if not is_whisper_ready():
+                await _send_json(websocket, {"type": "status", "stage": "model_loading"})
+                ready = await asyncio.to_thread(
+                    wait_whisper_ready,
+                    _WHISPER_READY_TIMEOUT,
+                )
+                if not ready:
+                    await _send_json(
+                        websocket,
+                        {
+                            "type": "error",
+                            "message": "Speech model is still loading. Please try again shortly.",
+                        },
+                    )
+                    continue
 
             await _send_json(websocket, {"type": "status", "stage": "transcribing"})
 
             audio_bytes = base64.b64decode(audio_b64)
-            transcription = await asyncio.to_thread(speech.transcribe, audio_bytes)
+            try:
+                transcription = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        speech.transcribe,
+                        audio_bytes,
+                        str(language_hint) if language_hint else None,
+                        str(mime_type) if mime_type else None,
+                    ),
+                    timeout=_TRANSCRIBE_TIMEOUT,
+                )
+            except asyncio.TimeoutError:
+                await _send_json(
+                    websocket,
+                    {"type": "error", "message": "Transcription timed out"},
+                )
+                continue
             question = transcription["text"].strip()
             if not question:
                 await _send_json(websocket, {"type": "error", "message": "Could not transcribe audio"})
@@ -98,6 +134,7 @@ async def voice_websocket(websocket: WebSocket) -> None:
                 websocket,
                 {"type": "transcript", "text": question, "language": lang},
             )
+            await _send_json(websocket, {"type": "status", "stage": "retrieving"})
 
             parsed_doc_ids = [uuid.UUID(str(item)) for item in doc_ids_raw]
             chunk_filters = ChunkFilter.model_validate(filters_raw) if filters_raw else None

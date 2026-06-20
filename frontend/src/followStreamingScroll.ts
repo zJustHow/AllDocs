@@ -1,8 +1,10 @@
+import { readComposerStackHeight } from "./hooks/useComposerStackHeight";
+
 /** Scroll the chat container just enough to keep the streaming cursor visible. */
 export function followCursorInContainer(
   cursor: HTMLElement,
   container: HTMLElement,
-  padding = 24,
+  padding = readComposerStackHeight(container),
 ): void {
   const cursorRect = cursor.getBoundingClientRect();
   const containerRect = container.getBoundingClientRect();

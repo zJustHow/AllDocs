@@ -16,7 +16,10 @@ interface SettingsPanelProps {
   onClose: () => void;
 }
 
-function readDraftValue(field: SettingField, drafts: Record<string, DraftValue>): DraftValue {
+function readDraftValue(
+  field: SettingField,
+  drafts: Record<string, DraftValue>,
+): DraftValue {
   if (field.key in drafts) return drafts[field.key];
   if (field.secret) return "";
   return field.value ?? field.default;
@@ -63,7 +66,9 @@ function SettingsFieldRow({
       <div className="settings-field-head">
         <span className="settings-field-label">{label}</span>
         {field.overridden && draft !== null ? (
-          <span className="settings-field-badge">{t("settings.overridden")}</span>
+          <span className="settings-field-badge">
+            {t("settings.overridden")}
+          </span>
         ) : null}
       </div>
 
@@ -71,7 +76,9 @@ function SettingsFieldRow({
         <input
           type="checkbox"
           checked={
-            draft === null || draft === undefined ? Boolean(field.default) : Boolean(draft)
+            draft === null || draft === undefined
+              ? Boolean(field.default)
+              : Boolean(draft)
           }
           onChange={(e) => onDraftChange(field.key, e.target.checked)}
         />
@@ -107,7 +114,9 @@ function SettingsFieldRow({
             }
             onDraftChange(
               field.key,
-              field.type === "float" ? Number.parseFloat(raw) : Number.parseInt(raw, 10),
+              field.type === "float"
+                ? Number.parseFloat(raw)
+                : Number.parseInt(raw, 10),
             );
           }}
         />
@@ -136,7 +145,9 @@ export default function SettingsPanel({ open, onClose }: SettingsPanelProps) {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
-  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => new Set());
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(
+    () => new Set(),
+  );
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -176,7 +187,8 @@ export default function SettingsPanel({ open, onClose }: SettingsPanelProps) {
       for (const field of group.fields) {
         const draft = readDraftValue(field, drafts);
         if (field.secret) {
-          if (typeof draft === "string" && draft.trim() !== "") keys.add(field.key);
+          if (typeof draft === "string" && draft.trim() !== "")
+            keys.add(field.key);
           if (draft === null) keys.add(field.key);
           continue;
         }
@@ -188,7 +200,8 @@ export default function SettingsPanel({ open, onClose }: SettingsPanelProps) {
   }, [payload, drafts]);
 
   const filteredGroups = useMemo(() => {
-    if (!payload) return [] as Array<SettingsGroup & { visibleFields: SettingField[] }>;
+    if (!payload)
+      return [] as Array<SettingsGroup & { visibleFields: SettingField[] }>;
     const query = normalizeSearch(searchQuery);
     return payload.groups
       .map((group) => {
@@ -286,29 +299,39 @@ export default function SettingsPanel({ open, onClose }: SettingsPanelProps) {
         aria-hidden={!open}
       >
         <header className="settings-panel-header">
-          <div>
+          <div className="settings-panel-header-top">
             <h2 id="settings-panel-title">{t("settings.title")}</h2>
-            <p className="settings-panel-subtitle">{t("settings.subtitle")}</p>
+            <div className="settings-panel-header-actions">
+              <input
+                type="search"
+                className="settings-search"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder={t("settings.searchPlaceholder")}
+                aria-label={t("settings.searchPlaceholder")}
+              />
+              <button
+                type="button"
+                className="icon-btn"
+                onClick={onClose}
+                aria-label={t("dialog.close")}
+              >
+                <CloseIcon />
+              </button>
+            </div>
           </div>
-          <button type="button" className="icon-btn" onClick={onClose} aria-label={t("dialog.close")}>
-            <CloseIcon />
-          </button>
+          <p className="settings-panel-subtitle">{t("settings.subtitle")}</p>
         </header>
 
-        <div className="settings-toolbar">
-          <input
-            type="search"
-            className="settings-search"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder={t("settings.searchPlaceholder")}
-            aria-label={t("settings.searchPlaceholder")}
-          />
-        </div>
-
-        {loading ? <p className="settings-panel-status">{t("settings.loading")}</p> : null}
-        {error ? <div className="banner error settings-panel-banner">{error}</div> : null}
-        {notice ? <div className="banner settings-panel-banner">{notice}</div> : null}
+        {loading ? (
+          <p className="settings-panel-status">{t("settings.loading")}</p>
+        ) : null}
+        {error ? (
+          <div className="banner error settings-panel-banner">{error}</div>
+        ) : null}
+        {notice ? (
+          <div className="banner settings-panel-banner">{notice}</div>
+        ) : null}
 
         <div className="settings-panel-body">
           {!loading && payload && filteredGroups.length === 0 ? (
@@ -334,7 +357,9 @@ export default function SettingsPanel({ open, onClose }: SettingsPanelProps) {
                     <ChevronDownIcon />
                   </span>
                   <span className="settings-group-title">{groupLabel}</span>
-                  <span className="settings-group-count">{group.visibleFields.length}</span>
+                  <span className="settings-group-count">
+                    {group.visibleFields.length}
+                  </span>
                 </button>
 
                 {expanded ? (
@@ -360,7 +385,11 @@ export default function SettingsPanel({ open, onClose }: SettingsPanelProps) {
         </div>
 
         <footer className="settings-panel-footer">
-          <button type="button" className="confirm-dialog-btn" onClick={onClose}>
+          <button
+            type="button"
+            className="confirm-dialog-btn"
+            onClick={onClose}
+          >
             {t("dialog.cancel")}
           </button>
           <button

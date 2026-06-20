@@ -15,7 +15,6 @@ from app.services.agent.tools import (
     AgentToolRegistry,
     SEARCH_SNIPPET_MAX,
     _format_batch_observation,
-    _format_chunk_header,
     _format_chunks,
     _merge_batch_chunks,
     count_retrieval_units,
@@ -25,6 +24,7 @@ from app.services.agent.tools import (
     parse_tool_filters,
     prioritize_evidence,
 )
+from app.services.chunk_format import format_chunk_header
 
 
 def test_parse_batch_searches_skips_empty_queries() -> None:
@@ -307,7 +307,7 @@ def test_format_chunks_read_mode_returns_full_text() -> None:
 
 
 def test_format_chunk_header_includes_figure_number_and_score() -> None:
-    header = _format_chunk_header(
+    header = format_chunk_header(
         {
             "document_name": "Manual.pdf",
             "page": 3,
@@ -320,6 +320,7 @@ def test_format_chunk_header_includes_figure_number_and_score() -> None:
             ],
         },
         index=1,
+        detailed=True,
     )
 
     assert "fig=4-7,2-1" in header
@@ -450,40 +451,43 @@ def test_execute_list_documents(tool_registry: AgentToolRegistry) -> None:
 
 def test_execute_lookup_asset(tool_registry: AgentToolRegistry) -> None:
     chunk_id = str(uuid.uuid4())
-    tool_registry.rag._load_chunks = AsyncMock(
-        return_value=[
-            {
-                "chunk_id": chunk_id,
-                "document_name": "Manual.pdf",
-                "page": 10,
-                "snippet": "参数表",
-                "text": "额定电压 220V",
-                "assets": [{"type": "table", "figure_number": "2-1"}],
-            }
-        ]
-    )
 
-    db = AsyncMock()
-    db.execute = AsyncMock(
-        return_value=MagicMock(all=lambda: [(chunk_id,)])
-    )
-
-    observation, chunks, units = asyncio.run(
-        tool_registry.execute(
-            db,
-            "lookup_asset",
-            {"figure_number": "表2-1", "kind": "table"},
-            question="q",
-            doc_ids=None,
-            explicit_filters=None,
+    with patch(
+        "app.services.asset_lookup.load_ranked_chunks",
+        AsyncMock(
+            return_value=[
+                {
+                    "chunk_id": chunk_id,
+                    "document_name": "Manual.pdf",
+                    "page": 10,
+                    "snippet": "参数表",
+                    "text": "额定电压 220V",
+                    "assets": [{"type": "table", "figure_number": "2-1"}],
+                }
+            ]
+        ),
+    ) as load_mock:
+        db = AsyncMock()
+        db.execute = AsyncMock(
+            return_value=MagicMock(all=lambda: [(chunk_id,)])
         )
-    )
+
+        observation, chunks, units = asyncio.run(
+            tool_registry.execute(
+                db,
+                "lookup_asset",
+                {"figure_number": "表2-1", "kind": "table"},
+                question="q",
+                doc_ids=None,
+                explicit_filters=None,
+            )
+        )
 
     assert units == 0
     assert len(chunks) == 1
     assert "lookup_asset" in observation
     assert "fig=2-1" in observation
-    tool_registry.rag._load_chunks.assert_awaited_once()
+    load_mock.assert_awaited_once()
 
 
 def test_execute_read_pages(tool_registry: AgentToolRegistry) -> None:

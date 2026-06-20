@@ -41,7 +41,7 @@ describe("useChatScroll", () => {
     expect(result.current.scrollTargetId).toBeNull();
   });
 
-  it("sizes the spacer and clears it on reset", () => {
+  it("resets scroll, refs, and spacer on resetSpacer", () => {
     const { result } = renderHookWithI18n(() => useChatScroll());
     const container = document.createElement("div");
     const spacer = document.createElement("div");
@@ -52,6 +52,9 @@ describe("useChatScroll", () => {
       value: () => ({ height: 120 }),
       configurable: true,
     });
+
+    container.scrollTop = 500;
+    spacer.style.minHeight = "200px";
 
     act(() => {
       (result.current.chatAreaRef as { current: HTMLDivElement | null }).current = container;
@@ -64,6 +67,13 @@ describe("useChatScroll", () => {
 
     act(() => {
       result.current.resetSpacer();
+    });
+
+    expect(container.scrollTop).toBe(0);
+    expect(spacer.style.minHeight).toBe("");
+
+    act(() => {
+      result.current.setScrollTargetId("msg-1");
     });
     expect(spacer.style.minHeight).toBe("");
   });

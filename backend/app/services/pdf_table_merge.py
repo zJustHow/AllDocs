@@ -38,6 +38,10 @@ def _figure_numbers_compatible(left: str | None, right: str | None) -> bool:
     return left == right
 
 
+def _figure_numbers_match(left: str | None, right: str | None) -> bool:
+    return bool(left and right and left == right)
+
+
 def can_merge_cross_page_tables(
     left: EmbeddedTable,
     right: EmbeddedTable,
@@ -68,6 +72,9 @@ def can_merge_cross_page_tables(
         ratio=settings.pdf_cross_page_table_top_ratio,
     ):
         return False
+
+    if _figure_numbers_match(left.figure_number, right.figure_number):
+        return True
 
     left_cols = markdown_table_column_count(left.summary)
     right_cols = markdown_table_column_count(right.summary)

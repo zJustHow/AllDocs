@@ -55,7 +55,6 @@ interface I18nContextValue {
   locale: Locale;
   setLocale: (locale: Locale) => void;
   t: (key: string, values?: TranslationValues) => string;
-  suggestions: readonly string[];
 }
 
 const I18nContext = createContext<I18nContextValue | null>(null);
@@ -80,7 +79,6 @@ export function I18nProvider({ children }: { children: React.ReactNode }) {
       locale,
       setLocale,
       t: (key, values) => translate(locale, key, values),
-      suggestions: LOCALES[locale].suggestions,
     }),
     [locale, setLocale],
   );

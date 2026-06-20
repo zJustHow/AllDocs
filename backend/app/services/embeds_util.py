@@ -6,14 +6,22 @@ from app.services.asset_urls import asset_url
 from app.services.pdf_layout_regions import resolve_asset_regions
 from app.services.visual_asset_util import VISUAL_ASSET_TYPES
 
+_EMBED_CAPTION_MAX_LEN = 120
+
+
+def _truncate_display_text(text: str, max_len: int = _EMBED_CAPTION_MAX_LEN) -> str:
+    if len(text) <= max_len:
+        return text
+    return text[: max_len - 1] + "…"
+
 
 def _embed_display_caption(chunk: dict, asset: dict) -> str | None:
     figure_caption = str(asset.get("figure_caption") or "").strip()
-    if figure_caption and len(figure_caption) <= 120:
-        return figure_caption
+    if figure_caption:
+        return _truncate_display_text(figure_caption)
     caption = str(asset.get("caption") or "").strip()
-    if caption and len(caption) <= 120:
-        return caption
+    if caption:
+        return _truncate_display_text(caption)
     figure_number = str(asset.get("figure_number") or "").strip()
     if figure_number:
         prefix = "图" if (asset.get("type") or "figure") == "figure" else "表"

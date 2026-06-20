@@ -84,20 +84,11 @@ class Settings(BaseSettings):
     pdf_table_min_rows: int = 2
     pdf_table_min_cols: int = 2
     pdf_table_render_scale: float = 2.0
-    pdf_table_header_detect_enabled: bool = True
-    pdf_table_header_y_tolerance: float = 10.0
-    pdf_table_header_margin: float = 8.0
-    pdf_table_header_top_padding: float = 5.0
-    pdf_table_header_clip_bottom_ratio: float = 0.88
-    pdf_table_header_snap_y_tolerance: float = 8.0
-    pdf_table_header_join_y_tolerance: float = 5.0
     pdf_merge_cross_page_tables: bool = True
     pdf_cross_page_table_bottom_ratio: float = 0.82
     pdf_cross_page_table_top_ratio: float = 0.18
     pdf_stitch_cross_page_table_png: bool = True
     pdf_cross_page_table_stitch_gap: int = 2
-
-    pdf_parallel_workers: int = 4
 
     pdf_filter_header_footer: bool = True
     pdf_header_margin_ratio: float = 0.08

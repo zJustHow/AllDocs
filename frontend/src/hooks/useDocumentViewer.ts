@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ViewerTarget } from "../citations";
 import type { DocumentItem } from "../types";
+import { PANEL_CLOSE_MS } from "../layout";
 import type { RightPanelId } from "./useRightPanels";
 
 interface UseDocumentViewerOptions {
@@ -42,7 +43,7 @@ export function useDocumentViewer({
         clearTarget();
         return;
       }
-      viewerCloseTimerRef.current = setTimeout(clearTarget, 320);
+      viewerCloseTimerRef.current = setTimeout(clearTarget, PANEL_CLOSE_MS);
     },
     [unregisterRightPanel],
   );
@@ -70,7 +71,7 @@ export function useDocumentViewer({
       }
 
       registerRightPanel("viewer");
-      requestAnimationFrame(() => setViewerOpen(true));
+      setViewerOpen(true);
     },
     [documents, viewerTarget, viewerOpen, registerRightPanel],
   );

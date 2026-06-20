@@ -22,10 +22,10 @@ describe("followCursorInContainer", () => {
       getBoundingClientRect: () => ({ bottom: 500 }),
     } as HTMLElement;
     const cursor = {
-      getBoundingClientRect: () => ({ bottom: 460 }),
+      getBoundingClientRect: () => ({ bottom: 380 }),
     } as HTMLElement;
 
-    followCursorInContainer(cursor, container);
+    followCursorInContainer(cursor, container, 100);
 
     expect(container.scrollTop).toBe(100);
   });

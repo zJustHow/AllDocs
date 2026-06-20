@@ -1,43 +1,33 @@
-import { useSyncExternalStore } from "react";
+import {
+  createExternalStoreHook,
+  createExternalStoreNotifier,
+  createMapStore,
+} from "./externalStore";
 
-const contentById = new Map<string, string>();
-const listeners = new Set<() => void>();
-
-function notify() {
-  for (const listener of listeners) {
-    listener();
-  }
-}
+const notifier = createExternalStoreNotifier();
+const contentStore = createMapStore<string>(notifier);
 
 export function initStreamingContent(messageId: string): void {
-  contentById.set(messageId, "");
-  notify();
+  contentStore.init(messageId, "");
 }
 
 export function appendStreamingContent(messageId: string, delta: string): void {
-  contentById.set(messageId, (contentById.get(messageId) ?? "") + delta);
-  notify();
+  contentStore.set(messageId, contentStore.get(messageId, "") + delta);
 }
 
 export function getStreamingContent(messageId: string): string {
-  return contentById.get(messageId) ?? "";
+  return contentStore.get(messageId, "");
 }
 
 export function clearStreamingContent(messageId: string): void {
-  if (!contentById.delete(messageId)) return;
-  notify();
+  contentStore.delete(messageId);
 }
 
-function subscribe(callback: () => void): () => void {
-  listeners.add(callback);
-  return () => listeners.delete(callback);
-}
+export const subscribeStreamingContent = notifier.subscribe;
 
 /** Subscribe only the active streaming message — avoids App-wide re-renders on each delta. */
-export function useStreamingContent(messageId: string): string {
-  return useSyncExternalStore(
-    subscribe,
-    () => getStreamingContent(messageId),
-    () => "",
-  );
-}
+export const useStreamingContent = createExternalStoreHook(
+  notifier.subscribe,
+  getStreamingContent,
+  "",
+);

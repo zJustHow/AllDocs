@@ -1,7 +1,6 @@
-import { memo, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import ImageLightbox from "./ImageLightbox";
 import {
-  embedDedupeKey,
   embedToViewerTarget,
   isOrphanInlineSuffix,
   isTrailingPunctuationOnly,
@@ -12,6 +11,7 @@ import {
   type MessageSegment,
   type ViewerTarget,
 } from "./citations";
+import { embedDedupeKey } from "./shared/contract";
 import { useI18n } from "./i18n";
 import ProseBlock from "./ProseBlock";
 import type { Citation, MessageEmbed } from "./types";
@@ -31,11 +31,36 @@ interface AnswerEmbedFigureProps {
 
 type SectionBlock =
   | { kind: "prose"; segments: MessageSegment[] }
-  | { kind: "embeds"; embeds: MessageEmbed[] };
+  | { kind: "embeds"; embeds: MessageEmbed[]; layout: "figures-row" | "table-row" };
+
+function isTableEmbed(embed: MessageEmbed): boolean {
+  return embed.type === "table";
+}
+
+/** Tables each get a row; all figures from one sentence share a single row. */
+function expandEmbedRun(embedRun: MessageEmbed[]): SectionBlock[] {
+  const blocks: SectionBlock[] = [];
+  const figures = embedRun.filter((embed) => !isTableEmbed(embed));
+  let figuresRowPlaced = false;
+
+  for (const embed of embedRun) {
+    if (isTableEmbed(embed)) {
+      blocks.push({ kind: "embeds", embeds: [embed], layout: "table-row" });
+      continue;
+    }
+    if (!figuresRowPlaced) {
+      blocks.push({ kind: "embeds", embeds: figures, layout: "figures-row" });
+      figuresRowPlaced = true;
+    }
+  }
+
+  return blocks;
+}
 
 function buildSectionBlocks(segments: MessageSegment[]): SectionBlock[] {
   const blocks: SectionBlock[] = [];
   let proseBatch: MessageSegment[] = [];
+  let embedRun: MessageEmbed[] = [];
 
   const flushProse = () => {
     if (!proseBatch.length) return;
@@ -43,29 +68,27 @@ function buildSectionBlocks(segments: MessageSegment[]): SectionBlock[] {
     proseBatch = [];
   };
 
+  const flushEmbeds = () => {
+    if (!embedRun.length) return;
+    blocks.push(...expandEmbedRun(embedRun));
+    embedRun = [];
+  };
+
   for (const segment of segments) {
     if (segment.type === "embed") {
       flushProse();
-      const last = blocks[blocks.length - 1];
-      if (last?.kind === "embeds") {
-        last.embeds.push(segment.embed);
-      } else {
-        blocks.push({ kind: "embeds", embeds: [segment.embed] });
-      }
+      embedRun.push(segment.embed);
       continue;
     }
+    flushEmbeds();
     proseBatch.push(segment);
   }
   flushProse();
+  flushEmbeds();
 
   while (blocks.length >= 2) {
     const trailing = blocks[blocks.length - 1];
-    const beforeTrailing = blocks[blocks.length - 2];
-    if (
-      trailing.kind !== "prose" ||
-      beforeTrailing.kind !== "embeds" ||
-      blocks.length < 3
-    ) {
+    if (trailing.kind !== "prose") {
       break;
     }
 
@@ -77,12 +100,16 @@ function buildSectionBlocks(segments: MessageSegment[]): SectionBlock[] {
       break;
     }
 
-    const anchor = blocks[blocks.length - 3];
-    if (anchor.kind !== "prose") {
+    let embedEnd = blocks.length - 2;
+    while (embedEnd >= 0 && blocks[embedEnd].kind === "embeds") {
+      embedEnd -= 1;
+    }
+    if (embedEnd < 0 || blocks[embedEnd].kind !== "prose") {
       break;
     }
 
-    blocks[blocks.length - 3] = {
+    const anchor = blocks[embedEnd];
+    blocks[embedEnd] = {
       kind: "prose",
       segments: [...anchor.segments, ...trailing.segments],
     };
@@ -114,10 +141,23 @@ function embedDisplayCaption(
 function AnswerEmbedFigure({ embed, onOpenDocument }: AnswerEmbedFigureProps) {
   const { t } = useI18n();
   const [lightboxOpen, setLightboxOpen] = useState(false);
-  const caption = embedDisplayCaption(embed, t);
-  const linkLabel =
-    caption ?? t("viewer.pageHint", { page: embed.page }).trim();
+  const [imageState, setImageState] = useState<"loading" | "loaded" | "error">(
+    "loading",
+  );
+  const imgRef = useRef<HTMLImageElement>(null);
+  const linkLabel = embedDisplayCaption(embed, t);
   const isTable = embed.type === "table";
+
+  useEffect(() => {
+    setImageState("loading");
+  }, [embed.url]);
+
+  useEffect(() => {
+    const img = imgRef.current;
+    if (img?.complete) {
+      setImageState(img.naturalWidth > 0 ? "loaded" : "error");
+    }
+  }, [embed.url]);
 
   return (
     <figure
@@ -130,19 +170,35 @@ function AnswerEmbedFigure({ embed, onOpenDocument }: AnswerEmbedFigureProps) {
         className="answer-embed-image-btn"
         aria-label={t("viewer.viewEnlarged")}
         onClick={() => setLightboxOpen(true)}
+        disabled={imageState === "error"}
       >
+        {imageState !== "loaded" ? (
+          <div
+            className={`answer-embed-image-placeholder${
+              imageState === "error" ? " answer-embed-image-placeholder--error" : ""
+            }`}
+            aria-hidden
+            role={imageState === "error" ? "img" : undefined}
+            aria-label={imageState === "error" ? linkLabel : undefined}
+          />
+        ) : null}
         <img
+          ref={imgRef}
           src={embed.url}
           alt={linkLabel}
-          loading="lazy"
-          className="answer-embed-image"
+          loading="eager"
+          className={`answer-embed-image${
+            imageState === "loaded" ? "" : " answer-embed-image--hidden"
+          }`}
+          onLoad={() => setImageState("loaded")}
+          onError={() => setImageState("error")}
         />
       </button>
       <ImageLightbox
         open={lightboxOpen}
         src={embed.url}
         alt={linkLabel}
-        caption={caption}
+        caption={linkLabel}
         onClose={() => setLightboxOpen(false)}
       />
       <figcaption>
@@ -191,8 +247,8 @@ const SectionView = memo(function SectionView({
           );
         }
 
-        const isTable = block.embeds.some((embed) => embed.type === "table");
-        const compact = block.embeds.length === 1 && !isTable;
+        const isTable = block.layout === "table-row";
+        const compact = block.layout === "figures-row" && block.embeds.length === 1;
 
         return (
           <div

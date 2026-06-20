@@ -14,7 +14,6 @@ from app.services.settings_registry import (
     EDITABLE_KEYS,
     FIELD_BY_KEY,
     GROUP_ORDER,
-    SECRET_KEYS,
     coerce_setting_value,
     serialize_setting_value,
 )
@@ -80,15 +79,6 @@ def apply_overrides(base: Settings, overrides: dict[str, str] | None = None) -> 
     if not typed:
         return base
     return base.model_copy(update=typed)
-
-
-def effective_value(key: str, env: Settings | None = None) -> Any:
-    env = env or _env_settings()
-    overrides = get_overrides()
-    if key in overrides:
-        field = FIELD_BY_KEY[key]
-        return coerce_setting_value(field, overrides[key])
-    return getattr(env, key)
 
 
 def build_settings_response() -> dict[str, Any]:
@@ -176,9 +166,3 @@ def update_overrides(session: Session, values: dict[str, Any]) -> dict[str, str]
 
     set_overrides(current)
     return current
-
-
-def clear_secret(session: Session, key: str) -> None:
-    if key not in SECRET_KEYS:
-        raise ValueError(f"Not a secret setting: {key}")
-    update_overrides(session, {key: None})

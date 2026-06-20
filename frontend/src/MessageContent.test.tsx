@@ -1,5 +1,5 @@
 /** @vitest-environment jsdom */
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import MessageContent from "./MessageContent";
@@ -96,6 +96,45 @@ describe("MessageContent", () => {
     expect(document.querySelector(".answer-embed--table")).toBeInTheDocument();
   });
 
+  it("places each table on its own row and groups figures on one row", () => {
+    renderMessage("See the assets.", {
+      embeds: [
+        { ...embed, ref: 1, caption: "Figure 1", type: "figure", sentence_index: 0 },
+        {
+          ...embed,
+          ref: 2,
+          caption: "Table 1",
+          type: "table",
+          url: "/table1.png",
+          sentence_index: 0,
+        },
+        { ...embed, ref: 3, caption: "Figure 2", type: "figure", url: "/fig2.png", sentence_index: 0 },
+        {
+          ...embed,
+          ref: 4,
+          caption: "Table 2",
+          type: "table",
+          url: "/table2.png",
+          sentence_index: 0,
+        },
+      ],
+    });
+
+    const mediaBlocks = document.querySelectorAll(".answer-media-figures");
+    expect(mediaBlocks).toHaveLength(3);
+
+    expect(mediaBlocks[0]).not.toHaveClass("answer-media-block--table");
+    expect(mediaBlocks[0].querySelectorAll(".answer-embed--figure")).toHaveLength(2);
+
+    expect(mediaBlocks[1]).toHaveClass("answer-media-block--table");
+    expect(mediaBlocks[1].querySelectorAll(".answer-embed--table")).toHaveLength(1);
+    expect(screen.getByRole("img", { name: /Table 1/i })).toBeInTheDocument();
+
+    expect(mediaBlocks[2]).toHaveClass("answer-media-block--table");
+    expect(mediaBlocks[2].querySelectorAll(".answer-embed--table")).toHaveLength(1);
+    expect(screen.getByRole("img", { name: /Table 2/i })).toBeInTheDocument();
+  });
+
   it("opens the image lightbox from the embed preview", async () => {
     const user = userEvent.setup();
     renderMessage("See the diagram.", { embeds: [embed] });
@@ -113,14 +152,39 @@ describe("MessageContent", () => {
     expect(screen.getByRole("button", { name: /\[1\].*Manual/i })).toBeInTheDocument();
   });
 
-  it("renders streaming content without sentence-boundary embed splits", () => {
+  it("renders streaming content without embeds until the embed list arrives", () => {
     renderMessage("Streaming answer [1].", {
       streaming: true,
-      embeds: [embed],
     });
 
     expect(screen.getByText(/Streaming answer/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "[1]" })).toBeInTheDocument();
+    expect(screen.queryByRole("img", { name: /Figure 1/i })).not.toBeInTheDocument();
+  });
+
+  it("places embeds during streaming once the embed list is known", () => {
+    renderMessage("See the diagram.", {
+      streaming: true,
+      embeds: [embed],
+    });
+
+    expect(screen.getByText(/See the diagram/i)).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: /Figure 1/i })).toBeInTheDocument();
+    expect(
+      document.querySelector(".answer-embed-image-placeholder"),
+    ).toBeInTheDocument();
+  });
+
+  it("shows the loaded image after the preview finishes loading", () => {
+    renderMessage("See the diagram.", { embeds: [embed] });
+
+    const image = screen.getByRole("img", { name: /Figure 1/i });
+    fireEvent.load(image);
+
+    expect(
+      document.querySelector(".answer-embed-image-placeholder"),
+    ).not.toBeInTheDocument();
+    expect(image).not.toHaveClass("answer-embed-image--hidden");
   });
 
   it("merges orphan trailing citation suffixes into the preceding prose block", () => {

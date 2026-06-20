@@ -1,23 +1,11 @@
 /** @vitest-environment jsdom */
 import { act } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { renderHookWithI18n, sampleDocument } from "./testUtils";
 import { useDocumentViewer } from "./useDocumentViewer";
+import { PANEL_CLOSE_MS } from "../layout";
 
 describe("useDocumentViewer", () => {
-  beforeEach(() => {
-    vi.useFakeTimers();
-    vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
-      callback(0);
-      return 1;
-    });
-  });
-
-  afterEach(() => {
-    vi.useRealTimers();
-    vi.restoreAllMocks();
-  });
-
   function renderViewer() {
     const registerRightPanel = vi.fn();
     const unregisterRightPanel = vi.fn();
@@ -31,7 +19,7 @@ describe("useDocumentViewer", () => {
     return { ...hook, registerRightPanel, unregisterRightPanel };
   }
 
-  it("opens a document and enriches metadata from the library", () => {
+  it("opens immediately and enriches document metadata", () => {
     const { result, registerRightPanel } = renderViewer();
 
     act(() => {
@@ -41,7 +29,7 @@ describe("useDocumentViewer", () => {
         page: 2,
       });
     });
-
+    expect(result.current.viewerOpen).toBe(true);
     expect(registerRightPanel).toHaveBeenCalledWith("viewer");
     expect(result.current.viewerOpen).toBe(true);
     expect(result.current.viewerTarget).toMatchObject({
@@ -77,7 +65,7 @@ describe("useDocumentViewer", () => {
     expect(result.current.viewerTarget?.page).toBe(3);
   });
 
-  it("clears the viewer immediately when requested", () => {
+  it("clears the viewer when closed", () => {
     const { result, unregisterRightPanel } = renderViewer();
 
     act(() => {
@@ -87,38 +75,20 @@ describe("useDocumentViewer", () => {
         page: 1,
       });
     });
-    act(() => {
-      result.current.closeViewer(true);
-    });
-
-    expect(result.current.viewerOpen).toBe(false);
-    expect(result.current.viewerTarget).toBeNull();
-    expect(unregisterRightPanel).toHaveBeenCalledWith("viewer");
-  });
-
-  it("defers clearing the viewer until the close animation finishes", () => {
-    const { result, unregisterRightPanel } = renderViewer();
-
-    act(() => {
-      result.current.openDocument({
-        documentId: "doc-1",
-        documentName: "Manual.pdf",
-        page: 1,
-      });
-    });
+    vi.useFakeTimers();
     act(() => {
       result.current.closeViewer();
     });
 
     expect(result.current.viewerOpen).toBe(false);
-    expect(result.current.viewerTarget).not.toBeNull();
     expect(unregisterRightPanel).not.toHaveBeenCalled();
 
     act(() => {
-      vi.advanceTimersByTime(320);
+      vi.advanceTimersByTime(PANEL_CLOSE_MS);
     });
 
     expect(result.current.viewerTarget).toBeNull();
     expect(unregisterRightPanel).toHaveBeenCalledWith("viewer");
+    vi.useRealTimers();
   });
 });

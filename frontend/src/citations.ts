@@ -8,8 +8,6 @@ import {
 import { forEachTextRunBoundary } from "./sentenceBoundary";
 import type { BboxRegion } from "./viewerPosition";
 
-export { embedDedupeKey };
-
 export interface ViewerTarget {
   documentId: string;
   documentName: string;
@@ -135,14 +133,16 @@ export function splitMessageWithCitations(
   options?: {
     hideUnmatched?: boolean;
     embeds?: MessageEmbed[];
-    /** Skip sentence-boundary embed placement during streaming. */
+    /** Skip sentence-boundary embed placement until embeds are known. */
     streaming?: boolean;
   },
 ): MessageSegment[] {
   const hideUnmatched = options?.hideUnmatched ?? false;
   const streaming = options?.streaming ?? false;
   const embeds = options?.embeds ?? [];
-  const embedsBySentence = streaming
+  // Embeds arrive before `done` while streaming is still true; place them as soon as the list is known.
+  const deferEmbedPlacement = streaming && embeds.length === 0;
+  const embedsBySentence = deferEmbedPlacement
     ? new Map<number, MessageEmbed[]>()
     : indexEmbedsBy(embeds, (embed) => embed.sentence_index);
   const pattern = new RegExp(messageTokenPattern.source, "g");
@@ -158,7 +158,7 @@ export function splitMessageWithCitations(
   let match: RegExpExecArray | null;
 
   const flushEmbedsForCurrentSentence = () => {
-    if (streaming) return;
+    if (deferEmbedPlacement) return;
     appendEmbedsForKey(
       segments,
       currentSentenceIndex,
@@ -170,7 +170,7 @@ export function splitMessageWithCitations(
 
   const appendText = (text: string) => {
     if (!text) return;
-    if (streaming) {
+    if (deferEmbedPlacement) {
       segments.push({ type: "text", value: text });
       return;
     }
@@ -203,14 +203,14 @@ export function splitMessageWithCitations(
   if (lastIndex < content.length) {
     appendText(content.slice(lastIndex));
   }
-  if (!streaming) {
+  if (!deferEmbedPlacement) {
     flushEmbedsForCurrentSentence();
   }
 
   if (!segments.length) {
     return [{ type: "text", value: content }];
   }
-  if (streaming) {
+  if (deferEmbedPlacement) {
     return segments;
   }
   return absorbTrailingPunctuationBeforeEmbeds(segments);

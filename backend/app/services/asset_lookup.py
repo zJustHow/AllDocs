@@ -9,8 +9,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import ChunkAsset
+from app.services.chunk_loader import load_ranked_chunks
 from app.services.pdf_captions import normalize_figure_number
-from app.services.rag import RAGService
 
 _ASSET_NUMBER_RE = re.compile(
     r"^\s*(?:(?:图|表)|(?i:figure|fig\.?|table))?\s*"
@@ -35,7 +35,6 @@ def parse_asset_number(raw: str) -> str | None:
 
 async def lookup_asset(
     db: AsyncSession,
-    rag: RAGService,
     figure_number: str,
     *,
     kind: str | None = None,
@@ -63,5 +62,5 @@ async def lookup_asset(
         return [], f"未找到 {label} {normalized}。"
 
     score_map = {chunk_id: 1.0 for chunk_id in chunk_ids}
-    chunks = await rag._load_chunks(db, chunk_ids, score_map)
+    chunks = await load_ranked_chunks(db, chunk_ids, score_map)
     return chunks, None

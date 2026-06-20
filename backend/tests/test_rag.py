@@ -1,25 +1,15 @@
 import os
 import tempfile
-import uuid
 
 from app.config import Settings
 from app.services.rag import (
+    RAGService,
     detect_language,
     low_relevance_message,
     model_path_ready,
     not_found_message,
-    parse_chunk_uuids,
-    RAGService,
     resolve_retrieval_fallback,
 )
-
-
-def test_parse_chunk_uuids_splits_valid_and_invalid() -> None:
-    valid_id = str(uuid.uuid4())
-    valid, invalid = parse_chunk_uuids([valid_id, "not-a-uuid", ""])
-
-    assert valid == [uuid.UUID(valid_id)]
-    assert invalid == ["not-a-uuid", ""]
 
 
 def test_model_path_ready_for_relative_and_absolute_paths() -> None:

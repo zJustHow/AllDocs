@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from app.services.agent.tools import _format_chunk_header
+from app.services.chunk_format import format_chunk_header
 
 RETRIEVAL_ACTIONS = frozenset(
     {
@@ -23,7 +23,7 @@ def build_evidence_index(evidence: list[dict]) -> str:
         return ""
     lines = [f"当前证据池 {len(evidence)} 条（较早检索 observation 已压缩）："]
     for index, chunk in enumerate(evidence, start=1):
-        lines.append(_format_chunk_header(chunk, index=index))
+        lines.append(format_chunk_header(chunk, index=index, detailed=True))
     return "\n".join(lines)
 
 

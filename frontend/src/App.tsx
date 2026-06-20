@@ -2,42 +2,34 @@ import {
   lazy,
   Suspense,
   useMemo,
+  useRef,
   useState,
+  type CSSProperties,
 } from "react";
 import Composer from "./Composer";
-import { highlightRegionsKey } from "./viewerPosition";
+import DocumentViewer from "./DocumentViewer";
 import { useDocuments } from "./hooks/useDocuments";
 import { useChat } from "./hooks/useChat";
 import { useChatScroll } from "./hooks/useChatScroll";
+import { useComposerStackHeight } from "./hooks/useComposerStackHeight";
 import { useDocumentViewer } from "./hooks/useDocumentViewer";
 import { useRightPanels } from "./hooks/useRightPanels";
 import { useSidebarLayout } from "./hooks/useSidebarLayout";
 import { useVoice } from "./hooks/useVoice";
 import { useI18n, type Locale } from "./i18n";
-import {
-  AllDocsIcon,
-  DocIcon,
-  MenuIcon,
-  SettingsIcon,
-} from "./icons";
+import { AllDocsIcon, DocIcon, MenuIcon, SettingsIcon } from "./icons";
 import MessageList from "./MessageList";
 import Sidebar from "./Sidebar";
 import { useConfirmDialog } from "./useConfirmDialog";
 
-const DocumentViewer = lazy(() => import("./DocumentViewer"));
 const SettingsPanel = lazy(() => import("./SettingsPanel"));
 
 export default function App() {
-  const { t, locale, setLocale, suggestions } = useI18n();
+  const { t, locale, setLocale } = useI18n();
   const { confirm, dialog: confirmDialog } = useConfirmDialog();
   const [error, setError] = useState<string | null>(null);
 
-  const {
-    sidebarOpen,
-    closeSidebar,
-    toggleSidebar,
-    closeSidebarOnMobile,
-  } = useSidebarLayout();
+  const { sidebarOpen, closeSidebar, toggleSidebar } = useSidebarLayout();
 
   const {
     settingsOpen,
@@ -51,7 +43,6 @@ export default function App() {
   const {
     chatAreaRef,
     spacerRef,
-    scrollTargetId,
     setScrollTargetId,
     registerMessageRef,
     resetSpacer,
@@ -69,16 +60,25 @@ export default function App() {
     handleReindex,
   } = useDocuments({ setError, confirm });
 
-  const {
-    viewerTarget,
-    viewerOpen,
-    openDocument,
-    closeViewer,
-  } = useDocumentViewer({
-    documents,
-    registerRightPanel,
-    unregisterRightPanel,
-  });
+  const { viewerTarget, viewerOpen, openDocument, closeViewer } =
+    useDocumentViewer({
+      documents,
+      registerRightPanel,
+      unregisterRightPanel,
+    });
+  const viewerSlotRef = useRef<HTMLDivElement>(null);
+  const [viewerExitWidth, setViewerExitWidth] = useState<number | null>(null);
+
+  const closeViewerWithTransition = (immediate = false) => {
+    if (!immediate) {
+      const width =
+        viewerSlotRef.current
+          ?.querySelector<HTMLElement>(".doc-viewer")
+          ?.getBoundingClientRect().width ?? 0;
+      if (width > 0) setViewerExitWidth(width);
+    }
+    closeViewer(immediate);
+  };
 
   const {
     messages,
@@ -94,7 +94,7 @@ export default function App() {
     sendText,
   } = useChat({ selectedDocIds, setScrollTargetId, setError });
 
-  const { recording, startRecording, stopRecording } = useVoice({
+  const { recording, voiceStatus, startRecording, stopRecording } = useVoice({
     selectedDocIds,
     sessionId,
     loading,
@@ -115,11 +115,17 @@ export default function App() {
   const handleNewChat = () => {
     clearChat(() => {
       resetSpacer();
-      closeViewer(true);
+      closeViewerWithTransition();
     });
   };
 
   const hasMessages = messages.length > 0;
+  const composerRef = useRef<HTMLDivElement>(null);
+
+  useComposerStackHeight(
+    composerRef,
+    `${error ?? ""}|${voiceStatus ?? ""}|${recording}|${hasMessages}`,
+  );
 
   const handleLocaleChange = (next: Locale) => {
     if (next !== locale) setLocale(next);
@@ -127,7 +133,7 @@ export default function App() {
 
   return (
     <div
-      className={`app ${viewerOpen ? "with-viewer viewer-open" : ""}`}
+      className={`app ${viewerOpen ? "with-viewer viewer-open" : ""} ${settingsOpen ? "settings-open" : ""}`}
     >
       <div
         className={`sidebar-overlay ${sidebarOpen ? "visible" : ""}`}
@@ -172,13 +178,16 @@ export default function App() {
               <DocIcon />{" "}
               {t("topBar.docsSelected", { count: selectedDocIds.length })}
             </span>
-          ) : (
+          ) : readyDocs.length > 0 ? (
             <span className="top-bar-sub top-bar-hint">
-              {readyDocs.length === 0
-                ? t("topBar.uploadFirst")
-                : t("topBar.selectDocs")}
+              {t("topBar.selectDocs")}
             </span>
-          )}
+          ) : hasMessages ? (
+            <span className="top-bar-sub top-bar-hint">
+              {t("topBar.uploadFirst")}
+            </span>
+          ) : null}
+          <div className="top-bar-spacer" aria-hidden="true" />
           <div
             className="lang-switch"
             role="group"
@@ -208,67 +217,64 @@ export default function App() {
           </button>
         </header>
 
-        <div className="chat-area" ref={chatAreaRef}>
-          {!hasMessages ? (
-            <div className="welcome">
-              <div className="welcome-logo">
-                <AllDocsIcon size={48} />
+        <div className="chat-shell">
+          <div className="chat-area" ref={chatAreaRef}>
+            {!hasMessages ? (
+              <div className="welcome">
+                <div className="welcome-logo">
+                  <AllDocsIcon size={48} />
+                </div>
+                <h1>{t("welcome.title")}</h1>
+                <p className="welcome-sub">
+                  {readyDocs.length === 0
+                    ? t("topBar.uploadFirst")
+                    : t("welcome.subtitle")}
+                </p>
               </div>
-              <h1>{t("welcome.title")}</h1>
-              <p className="welcome-sub">{t("welcome.subtitle")}</p>
-              <div className="suggestions">
-                {suggestions.map((s) => (
-                  <button
-                    key={s}
-                    className="suggestion-chip"
-                    onClick={() => {
-                      setInput(s);
-                      closeSidebarOnMobile();
-                      sendText(s);
-                    }}
-                  >
-                    {s}
-                  </button>
-                ))}
-              </div>
-            </div>
-          ) : (
-            <MessageList
-              key={sessionId ?? "new"}
-              messages={messages}
-              scrollRef={chatAreaRef}
-              scrollTargetId={scrollTargetId}
-              onOpenDocument={openDocument}
-              registerRef={registerMessageRef}
-              spacerRef={spacerRef}
-            />
-          )}
-        </div>
-
-        {error ? (
-          <div className="status-bar">
-            <div className="banner error">{error}</div>
+            ) : (
+              <MessageList
+                messages={messages}
+                scrollRef={chatAreaRef}
+                onOpenDocument={openDocument}
+                registerRef={registerMessageRef}
+                spacerRef={spacerRef}
+              />
+            )}
           </div>
-        ) : null}
 
-        <Composer
-          input={input}
-          loading={loading}
-          recording={recording}
-          textareaRef={textareaRef}
-          onInputChange={setInput}
-          onSend={() => sendText()}
-          onStartRecording={startRecording}
-          onStopRecording={stopRecording}
-        />
+          <div className="main-bottom" ref={composerRef}>
+            {error ? (
+              <div className="status-bar">
+                <div className="banner error">{error}</div>
+              </div>
+            ) : null}
+
+            <Composer
+              input={input}
+              loading={loading}
+              recording={recording}
+              voiceStatus={voiceStatus}
+              textareaRef={textareaRef}
+              onInputChange={setInput}
+              onSend={() => sendText()}
+              onStartRecording={startRecording}
+              onStopRecording={stopRecording}
+            />
+          </div>
+        </div>
       </div>
 
       {rightPanelsToRender.map((panel) => {
         if (panel === "settings") {
           return (
-            <Suspense key="settings" fallback={null}>
-              <SettingsPanel open={settingsOpen} onClose={closeSettings} />
-            </Suspense>
+            <div
+              key="settings"
+              className={`settings-panel-slot ${settingsOpen ? "is-open" : ""}`}
+            >
+              <Suspense fallback={null}>
+                <SettingsPanel open={settingsOpen} onClose={closeSettings} />
+              </Suspense>
+            </div>
           );
         }
 
@@ -276,15 +282,21 @@ export default function App() {
           return (
             <div
               key="viewer"
-              className={`doc-viewer-slot ${viewerOpen ? "is-open" : ""}`}
+              ref={viewerSlotRef}
+              className={`doc-viewer-slot ${viewerOpen ? "is-layout-open is-open" : "is-closing"}`}
+              style={
+                viewerExitWidth
+                  ? ({
+                      "--viewer-exit-width": `${viewerExitWidth}px`,
+                    } as CSSProperties)
+                  : undefined
+              }
             >
-              <Suspense fallback={null}>
-                <DocumentViewer
-                  key={`${viewerTarget.documentId}:${viewerTarget.page ?? 0}:${highlightRegionsKey(viewerTarget.regions)}`}
-                  target={viewerTarget}
-                  onClose={() => closeViewer()}
-                />
-              </Suspense>
+              <DocumentViewer
+                key={viewerTarget.documentId}
+                target={viewerTarget}
+                onClose={() => closeViewerWithTransition()}
+              />
             </div>
           );
         }

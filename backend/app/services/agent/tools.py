@@ -9,9 +9,32 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models import Document
 from app.db.session import async_session_factory
 from app.services.asset_lookup import lookup_asset
-from app.services.chunk_filter import ChunkFilter, chunk_asset_types
+from app.services.chunk_filter import ChunkFilter
+from app.services.chunk_format import format_chunk_header
 from app.services.rag import RAGService
 from app.services.toc_lookup import format_documents_outline, lookup_toc, outline_to_chunks
+
+RETRIEVAL_QUOTA_MESSAGE = (
+    "检索次数已达上限，无法继续 search_chunks/search_chunks_batch/search_keyword。"
+    "可读取相邻片段（read_neighbor_chunks），"
+    "证据足够时再 finish。"
+)
+
+
+async def _load_session_documents(
+    db: AsyncSession,
+    doc_ids: list[UUID] | None,
+    *,
+    order_by_name: bool = False,
+) -> list[Document]:
+    stmt = select(Document)
+    if doc_ids:
+        stmt = stmt.where(Document.id.in_(doc_ids))
+    if order_by_name:
+        stmt = stmt.order_by(Document.name)
+    result = await db.execute(stmt)
+    return list(result.scalars().all())
+
 
 RETRIEVAL_TOOLS = frozenset({"search_chunks", "search_chunks_batch", "search_keyword"})
 SEARCH_SNIPPET_MAX = 240
@@ -47,7 +70,7 @@ def prioritize_evidence(
     if not evidence or not key_evidence_ids:
         return evidence
 
-    from app.services.rag import parse_chunk_uuids
+    from app.services.chunk_loader import parse_chunk_uuids
 
     valid_ids, _invalid = parse_chunk_uuids(key_evidence_ids)
     if not valid_ids:
@@ -87,70 +110,6 @@ def _evidence_key(chunk: dict) -> str:
     )
 
 
-def _chunk_figure_numbers(chunk: dict) -> list[str]:
-    numbers: list[str] = []
-    seen: set[str] = set()
-    for asset in chunk.get("assets") or []:
-        figure_number = str(asset.get("figure_number") or "").strip()
-        if not figure_number or figure_number in seen:
-            continue
-        seen.add(figure_number)
-        numbers.append(figure_number)
-    return numbers
-
-
-def _format_score(score: object) -> str | None:
-    if score is None:
-        return None
-    try:
-        value = float(score)
-    except (TypeError, ValueError):
-        return None
-    # Semantic similarity is 0–1; near-perfect values are not useful in headers.
-    if 0.0 <= value <= 1.0 and value >= 0.999:
-        return None
-    return f"score={value:.3f}"
-
-
-def _format_chunk_header(
-    item: dict,
-    *,
-    index: int | None = None,
-    indent: str = "",
-) -> str:
-    label = f"[{index}]" if index is not None else ""
-    header = f"{indent}{label} {item.get('document_name', '')}".strip()
-    if item.get("page") is not None:
-        header += f" p.{item['page']}"
-    if item.get("section"):
-        header += f" §{item.get('section')}"
-    asset_types = chunk_asset_types(item)
-    if asset_types:
-        header += f" assets={','.join(asset_types)}"
-    figure_numbers = _chunk_figure_numbers(item)
-    if figure_numbers:
-        header += f" fig={','.join(figure_numbers)}"
-    if item.get("assets"):
-        header += " visual=1"
-    if item.get("caption") or any(
-        asset.get("caption")
-        or asset.get("figure_caption")
-        or asset.get("vlm_caption")
-        for asset in item.get("assets") or []
-    ):
-        header += " caption=1"
-    score_label = _format_score(item.get("score"))
-    if score_label:
-        header += f" {score_label}"
-    chunk_id = item.get("chunk_id")
-    if chunk_id:
-        header += f" id={chunk_id}"
-    chunk_index = item.get("chunk_index")
-    if chunk_index is not None:
-        header += f" idx={chunk_index}"
-    return header
-
-
 def _format_chunk_body(
     item: dict,
     *,
@@ -175,7 +134,7 @@ def _format_chunks(
 
     lines = [f"检索工具：{source_tool}，命中 {len(chunks)} 条："]
     for index, item in enumerate(chunks, start=1):
-        header = _format_chunk_header(item, index=index)
+        header = format_chunk_header(item, index=index, detailed=True)
         body = _format_chunk_body(
             item,
             full_text=full_text,
@@ -245,7 +204,7 @@ def _format_batch_observation(results: list[tuple[str, list[dict]]]) -> str:
             lines.append("（无结果）")
             continue
         for hit, (item, dup_of) in enumerate(chunks, start=1):
-            header = _format_chunk_header(item, index=hit, indent="  ")
+            header = format_chunk_header(item, index=hit, indent="  ", detailed=True)
             if dup_of is not None:
                 lines.append(f"{header} dup@检索{dup_of}")
                 continue
@@ -401,28 +360,12 @@ class AgentToolRegistry:
 
         Only ``search_chunks`` / ``search_chunks_batch`` return non-zero units.
         """
-        if action == "finish":
-            reason = str(action_input.get("reason") or "证据已足够")
-            key_ids = parse_finish_key_evidence_ids(action_input)
-            observation = f"结束检索：{reason}"
-            if key_ids:
-                observation += f"\n（关键证据 {len(key_ids)} 条：{', '.join(key_ids[:5])}）"
-            return observation, [], 0
-
         if action == "list_outline":
-            stmt = select(Document)
-            if doc_ids:
-                stmt = stmt.where(Document.id.in_(doc_ids))
-            result = await db.execute(stmt)
-            documents = list(result.scalars().all())
+            documents = await _load_session_documents(db, doc_ids)
             return format_documents_outline(documents), outline_to_chunks(documents), 0
 
         if action == "list_documents":
-            stmt = select(Document).order_by(Document.name)
-            if doc_ids:
-                stmt = stmt.where(Document.id.in_(doc_ids))
-            result = await db.execute(stmt)
-            documents = list(result.scalars().all())
+            documents = await _load_session_documents(db, doc_ids, order_by_name=True)
             return format_documents_list(documents), [], 0
 
         if action == "lookup_toc":
@@ -555,7 +498,6 @@ class AgentToolRegistry:
             document_id = _parse_optional_uuid(action_input.get("document_id"))
             chunks, error = await lookup_asset(
                 db,
-                self.rag,
                 figure_number,
                 kind=kind,
                 doc_ids=doc_ids,

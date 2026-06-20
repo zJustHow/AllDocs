@@ -16,6 +16,7 @@ from app.services.agent.state import (
     OnAgentStep,
 )
 from app.services.agent.tools import (
+    RETRIEVAL_QUOTA_MESSAGE,
     RETRIEVAL_TOOLS,
     AgentToolRegistry,
     count_retrieval_units,
@@ -149,58 +150,47 @@ class AgentRAGService:
         filters: ChunkFilter | None,
         retrieval_budget: int | None = None,
     ) -> tuple[str, list[dict], int]:
-        if action in RETRIEVAL_TOOLS:
-            max_batch = self.settings.rag_batch_search_max
+        if action in RETRIEVAL_TOOLS and retrieval_budget is not None and retrieval_budget <= 0:
+            return RETRIEVAL_QUOTA_MESSAGE, [], 0
+
+        budget: int | None = None
+        if action in RETRIEVAL_TOOLS and retrieval_budget is not None:
             planned_units = count_retrieval_units(
                 action,
                 action_input,
-                max_batch=max_batch,
+                max_batch=self.settings.rag_batch_search_max,
             )
-            if retrieval_budget is not None and retrieval_budget <= 0:
-                return (
-                    "检索次数已达上限，无法继续 search_chunks/search_chunks_batch/search_keyword。"
-                    "可读取相邻片段（read_neighbor_chunks），"
-                    "证据足够时再 finish。",
-                    [],
-                    0,
-                )
-            if retrieval_budget is not None and planned_units > retrieval_budget:
-                observation, chunks, retrieval_units = await self.tools.execute(
-                    db,
-                    action,
-                    action_input,
-                    question=question,
-                    doc_ids=doc_ids,
-                    explicit_filters=filters,
-                    retrieval_budget=retrieval_budget,
-                )
-                if planned_units > retrieval_budget:
-                    observation += (
-                        f"\n（检索配额不足：计划 {planned_units} 路，"
-                        f"仅执行 {retrieval_units} 路；"
-                        f"后续请减少 searches 或改用 read_neighbor_chunks 扩展上下文。）"
-                    )
-                return observation, chunks, retrieval_units
+            if planned_units > retrieval_budget:
+                budget = retrieval_budget
 
-            observation, chunks, retrieval_units = await self.tools.execute(
-                db,
-                action,
-                action_input,
-                question=question,
-                doc_ids=doc_ids,
-                explicit_filters=filters,
-            )
-            return observation, chunks, retrieval_units
-
-        observation, chunks, _ = await self.tools.execute(
+        observation, chunks, retrieval_units = await self.tools.execute(
             db,
             action,
             action_input,
             question=question,
             doc_ids=doc_ids,
             explicit_filters=filters,
+            retrieval_budget=budget,
         )
-        return observation, chunks, 0
+
+        if (
+            action in RETRIEVAL_TOOLS
+            and budget is not None
+            and retrieval_budget is not None
+        ):
+            planned_units = count_retrieval_units(
+                action,
+                action_input,
+                max_batch=self.settings.rag_batch_search_max,
+            )
+            if planned_units > retrieval_budget:
+                observation += (
+                    f"\n（检索配额不足：计划 {planned_units} 路，"
+                    f"仅执行 {retrieval_units} 路；"
+                    f"后续请减少 searches 或改用 read_neighbor_chunks 扩展上下文。）"
+                )
+
+        return observation, chunks, retrieval_units if action in RETRIEVAL_TOOLS else 0
 
     async def _execute_tool_batch(
         self,
@@ -308,11 +298,7 @@ class AgentRAGService:
                                 AgentToolCall(
                                     action=item["action"],
                                     action_input=item["action_input"],
-                                    observation=(
-                                        "检索次数已达上限，无法继续 search_chunks/search_chunks_batch/search_keyword。"
-                                        "可读取相邻片段（read_neighbor_chunks），"
-                                        "证据足够时再 finish。"
-                                    ),
+                                    observation=RETRIEVAL_QUOTA_MESSAGE,
                                     tool_call_id=item["tool_call_id"],
                                 ),
                                 [],

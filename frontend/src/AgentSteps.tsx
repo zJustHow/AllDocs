@@ -127,7 +127,7 @@ function AgentSteps({ steps, running = false }: AgentStepsProps) {
           const isRunning = step.status === "running";
           return (
             <article
-              key={step.step}
+              key={`${step.step}-${step.action}-${step.status}`}
               className={`agent-step ${isRunning ? "is-running" : ""}`}
             >
               <div className="agent-step-head">

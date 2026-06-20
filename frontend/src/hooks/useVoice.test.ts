@@ -84,9 +84,20 @@ describe("useVoice", () => {
     vi.stubGlobal(
       "MediaRecorder",
       class {
+        static isTypeSupported = vi.fn().mockReturnValue(true);
+        mimeType = "audio/webm";
         state = "inactive";
         ondataavailable: ((event: { data: Blob }) => void) | null = null;
         onstop: (() => void) | null = null;
+
+        constructor(
+          _stream: unknown,
+          options?: { mimeType?: string },
+        ) {
+          if (options?.mimeType) {
+            this.mimeType = options.mimeType;
+          }
+        }
 
         start() {
           this.state = "recording";
@@ -94,7 +105,7 @@ describe("useVoice", () => {
 
         requestData() {
           this.ondataavailable?.({
-            data: new Blob(["audio-bytes"], { type: "audio/webm" }),
+            data: new Blob(["x".repeat(600)], { type: "audio/webm" }),
           });
         }
 
@@ -175,6 +186,8 @@ describe("useVoice", () => {
       JSON.stringify({
         type: "audio",
         data: "YXVkaW8=",
+        mime_type: "audio/webm;codecs=opus",
+        language: "en",
         session_id: "session-1",
         doc_ids: ["doc-1"],
         with_audio: true,

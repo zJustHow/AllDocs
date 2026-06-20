@@ -1,4 +1,4 @@
-from app.services.embeds_util import _embed_for_asset
+from app.services.embeds_util import _embed_display_caption, _embed_for_asset
 from app.services.pdf_layout_regions import resolve_asset_regions
 
 
@@ -14,6 +14,20 @@ def test_resolve_asset_regions_prefers_layout_regions() -> None:
     regions = resolve_asset_regions(asset)
     assert len(regions) == 2
     assert regions[1]["page"] == 2
+
+
+def test_embed_display_caption_truncates_long_figure_caption() -> None:
+    long_caption = "图 4-7 " + ("电弧跟踪模式说明" * 20)
+    caption = _embed_display_caption({}, {"figure_caption": long_caption})
+    assert caption is not None
+    assert len(caption) == 120
+    assert caption.endswith("…")
+    assert caption.startswith("图 4-7")
+
+
+def test_embed_display_caption_keeps_short_figure_caption() -> None:
+    caption = _embed_display_caption({}, {"figure_caption": "图 4-7 电弧跟踪模式设置"})
+    assert caption == "图 4-7 电弧跟踪模式设置"
 
 
 def test_embed_for_asset_uses_multi_region_layout() -> None:

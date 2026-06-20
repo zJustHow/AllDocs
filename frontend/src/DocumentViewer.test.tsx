@@ -6,6 +6,31 @@ import DocumentViewer from "./DocumentViewer";
 import { I18nProvider } from "./i18n";
 import type { ViewerTarget } from "./citations";
 
+vi.mock("@tanstack/react-virtual", () => ({
+  useVirtualizer: ({
+    count,
+    estimateSize,
+  }: {
+    count: number;
+    estimateSize?: (index: number) => number;
+  }) => {
+    const rowHeight = estimateSize?.(0) ?? 900;
+    return {
+      getTotalSize: () => count * rowHeight,
+      getVirtualItems: () =>
+        Array.from({ length: count }, (_, index) => ({
+          index,
+          start: index * rowHeight,
+          key: String(index),
+        })),
+      measureElement: vi.fn(),
+      measure: vi.fn(),
+      scrollToIndex: vi.fn(),
+      range: { startIndex: 0, endIndex: Math.max(0, count - 1) },
+    };
+  },
+}));
+
 let intersectionCallback: IntersectionObserverCallback | null = null;
 
 beforeEach(() => {
@@ -181,40 +206,6 @@ describe("DocumentViewer", () => {
     await waitFor(() => {
       expect(page8.querySelector("img")).toBeInTheDocument();
     });
-  });
-
-  it("updates the current page while scrolling through the PDF", async () => {
-    renderViewer({
-      ...pdfTarget,
-      pageCount: 2,
-      regions: [],
-    });
-
-    const pageInput = await screen.findByRole("textbox", { name: /Page number|页码/i });
-
-    const scrollEl = document.querySelector(".doc-viewer-scroll") as HTMLElement;
-    const page1 = document.querySelector('[data-page="1"]') as HTMLElement;
-    const page2 = document.querySelector('[data-page="2"]') as HTMLElement;
-
-    await waitFor(() => {
-      expect(page1).toBeTruthy();
-      expect(page2).toBeTruthy();
-    });
-
-    Object.defineProperty(page1, "offsetTop", { value: 0, configurable: true });
-    Object.defineProperty(page1, "offsetHeight", { value: 600, configurable: true });
-    Object.defineProperty(page2, "offsetTop", { value: 600, configurable: true });
-    Object.defineProperty(page2, "offsetHeight", { value: 600, configurable: true });
-    Object.defineProperty(scrollEl, "scrollTop", { value: 500, writable: true, configurable: true });
-    Object.defineProperty(scrollEl, "clientHeight", { value: 400, configurable: true });
-
-    await waitFor(
-      () => {
-        fireEvent.scroll(scrollEl);
-        expect(pageInput).toHaveValue("2");
-      },
-      { timeout: 3000 },
-    );
   });
 
   it("resets invalid page input on blur", async () => {

@@ -5,7 +5,6 @@ from unittest.mock import MagicMock, patch
 from app.config import Settings
 from app.services.pdf_tables import (
     EmbeddedTable,
-    _embedded_table_from_fitz_table,
     _render_table_png,
     _table_summary,
     attach_tables_to_chunks,
@@ -38,7 +37,7 @@ class TestExtractTablesFromPage:
         default_finder.tables = [default_table]
         page.find_tables.return_value = default_finder
 
-        settings = Settings(pdf_table_header_detect_enabled=False)
+        settings = Settings()
         section_resolver = lambda page_number, y: "S1"
 
         with patch(
@@ -56,74 +55,6 @@ class TestExtractTablesFromPage:
         assert tables[0].summary.startswith("| A | B |")
         page.find_tables.assert_called_once_with()
 
-    def test_falls_back_to_header_guided_when_default_empty(self) -> None:
-        page = MagicMock()
-        default_finder = MagicMock()
-        default_finder.tables = []
-        header_table = _fitz_table(
-            bbox=(2.0, 95.0, 388.0, 700.0),
-            rows=4,
-            cols=3,
-            summary="| 第一级 | 第二级 | 功能说明 |",
-        )
-        header_finder = MagicMock()
-        header_finder.tables = [header_table]
-        page.find_tables.side_effect = [default_finder, header_finder]
-
-        settings = Settings(pdf_table_header_detect_enabled=True)
-        section_resolver = lambda page_number, y: "S1"
-
-        region = MagicMock()
-        region.headers = ("第一级", "第二级", "功能说明")
-        region.vertical_lines = (2.0, 85.0, 210.0, 388.0)
-        region.clip = MagicMock()
-
-        with patch(
-            "app.services.pdf_tables.discover_header_table_regions",
-            return_value=[region],
-        ), patch(
-            "app.services.pdf_tables._render_table_png",
-            return_value=(b"png", 100, 80),
-        ):
-            tables = extract_tables_from_page(
-                page,
-                50,
-                settings=settings,
-                section_resolver=section_resolver,
-            )
-
-        assert len(tables) == 1
-        assert page.find_tables.call_count == 2
-
-    def test_skips_header_tables_overlapping_default(self) -> None:
-        page = MagicMock()
-        default_table = _fitz_table(
-            bbox=(10.0, 20.0, 500.0, 200.0),
-            rows=3,
-            cols=2,
-            summary="| A | B |\n| --- | --- |\n| 1 | 2 |",
-        )
-        default_finder = MagicMock()
-        default_finder.tables = [default_table]
-        page.find_tables.return_value = default_finder
-
-        settings = Settings(pdf_table_header_detect_enabled=True)
-        section_resolver = lambda page_number, y: "S1"
-
-        with patch(
-            "app.services.pdf_tables.discover_header_table_regions",
-        ) as discover:
-            tables = extract_tables_from_page(
-                page,
-                1,
-                settings=settings,
-                section_resolver=section_resolver,
-            )
-
-        assert len(tables) == 1
-        discover.assert_not_called()
-        page.find_tables.assert_called_once_with()
-
     def test_returns_empty_when_table_extraction_disabled(self) -> None:
         page = MagicMock()
         settings = Settings(pdf_extract_tables=False)
@@ -138,73 +69,6 @@ class TestExtractTablesFromPage:
 
         assert tables == []
         page.find_tables.assert_not_called()
-
-    def test_skips_header_guided_when_disabled(self) -> None:
-        page = MagicMock()
-        default_finder = MagicMock()
-        default_finder.tables = []
-        page.find_tables.return_value = default_finder
-
-        settings = Settings(pdf_table_header_detect_enabled=False)
-        section_resolver = lambda page_number, y: "S1"
-
-        with patch(
-            "app.services.pdf_tables.discover_header_table_regions",
-        ) as discover:
-            tables = extract_tables_from_page(
-                page,
-                1,
-                settings=settings,
-                section_resolver=section_resolver,
-            )
-
-        assert tables == []
-        discover.assert_not_called()
-        page.find_tables.assert_called_once_with()
-
-    def test_header_guided_continues_when_find_tables_raises(self) -> None:
-        page = MagicMock()
-        default_finder = MagicMock()
-        default_finder.tables = []
-        header_table = _fitz_table(
-            bbox=(2.0, 95.0, 388.0, 700.0),
-            rows=4,
-            cols=3,
-            summary="| 状态 | 说明 |",
-        )
-        header_finder = MagicMock()
-        header_finder.tables = [header_table]
-        page.find_tables.side_effect = [default_finder, RuntimeError("boom"), header_finder]
-
-        settings = Settings(pdf_table_header_detect_enabled=True)
-        section_resolver = lambda page_number, y: "S1"
-
-        region_a = MagicMock()
-        region_a.headers = ("第一级", "第二级", "功能说明")
-        region_a.vertical_lines = (2.0, 85.0, 210.0, 388.0)
-        region_a.clip = MagicMock()
-        region_b = MagicMock()
-        region_b.headers = ("状态", "说明")
-        region_b.vertical_lines = (10.0, 250.0)
-        region_b.clip = MagicMock()
-
-        with patch(
-            "app.services.pdf_tables.discover_header_table_regions",
-            return_value=[region_a, region_b],
-        ), patch(
-            "app.services.pdf_tables._render_table_png",
-            return_value=(b"png", 100, 80),
-        ):
-            tables = extract_tables_from_page(
-                page,
-                3,
-                settings=settings,
-                section_resolver=section_resolver,
-            )
-
-        assert len(tables) == 1
-        assert tables[0].summary.startswith("| 状态 | 说明 |")
-        assert page.find_tables.call_count == 3
 
     def test_skips_tables_below_min_dimensions(self) -> None:
         page = MagicMock()
@@ -221,7 +85,6 @@ class TestExtractTablesFromPage:
         settings = Settings(
             pdf_table_min_rows=2,
             pdf_table_min_cols=2,
-            pdf_table_header_detect_enabled=False,
         )
         section_resolver = lambda page_number, y: "S1"
 
@@ -252,102 +115,100 @@ class TestExtractTablesFromPage:
 class TestEmbeddedTableFromFitzTable:
     def test_skips_empty_summary(self) -> None:
         page = MagicMock()
-        table = MagicMock()
-        table.row_count = 3
-        table.col_count = 2
-        table.bbox = (10.0, 20.0, 500.0, 200.0)
+        table = _fitz_table(
+            bbox=(10.0, 20.0, 500.0, 200.0),
+            rows=3,
+            cols=2,
+            summary="   ",
+        )
         table.to_markdown.return_value = "   "
         table.extract.return_value = []
+        finder = MagicMock()
+        finder.tables = [table]
+        page.find_tables.return_value = finder
 
-        settings = Settings()
-        section_resolver = lambda page_number, y: "S1"
-
-        result = _embedded_table_from_fitz_table(
+        tables = extract_tables_from_page(
             page,
-            table,
-            page_number=1,
-            scale=2.0,
-            settings=settings,
-            section_resolver=section_resolver,
+            1,
+            settings=Settings(),
+            section_resolver=lambda _page, _y: "S1",
         )
 
-        assert result is None
+        assert tables == []
 
     def test_skips_table_when_render_fails(self) -> None:
         page = MagicMock()
-        table = MagicMock()
-        table.row_count = 3
-        table.col_count = 2
-        table.bbox = (10.0, 20.0, 500.0, 200.0)
-        table.to_markdown.return_value = "| A | B |"
-
-        settings = Settings()
-        section_resolver = lambda page_number, y: "S1"
+        table = _fitz_table(
+            bbox=(10.0, 20.0, 500.0, 200.0),
+            rows=3,
+            cols=2,
+            summary="| A | B |",
+        )
+        finder = MagicMock()
+        finder.tables = [table]
+        page.find_tables.return_value = finder
 
         with patch(
             "app.services.pdf_tables._render_table_png",
             side_effect=RuntimeError("render failed"),
         ):
-            result = _embedded_table_from_fitz_table(
+            tables = extract_tables_from_page(
                 page,
-                table,
-                page_number=1,
-                scale=2.0,
-                settings=settings,
-                section_resolver=section_resolver,
+                1,
+                settings=Settings(),
+                section_resolver=lambda _page, _y: "S1",
             )
 
-        assert result is None
+        assert tables == []
 
     def test_falls_back_to_extract_when_markdown_empty(self) -> None:
         page = MagicMock()
-        table = MagicMock()
-        table.row_count = 3
-        table.col_count = 2
-        table.bbox = (10.0, 20.0, 500.0, 200.0)
+        table = _fitz_table(
+            bbox=(10.0, 20.0, 500.0, 200.0),
+            rows=3,
+            cols=2,
+            summary="A | B\n1 | 2",
+        )
         table.to_markdown.return_value = ""
         table.extract.return_value = [["A", "B"], ["1", "2"]]
-
-        settings = Settings()
-        section_resolver = lambda page_number, y: "S1"
+        finder = MagicMock()
+        finder.tables = [table]
+        page.find_tables.return_value = finder
 
         with patch(
             "app.services.pdf_tables._render_table_png",
             return_value=(b"png", 100, 80),
         ):
-            result = _embedded_table_from_fitz_table(
+            tables = extract_tables_from_page(
                 page,
-                table,
-                page_number=1,
-                scale=2.0,
-                settings=settings,
-                section_resolver=section_resolver,
+                1,
+                settings=Settings(),
+                section_resolver=lambda _page, _y: "S1",
             )
 
-        assert result is not None
-        assert result.summary == "A | B\n1 | 2"
+        assert len(tables) == 1
+        assert tables[0].summary == "A | B\n1 | 2"
 
     def test_skips_zero_area_bbox(self) -> None:
         page = MagicMock()
-        table = MagicMock()
-        table.row_count = 3
-        table.col_count = 2
-        table.bbox = (10.0, 20.0, 10.0, 20.0)
-        table.to_markdown.return_value = "| A | B |"
+        table = _fitz_table(
+            bbox=(10.0, 20.0, 10.0, 20.0),
+            rows=3,
+            cols=2,
+            summary="| A | B |",
+        )
+        finder = MagicMock()
+        finder.tables = [table]
+        page.find_tables.return_value = finder
 
-        settings = Settings()
-        section_resolver = lambda page_number, y: "S1"
-
-        result = _embedded_table_from_fitz_table(
+        tables = extract_tables_from_page(
             page,
-            table,
-            page_number=1,
-            scale=2.0,
-            settings=settings,
-            section_resolver=section_resolver,
+            1,
+            settings=Settings(),
+            section_resolver=lambda _page, _y: "S1",
         )
 
-        assert result is None
+        assert tables == []
 
 
 class TestTableSummary:
@@ -563,59 +424,3 @@ class TestAttachTablesToChunks:
         assert chunk.attached_assets[0].layout_regions == [
             {"page": 2, "bbox": [10.0, 160.0, 500.0, 320.0]},
         ]
-
-
-class TestExtractTablesHeaderGuidedMultiRegion:
-    def test_finds_multiple_non_overlapping_header_regions(self) -> None:
-        page = MagicMock()
-        default_finder = MagicMock()
-        default_finder.tables = []
-
-        table_a = _fitz_table(
-            bbox=(2.0, 95.0, 200.0, 300.0),
-            rows=3,
-            cols=2,
-            summary="| 状态 | 说明 |",
-        )
-        table_b = _fitz_table(
-            bbox=(210.0, 95.0, 388.0, 300.0),
-            rows=3,
-            cols=2,
-            summary="| 参数 | 数值 |",
-        )
-        finder_a = MagicMock()
-        finder_a.tables = [table_a]
-        finder_b = MagicMock()
-        finder_b.tables = [table_b]
-        page.find_tables.side_effect = [default_finder, finder_a, finder_b]
-
-        settings = Settings(pdf_table_header_detect_enabled=True)
-        section_resolver = lambda page_number, y: "S1"
-
-        region_a = MagicMock()
-        region_a.headers = ("状态", "说明")
-        region_a.vertical_lines = (2.0, 100.0)
-        region_a.clip = MagicMock()
-        region_b = MagicMock()
-        region_b.headers = ("参数", "数值")
-        region_b.vertical_lines = (210.0, 388.0)
-        region_b.clip = MagicMock()
-
-        with patch(
-            "app.services.pdf_tables.discover_header_table_regions",
-            return_value=[region_a, region_b],
-        ), patch(
-            "app.services.pdf_tables._render_table_png",
-            return_value=(b"png", 100, 80),
-        ):
-            tables = extract_tables_from_page(
-                page,
-                4,
-                settings=settings,
-                section_resolver=section_resolver,
-            )
-
-        assert len(tables) == 2
-        summaries = {table.summary for table in tables}
-        assert "| 状态 | 说明 |" in summaries
-        assert "| 参数 | 数值 |" in summaries

@@ -6,7 +6,9 @@ export interface BboxRegion {
 }
 
 export function isValidBbox(bbox: number[] | null | undefined): bbox is Bbox {
-  return Array.isArray(bbox) && bbox.length === 4 && bbox.every(Number.isFinite);
+  return (
+    Array.isArray(bbox) && bbox.length === 4 && bbox.every(Number.isFinite)
+  );
 }
 
 export function resolveHighlightRegions(target: {
@@ -19,7 +21,9 @@ export function resolveHighlightRegions(target: {
 }
 
 export function highlightRegionsKey(regions: BboxRegion[]): string {
-  return regions.map((region) => `${region.page}:${region.bbox.join(",")}`).join("|");
+  return regions
+    .map((region) => `${region.page}:${region.bbox.join(",")}`)
+    .join("|");
 }
 
 function isNormalizedBbox(bbox: Bbox): boolean {
@@ -58,12 +62,24 @@ export function bboxToOverlayStyle(
   };
 }
 
+export function resolvePageScrollTop(pageEl: HTMLElement): number {
+  const offset = pageEl.dataset?.pageOffset;
+  if (offset !== undefined) {
+    const parsed = Number.parseFloat(offset);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return pageEl.offsetTop;
+}
+
 export function scrollToPageElement(
   scrollEl: HTMLElement,
   pageEl: HTMLElement,
   behavior: ScrollBehavior,
 ): void {
-  scrollEl.scrollTo({ top: Math.max(0, pageEl.offsetTop - 16), behavior });
+  scrollEl.scrollTo({
+    top: Math.max(0, resolvePageScrollTop(pageEl) - 16),
+    behavior,
+  });
 }
 
 export function scrollToPageRegion(
@@ -87,7 +103,7 @@ export function scrollToPageRegion(
   const regionTop = Number.parseFloat(overlay.top);
   const regionHeight = Number.parseFloat(overlay.height);
   const scrollTop =
-    pageEl.offsetTop +
+    resolvePageScrollTop(pageEl) +
     regionTop +
     regionHeight / 2 -
     scrollEl.clientHeight * 0.35;

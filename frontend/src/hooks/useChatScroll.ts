@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { readComposerStackHeight } from "./useComposerStackHeight";
 
 export function useChatScroll() {
   const chatAreaRef = useRef<HTMLDivElement>(null);
@@ -22,17 +23,15 @@ export function useChatScroll() {
       if (!messageEl) return false;
 
       if (container && spacer) {
+        const rootStyle = getComputedStyle(document.documentElement);
         const topGap =
-          parseFloat(
-            getComputedStyle(document.documentElement).getPropertyValue(
-              "--chat-content-top",
-            ),
-          ) || 32;
+          parseFloat(rootStyle.getPropertyValue("--chat-content-top")) || 32;
+        const composerInset = readComposerStackHeight(container);
         const room =
           container.clientHeight -
           messageEl.getBoundingClientRect().height -
           topGap -
-          24;
+          composerInset;
         spacer.style.minHeight = `${Math.max(room, 0)}px`;
       }
 
@@ -43,9 +42,7 @@ export function useChatScroll() {
 
     requestAnimationFrame(() => {
       if (layoutAndScroll()) return;
-      requestAnimationFrame(() => {
-        layoutAndScroll();
-      });
+      requestAnimationFrame(layoutAndScroll);
     });
   }, [scrollTargetId, scrollUserMessageToTop]);
 
@@ -55,6 +52,8 @@ export function useChatScroll() {
   }, []);
 
   const resetSpacer = useCallback(() => {
+    if (chatAreaRef.current) chatAreaRef.current.scrollTop = 0;
+    messageRefs.current.clear();
     if (spacerRef.current) spacerRef.current.style.minHeight = "";
   }, []);
 

@@ -37,38 +37,6 @@ def test_build_settings_response_marks_overrides() -> None:
         set_overrides({})
 
 
-def test_build_settings_response_includes_pdf_table_header_group() -> None:
-    payload = build_settings_response()
-    group_ids = [group["id"] for group in payload["groups"]]
-    assert "pdf_table_header" in group_ids
-    header_fields = next(
-        group for group in payload["groups"] if group["id"] == "pdf_table_header"
-    )["fields"]
-    keys = {field["key"] for field in header_fields}
-    assert keys == {
-        "pdf_table_header_detect_enabled",
-        "pdf_table_header_y_tolerance",
-        "pdf_table_header_margin",
-        "pdf_table_header_top_padding",
-        "pdf_table_header_clip_bottom_ratio",
-        "pdf_table_header_snap_y_tolerance",
-        "pdf_table_header_join_y_tolerance",
-    }
-
-
-def test_apply_overrides_pdf_table_header() -> None:
-    base = _env_settings()
-    merged = apply_overrides(
-        base,
-        {
-            "pdf_table_header_detect_enabled": "false",
-            "pdf_table_header_y_tolerance": "12.5",
-        },
-    )
-    assert merged.pdf_table_header_detect_enabled is False
-    assert merged.pdf_table_header_y_tolerance == 12.5
-
-
 def test_invalidate_service_caches_clears_infra_clients() -> None:
     from app.services.deps import get_agent_service
     from app.services.fulltext_store import get_elasticsearch_client

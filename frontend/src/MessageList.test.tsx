@@ -6,20 +6,6 @@ import MessageList from "./MessageList";
 import { I18nProvider } from "./i18n";
 import type { ChatMessage } from "./types";
 
-vi.mock("@tanstack/react-virtual", () => ({
-  useVirtualizer: ({ count }: { count: number }) => ({
-    getTotalSize: () => count * 180,
-    getVirtualItems: () =>
-      Array.from({ length: count }, (_, index) => ({
-        index,
-        start: index * 180,
-        key: String(index),
-      })),
-    measureElement: vi.fn(),
-    scrollToIndex: vi.fn(),
-  }),
-}));
-
 const messages: ChatMessage[] = [
   { id: "u1", role: "user", content: "Question one" },
   {
@@ -48,7 +34,6 @@ function MessageListHarness() {
       <MessageList
         messages={messages}
         scrollRef={scrollRef}
-        scrollTargetId={null}
         onOpenDocument={vi.fn()}
         registerRef={vi.fn()}
         spacerRef={spacerRef}
@@ -58,7 +43,7 @@ function MessageListHarness() {
 }
 
 describe("MessageList", () => {
-  it("renders virtualized chat rows", () => {
+  it("renders chat messages in document order", () => {
     render(
       <I18nProvider>
         <MessageListHarness />
@@ -68,6 +53,6 @@ describe("MessageList", () => {
     expect(screen.getByText("Question one")).toBeInTheDocument();
     expect(screen.getByText(/Answer one/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "[1]" })).toBeInTheDocument();
-    expect(document.querySelector(".messages-virtual-row")).toBeInTheDocument();
+    expect(document.querySelectorAll(".message")).toHaveLength(2);
   });
 });

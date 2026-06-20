@@ -4,11 +4,14 @@ import {
   highlightRegionsKey,
   isValidBbox,
   resolveHighlightRegions,
+  resolvePageScrollTop,
   scrollToPageElement,
   scrollToPageRegion,
 } from "./viewerPosition";
 
-function mockImage(overrides: Partial<HTMLImageElement> = {}): HTMLImageElement {
+function mockImage(
+  overrides: Partial<HTMLImageElement> = {},
+): HTMLImageElement {
   return {
     offsetWidth: 400,
     offsetHeight: 600,
@@ -37,7 +40,10 @@ describe("resolveHighlightRegions", () => {
       regions: [
         { page: 1, bbox: [0, 0, 1, 1] },
         { page: NaN, bbox: [0, 0, 1, 1] },
-        { page: 2, bbox: [0, 0] as unknown as [number, number, number, number] },
+        {
+          page: 2,
+          bbox: [0, 0] as unknown as [number, number, number, number],
+        },
       ],
     });
 
@@ -78,22 +84,58 @@ describe("bboxToOverlayStyle", () => {
   });
 
   it("enforces a minimum overlay size", () => {
-    const style = bboxToOverlayStyle([0.49, 0.49, 0.501, 0.501], mockImage(), 2);
+    const style = bboxToOverlayStyle(
+      [0.49, 0.49, 0.501, 0.501],
+      mockImage(),
+      2,
+    );
     expect(Number.parseFloat(style.width)).toBeGreaterThanOrEqual(4);
     expect(Number.parseFloat(style.height)).toBeGreaterThanOrEqual(4);
   });
 });
 
 describe("scroll helpers", () => {
+  it("prefers virtual page offset over offsetTop", () => {
+    const pageEl = {
+      offsetTop: 0,
+      dataset: { pageOffset: "1848" },
+    } as unknown as HTMLElement;
+
+    expect(resolvePageScrollTop(pageEl)).toBe(1848);
+  });
+
   it("scrolls to page top with padding", () => {
     const scrollEl = {
       scrollTo: vi.fn(),
     } as unknown as HTMLElement;
-    const pageEl = { offsetTop: 240 } as HTMLElement;
+    const pageEl = {
+      offsetTop: 240,
+      dataset: {},
+    } as unknown as HTMLElement;
 
     scrollToPageElement(scrollEl, pageEl, "auto");
 
-    expect(scrollEl.scrollTo).toHaveBeenCalledWith({ top: 224, behavior: "auto" });
+    expect(scrollEl.scrollTo).toHaveBeenCalledWith({
+      top: 224,
+      behavior: "auto",
+    });
+  });
+
+  it("uses virtual page offset when scrolling to page top", () => {
+    const scrollEl = {
+      scrollTo: vi.fn(),
+    } as unknown as HTMLElement;
+    const pageEl = {
+      offsetTop: 0,
+      dataset: { pageOffset: "1848" },
+    } as unknown as HTMLElement;
+
+    scrollToPageElement(scrollEl, pageEl, "auto");
+
+    expect(scrollEl.scrollTo).toHaveBeenCalledWith({
+      top: 1832,
+      behavior: "auto",
+    });
   });
 
   it("scrolls to page element when bbox is invalid", () => {
@@ -109,17 +151,22 @@ describe("scroll helpers", () => {
     const scrolled = scrollToPageRegion(scrollEl, pageEl, null, 2, "smooth");
 
     expect(scrolled).toBe(true);
-    expect(scrollEl.scrollTo).toHaveBeenCalledWith({ top: 84, behavior: "smooth" });
+    expect(scrollEl.scrollTo).toHaveBeenCalledWith({
+      top: 84,
+      behavior: "smooth",
+    });
   });
 
   it("returns false when page image is not ready", () => {
     const scrollEl = { scrollTo: vi.fn() } as unknown as HTMLElement;
     const pageEl = {
-      querySelector: vi.fn().mockReturnValue(
-        mockImage({ complete: false, naturalWidth: 0 }),
-      ),
+      querySelector: vi
+        .fn()
+        .mockReturnValue(mockImage({ complete: false, naturalWidth: 0 })),
     } as unknown as HTMLElement;
 
-    expect(scrollToPageRegion(scrollEl, pageEl, [0, 0, 1, 1], 2, "auto")).toBe(false);
+    expect(scrollToPageRegion(scrollEl, pageEl, [0, 0, 1, 1], 2, "auto")).toBe(
+      false,
+    );
   });
 });

@@ -106,7 +106,7 @@ class TestCrossPageMerge:
         )
         assert len(merged) == 2
 
-    def test_skips_mismatched_columns(self) -> None:
+    def test_skips_mismatched_columns_without_figure_number(self) -> None:
         settings = Settings()
         left = _table(page=1, summary=PAGE1_SUMMARY, y0=620.0, y1=760.0)
         right = _table(
@@ -121,6 +121,37 @@ class TestCrossPageMerge:
             page_heights=PAGE_HEIGHTS,
             settings=settings,
         )
+
+    def test_merges_mismatched_columns_when_figure_numbers_match(self) -> None:
+        settings = Settings()
+        left = _table(
+            page=1,
+            summary=PAGE1_SUMMARY,
+            y0=620.0,
+            y1=760.0,
+            figure_number="3-1",
+        )
+        right = _table(
+            page=2,
+            summary="| only |",
+            y0=40.0,
+            y1=180.0,
+            figure_number="3-1",
+        )
+        assert can_merge_cross_page_tables(
+            left,
+            right,
+            page_heights=PAGE_HEIGHTS,
+            settings=settings,
+        )
+
+        merged = merge_cross_page_tables(
+            [left, right],
+            page_heights=PAGE_HEIGHTS,
+            settings=settings,
+        )
+        assert len(merged) == 1
+        assert merged[0].figure_number == "3-1"
 
     def test_merge_disabled_returns_original_list(self) -> None:
         settings = Settings(pdf_merge_cross_page_tables=False)

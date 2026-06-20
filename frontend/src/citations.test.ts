@@ -166,6 +166,45 @@ describe("splitMessageWithCitations", () => {
     expect(segments.some((s) => s.type === "embed" && s.embed.ref === 2)).toBe(true);
   });
 
+  it("defers embed placement during streaming until the embed list arrives", () => {
+    const embed: MessageEmbed = {
+      ref: 1,
+      sentence_index: 0,
+      document_id: "doc-1",
+      page: 1,
+      type: "figure",
+      url: "/x.png",
+      regions: [],
+    };
+
+    const segments = splitMessageWithCitations("See the diagram.", citations, {
+      hideUnmatched: true,
+      streaming: true,
+    });
+
+    expect(segments.every((segment) => segment.type !== "embed")).toBe(true);
+  });
+
+  it("places embeds during streaming once the embed list is known", () => {
+    const embed: MessageEmbed = {
+      ref: 1,
+      sentence_index: 0,
+      document_id: "doc-1",
+      page: 1,
+      type: "figure",
+      url: "/x.png",
+      regions: [],
+    };
+
+    const segments = splitMessageWithCitations("See the diagram.", citations, {
+      hideUnmatched: true,
+      embeds: [embed],
+      streaming: true,
+    });
+
+    expect(segments.some((segment) => segment.type === "embed")).toBe(true);
+  });
+
   it("returns original content when every citation token is hidden", () => {
     const segments = splitMessageWithCitations("[9]", citations, {
       hideUnmatched: true,

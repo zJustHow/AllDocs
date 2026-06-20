@@ -7,9 +7,8 @@ import {
   type RefObject,
 } from "react";
 import AgentSteps from "./AgentSteps";
+import { useMessageAgentSteps } from "./agentStepsStore";
 import { followCursorInContainer } from "./followStreamingScroll";
-import { useI18n } from "./i18n";
-import { AllDocsIcon, ProfileIcon } from "./icons";
 import MessageContent from "./MessageContent";
 import { useStreamingContent } from "./streamingContent";
 import type { ViewerTarget } from "./citations";
@@ -28,8 +27,8 @@ function ChatMessageItem({
   registerRef,
   scrollContainerRef,
 }: ChatMessageItemProps) {
-  const { t } = useI18n();
   const liveContent = useStreamingContent(message.id);
+  const { steps: agentSteps, running: agentRunning } = useMessageAgentSteps(message);
   const content = message.streaming ? liveContent : message.content;
   const cursorRef = useRef<HTMLSpanElement>(null);
 
@@ -52,8 +51,9 @@ function ChatMessageItem({
   }, [
     liveContent,
     message.streaming,
-    message.agentRunning,
-    message.agentSteps?.length,
+    message.embeds?.length ?? 0,
+    agentRunning,
+    agentSteps.length,
     scrollContainerRef,
   ]);
 
@@ -62,24 +62,12 @@ function ChatMessageItem({
       ref={setRef}
       className={`message ${message.role}`}
     >
-      <div
-        className="message-avatar"
-        aria-label={
-          message.role === "user" ? t("chat.userAvatar") : undefined
-        }
-      >
-        {message.role === "assistant" ? (
-          <AllDocsIcon size={28} />
-        ) : (
-          <ProfileIcon size={18} />
-        )}
-      </div>
       <div className="message-body">
         {message.role === "assistant" &&
-        ((message.agentSteps?.length ?? 0) > 0 || message.agentRunning) ? (
+        (agentSteps.length > 0 || agentRunning) ? (
           <AgentSteps
-            steps={message.agentSteps ?? []}
-            running={message.agentRunning}
+            steps={agentSteps}
+            running={agentRunning}
           />
         ) : null}
         <div className="message-content">

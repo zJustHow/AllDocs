@@ -19,10 +19,6 @@ from app.services.pdf_geometry import (
     rect_intersection_area,
 )
 from app.services.pdf_header_footer import HeaderFooterFilter
-from app.services.pdf_table_header_detect import (
-    discover_header_table_regions,
-    find_tables_for_region,
-)
 
 
 logger = logging.getLogger(__name__)
@@ -135,129 +131,6 @@ def _render_table_png(
     return pixmap.tobytes("png"), pixmap.width, pixmap.height
 
 
-def _embedded_table_from_fitz_table(
-    page: fitz.Page,
-    table: object,
-    *,
-    page_number: int,
-    scale: float,
-    settings: Settings,
-    section_resolver: Callable[[int, float | None], str | None],
-) -> EmbeddedTable | None:
-    if not table_dimensions_meet_minimum(
-        table.row_count,
-        table.col_count,
-        min_rows=settings.pdf_table_min_rows,
-        min_cols=settings.pdf_table_min_cols,
-    ):
-        return None
-
-    summary = _table_summary(table)
-    if not summary.strip():
-        return None
-
-    bbox = tuple(float(value) for value in table.bbox)
-    if rect_area(bbox) <= 0:
-        return None
-
-    try:
-        png_bytes, width, height = _render_table_png(page, bbox, scale=scale)
-    except Exception:
-        logger.warning(
-            "Failed to render table on page %s",
-            page_number,
-            exc_info=True,
-        )
-        return None
-
-    mid_y = (bbox[1] + bbox[3]) / 2
-    return EmbeddedTable(
-        page=page_number,
-        section=section_resolver(page_number, mid_y),
-        bbox=bbox,
-        sort_key=float(bbox[1]),
-        summary=summary,
-        png_bytes=png_bytes,
-        width=width,
-        height=height,
-    )
-
-
-def _embedded_tables_from_finder(
-    page: fitz.Page,
-    finder: fitz.TableFinder,
-    *,
-    page_number: int,
-    scale: float,
-    settings: Settings,
-    section_resolver: Callable[[int, float | None], str | None],
-    exclude_bboxes: list[tuple[float, float, float, float]] | None = None,
-) -> list[EmbeddedTable]:
-    tables: list[EmbeddedTable] = []
-    for table in finder.tables:
-        embedded = _embedded_table_from_fitz_table(
-            page,
-            table,
-            page_number=page_number,
-            scale=scale,
-            settings=settings,
-            section_resolver=section_resolver,
-        )
-        if embedded is None:
-            continue
-        if exclude_bboxes and _overlaps_table_region(embedded.bbox, exclude_bboxes):
-            continue
-        tables.append(embedded)
-    return tables
-
-
-def _extract_header_guided_tables(
-    page: fitz.Page,
-    page_number: int,
-    *,
-    scale: float,
-    settings: Settings,
-    section_resolver: Callable[[int, float | None], str | None],
-    exclude_bboxes: list[tuple[float, float, float, float]] | None = None,
-) -> list[EmbeddedTable]:
-    tables: list[EmbeddedTable] = []
-    known_bboxes = list(exclude_bboxes or [])
-
-    for region in discover_header_table_regions(page, settings=settings):
-        try:
-            finder = find_tables_for_region(page, region, settings=settings)
-        except Exception:
-            logger.warning(
-                "Header-guided find_tables failed on page %s (%s)",
-                page_number,
-                "/".join(region.headers),
-                exc_info=True,
-            )
-            continue
-
-        found = _embedded_tables_from_finder(
-            page,
-            finder,
-            page_number=page_number,
-            scale=scale,
-            settings=settings,
-            section_resolver=section_resolver,
-            exclude_bboxes=known_bboxes,
-        )
-        if found:
-            logger.info(
-                "Header-guided table detection on page %s (%s): %s table(s)",
-                page_number,
-                "/".join(region.headers),
-                len(found),
-            )
-        for table in found:
-            tables.append(table)
-            known_bboxes.append(table.bbox)
-
-    return tables
-
-
 def extract_tables_from_page(
     page: fitz.Page,
     page_number: int,
@@ -270,30 +143,51 @@ def extract_tables_from_page(
 
     scale = settings.pdf_table_render_scale
     try:
-        default_finder = page.find_tables()
+        finder = page.find_tables()
     except AttributeError:
         raise AttributeError("PyMuPDF find_tables is unavailable")
 
-    tables = _embedded_tables_from_finder(
-        page,
-        default_finder,
-        page_number=page_number,
-        scale=scale,
-        settings=settings,
-        section_resolver=section_resolver,
-    )
+    tables: list[EmbeddedTable] = []
+    for table in finder.tables:
+        if not table_dimensions_meet_minimum(
+            table.row_count,
+            table.col_count,
+            min_rows=settings.pdf_table_min_rows,
+            min_cols=settings.pdf_table_min_cols,
+        ):
+            continue
 
-    if settings.pdf_table_header_detect_enabled and not tables:
-        header_tables = _extract_header_guided_tables(
-            page,
-            page_number,
-            scale=scale,
-            settings=settings,
-            section_resolver=section_resolver,
-            exclude_bboxes=[table.bbox for table in tables],
+        summary = _table_summary(table)
+        if not summary.strip():
+            continue
+
+        bbox = tuple(float(value) for value in table.bbox)
+        if rect_area(bbox) <= 0:
+            continue
+
+        try:
+            png_bytes, width, height = _render_table_png(page, bbox, scale=scale)
+        except Exception:
+            logger.warning(
+                "Failed to render table on page %s",
+                page_number,
+                exc_info=True,
+            )
+            continue
+
+        mid_y = (bbox[1] + bbox[3]) / 2
+        tables.append(
+            EmbeddedTable(
+                page=page_number,
+                section=section_resolver(page_number, mid_y),
+                bbox=bbox,
+                sort_key=float(bbox[1]),
+                summary=summary,
+                png_bytes=png_bytes,
+                width=width,
+                height=height,
+            )
         )
-        tables.extend(header_tables)
-
     return tables
 
 

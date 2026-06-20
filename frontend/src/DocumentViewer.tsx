@@ -7,6 +7,7 @@ import {
   useState,
   type CSSProperties,
 } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { documentFileUrl, documentPageRenderUrl } from "./api";
 import { formatCitationSnippetExcerpt, type ViewerTarget } from "./citations";
 import { getPreviewMode } from "./fileTypes";
@@ -40,10 +41,10 @@ const ZOOM_STEP = 25;
 const BASE_RENDER_SCALE = 2;
 const ZOOM_DEBOUNCE_MS = 250;
 const PAGE_LOAD_BUFFER = 2;
+const PAGE_GAP = 12;
 const DEFAULT_PAGE_ASPECT = 1.414;
-const BBOX_LAYOUT_SETTLE_MS = 80;
-const BBOX_INITIAL_NAV_MS = 500;
 const SCROLL_TO_TARGET_MAX_RETRIES = 48;
+const DEFAULT_SCROLL_WIDTH_ESTIMATE = 360;
 
 function pagesNear(center: number, pageCount: number): number[] {
   const pages: number[] = [];
@@ -67,28 +68,67 @@ function pagesForRegions(regions: BboxRegion[], pageCount: number): number[] {
   return [...pages];
 }
 
+function pageRowHeight(placeholderHeight: number): number {
+  return Math.round(placeholderHeight) + PAGE_GAP;
+}
+
+function resolveTargetPage(
+  target: ViewerTarget,
+  regions: BboxRegion[],
+  pageCount: number | null,
+): number {
+  if (pageCount === null) return target.page ?? 1;
+  const primaryPage = regions[0]?.page ?? target.page ?? 1;
+  return Math.min(Math.max(1, primaryPage), pageCount);
+}
+
+function buildInitialLoadedPages(
+  target: ViewerTarget,
+  regions: BboxRegion[],
+  pageCount: number | null,
+): Set<number> {
+  if (pageCount === null) return new Set();
+  const page = resolveTargetPage(target, regions, pageCount);
+  const pages = new Set(pagesNear(page, pageCount));
+  for (const regionPage of pagesForRegions(regions, pageCount)) {
+    pages.add(regionPage);
+  }
+  return pages;
+}
+
 export default function DocumentViewer({ target, onClose }: DocumentViewerProps) {
   const { t } = useI18n();
   const previewMode = getPreviewMode(target.documentName, target.contentType);
   const [textContent, setTextContent] = useState<string | null>(null);
   const [loading, setLoading] = useState(previewMode === "text");
   const [error, setError] = useState<string | null>(null);
-  const [currentPage, setCurrentPage] = useState(target.page ?? 1);
-  const [pageInput, setPageInput] = useState(String(target.page ?? 1));
+  const [currentPage, setCurrentPage] = useState(() =>
+    resolveTargetPage(target, resolveHighlightRegions(target), target.pageCount ?? null),
+  );
+  const [pageInput, setPageInput] = useState(() =>
+    String(resolveTargetPage(target, resolveHighlightRegions(target), target.pageCount ?? null)),
+  );
   const [zoom, setZoom] = useState(100);
   const [renderZoom, setRenderZoom] = useState(100);
   const [pageAspect, setPageAspect] = useState(DEFAULT_PAGE_ASPECT);
-  const [loadedPages, setLoadedPages] = useState<Set<number>>(() => new Set());
+  const [loadedPages, setLoadedPages] = useState<Set<number>>(() =>
+    buildInitialLoadedPages(
+      target,
+      resolveHighlightRegions(target),
+      target.pageCount ?? null,
+    ),
+  );
+  const [readyPageImages, setReadyPageImages] = useState<Set<number>>(() => new Set());
   const [scrollWidth, setScrollWidth] = useState(0);
   const [highlightStylesByPage, setHighlightStylesByPage] = useState<
     Map<number, CSSProperties[]>
   >(() => new Map());
 
   const scrollRef = useRef<HTMLDivElement>(null);
+  const scrollWidthRef = useRef(0);
   const pageRefs = useRef(new Map<number, HTMLDivElement>());
   const scrollSyncLockRef = useRef(false);
   const currentPageRef = useRef(currentPage);
-  const bboxNavStartedAtRef = useRef(0);
   const highlightRegions = useMemo(() => resolveHighlightRegions(target), [target]);
   const primaryRegion = highlightRegions[0] ?? null;
   const targetRegionsKey = useMemo(
@@ -97,12 +137,20 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
   );
 
   const pageCount = target.pageCount ?? null;
+  const requiredLoadedPages = useMemo(
+    () => buildInitialLoadedPages(target, highlightRegions, pageCount),
+    [highlightRegions, pageCount, target],
+  );
+  const effectiveLoadedPages = useMemo(() => {
+    const merged = new Set(loadedPages);
+    for (const page of requiredLoadedPages) {
+      merged.add(page);
+    }
+    return merged;
+  }, [loadedPages, requiredLoadedPages]);
+
   const showPageToolbar = previewMode === "pdf" && pageCount !== null;
   const fileUrl = documentFileUrl(target.documentId);
-  const pageNumbers = useMemo(
-    () => (pageCount ? Array.from({ length: pageCount }, (_, index) => index + 1) : []),
-    [pageCount],
-  );
 
   currentPageRef.current = currentPage;
 
@@ -116,10 +164,31 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
     [renderZoom],
   );
 
+  const measuredScrollWidth = useMemo(() => {
+    if (scrollWidth > 0) return scrollWidth;
+    return Math.max(scrollWidthRef.current, DEFAULT_SCROLL_WIDTH_ESTIMATE);
+  }, [scrollWidth]);
+
   const placeholderHeight = useMemo(() => {
-    const width = Math.max(scrollWidth - 32, 240) * (zoom / 100);
+    const width = Math.max(measuredScrollWidth - 32, 240) * (zoom / 100);
     return width * pageAspect;
-  }, [scrollWidth, zoom, pageAspect]);
+  }, [measuredScrollWidth, zoom, pageAspect]);
+
+  const estimatedPageRowHeight = useMemo(
+    () => pageRowHeight(placeholderHeight),
+    [placeholderHeight],
+  );
+  const estimatedPageRowHeightRef = useRef(estimatedPageRowHeight);
+  estimatedPageRowHeightRef.current = estimatedPageRowHeight;
+
+  const pageVirtualizer = useVirtualizer({
+    count: pageCount ?? 0,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => estimatedPageRowHeight,
+    overscan: 3,
+  });
+  const pageVirtualizerRef = useRef(pageVirtualizer);
+  pageVirtualizerRef.current = pageVirtualizer;
 
   useEffect(() => {
     if (previewMode !== "text") {
@@ -172,87 +241,49 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
   );
 
   const scrollToTarget = useCallback(
-    (behavior: ScrollBehavior = "auto") => {
+    (behavior: ScrollBehavior = "auto"): boolean => {
       const scrollEl = scrollRef.current;
-      if (!scrollEl || pageCount === null) return;
+      if (!scrollEl || pageCount === null) return false;
 
-      const page = Math.min(
-        Math.max(1, primaryRegion?.page ?? target.page ?? 1),
-        pageCount,
-      );
+      const page = resolveTargetPage(target, highlightRegions, pageCount);
       ensurePagesLoaded(page);
+      scrollSyncLockRef.current = true;
+      pageVirtualizerRef.current.scrollToIndex(page - 1, { align: "start", behavior });
+      scrollEl.scrollTop = Math.max(
+        0,
+        (page - 1) * estimatedPageRowHeightRef.current - 16,
+      );
 
-      const attempt = (retries = 0) => {
-        const pageEl = pageRefs.current.get(page);
-        if (!pageEl) {
-          if (retries < SCROLL_TO_TARGET_MAX_RETRIES) {
-            requestAnimationFrame(() => attempt(retries + 1));
-          }
-          return;
-        }
+      const pageEl = pageRefs.current.get(page);
+      if (!pageEl) return false;
 
-        const scrollBbox = primaryRegion?.bbox ?? null;
-        const regionScrolled = scrollToPageRegion(
+      const scrollBbox = primaryRegion?.bbox ?? null;
+      let positioned = false;
+      if (isValidBbox(scrollBbox)) {
+        positioned = scrollToPageRegion(
           scrollEl,
           pageEl,
-          isValidBbox(scrollBbox) ? scrollBbox : null,
+          scrollBbox,
           renderScale,
           behavior,
         );
-        if (!regionScrolled) {
-          scrollToPageElement(scrollEl, pageEl, behavior);
-        }
-
-        scrollSyncLockRef.current = true;
-        setCurrentPage(page);
-        setPageInput(String(page));
-        window.setTimeout(() => {
-          scrollSyncLockRef.current = false;
-        }, behavior === "smooth" ? 500 : 50);
-
-        if (
-          !regionScrolled &&
-          isValidBbox(scrollBbox) &&
-          retries < SCROLL_TO_TARGET_MAX_RETRIES
-        ) {
-          requestAnimationFrame(() => attempt(retries + 1));
-        }
-      };
-
-      attempt();
-    },
-    [ensurePagesLoaded, pageCount, primaryRegion, renderScale, target.page],
-  );
-
-  const scrollToPage = useCallback(
-    (page: number, behavior: ScrollBehavior = "smooth") => {
-      const scrollEl = scrollRef.current;
-      if (!scrollEl || pageCount === null) return;
-
-      const next = Math.min(Math.max(1, page), pageCount);
-      ensurePagesLoaded(next);
-      setHighlightStylesByPage(new Map());
-
-      const scroll = () => {
-        const pageEl = pageRefs.current.get(next);
-        if (!pageEl) return;
-        scrollSyncLockRef.current = true;
-        scrollEl.scrollTo({ top: Math.max(0, pageEl.offsetTop - 16), behavior });
-        setCurrentPage(next);
-        setPageInput(String(next));
-        window.setTimeout(() => {
-          scrollSyncLockRef.current = false;
-        }, behavior === "smooth" ? 500 : 50);
-      };
-
-      if (pageRefs.current.get(next)) {
-        scroll();
-        return;
+      }
+      if (!positioned) {
+        scrollToPageElement(scrollEl, pageEl, behavior);
       }
 
-      requestAnimationFrame(scroll);
+      setCurrentPage(page);
+      setPageInput(String(page));
+      return true;
     },
-    [ensurePagesLoaded, pageCount],
+    [
+      ensurePagesLoaded,
+      highlightRegions,
+      pageCount,
+      primaryRegion,
+      renderScale,
+      target,
+    ],
   );
 
   const updateHighlights = useCallback(() => {
@@ -276,28 +307,85 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
     setHighlightStylesByPage(styles);
   }, [highlightRegions, renderScale]);
 
+  const scrollToPage = useCallback(
+    (page: number, behavior: ScrollBehavior = "smooth") => {
+      if (pageCount === null) return;
+
+      const next = Math.min(Math.max(1, page), pageCount);
+      ensurePagesLoaded(next);
+      setHighlightStylesByPage(new Map());
+      scrollSyncLockRef.current = true;
+      pageVirtualizerRef.current.scrollToIndex(next - 1, { align: "start", behavior });
+      setCurrentPage(next);
+      setPageInput(String(next));
+      window.setTimeout(() => {
+        scrollSyncLockRef.current = false;
+      }, behavior === "smooth" ? 500 : 50);
+    },
+    [ensurePagesLoaded, pageCount],
+  );
+
+  useEffect(() => {
+    setReadyPageImages(new Set());
+    setLoadedPages(
+      buildInitialLoadedPages(target, resolveHighlightRegions(target), pageCount),
+    );
+    scrollWidthRef.current = 0;
+    setScrollWidth(0);
+  }, [pageCount, previewMode, target.documentId]);
+
   useEffect(() => {
     if (previewMode !== "pdf" || pageCount === null) return;
-    const page = Math.min(Math.max(1, target.page ?? 1), pageCount);
+    const page = resolveTargetPage(target, highlightRegions, pageCount);
     setCurrentPage(page);
     setPageInput(String(page));
-    const pagesToLoad = new Set(pagesNear(page, pageCount));
-    for (const regionPage of pagesForRegions(highlightRegions, pageCount)) {
-      pagesToLoad.add(regionPage);
-    }
-    setLoadedPages(pagesToLoad);
-  }, [highlightRegions, previewMode, pageCount, target.documentId, target.page]);
+    setLoadedPages((prev) => {
+      let changed = false;
+      const next = new Set(prev);
+      for (const nearbyPage of requiredLoadedPages) {
+        if (!next.has(nearbyPage)) {
+          next.add(nearbyPage);
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [highlightRegions, pageCount, previewMode, requiredLoadedPages, target.documentId, target.page]);
 
   useLayoutEffect(() => {
-    if (previewMode !== "pdf" || pageCount === null) return;
-    scrollToTarget("auto");
+    if (previewMode !== "pdf" || pageCount === null) {
+      updateHighlights();
+      return;
+    }
+
+    const finish = () => {
+      scrollSyncLockRef.current = false;
+      updateHighlights();
+    };
+
+    if (scrollToTarget("auto")) {
+      finish();
+      return;
+    }
+
+    let retries = 0;
+    const retry = () => {
+      if (scrollToTarget("auto") || retries >= SCROLL_TO_TARGET_MAX_RETRIES) {
+        finish();
+        return;
+      }
+      retries += 1;
+      requestAnimationFrame(retry);
+    };
+    requestAnimationFrame(retry);
   }, [
-    previewMode,
     pageCount,
+    previewMode,
     scrollToTarget,
     target.documentId,
     target.page,
     targetRegionsKey,
+    updateHighlights,
   ]);
 
   useLayoutEffect(() => {
@@ -306,28 +394,13 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
   }, [previewMode, updateHighlights, targetRegionsKey, zoom, renderScale]);
 
   useEffect(() => {
-    bboxNavStartedAtRef.current = performance.now();
-  }, [target.documentId, target.page, targetRegionsKey]);
-
-  useEffect(() => {
     if (previewMode !== "pdf" || !highlightRegions.length) {
       return;
     }
 
     const observedPages = new Set(highlightRegions.map((region) => region.page));
     const observers: ResizeObserver[] = [];
-    let settleTimer: ReturnType<typeof setTimeout> | null = null;
     let cancelled = false;
-
-    const scheduleScroll = () => {
-      if (performance.now() - bboxNavStartedAtRef.current > BBOX_INITIAL_NAV_MS) {
-        return;
-      }
-      if (settleTimer) clearTimeout(settleTimer);
-      settleTimer = window.setTimeout(() => {
-        if (!cancelled) scrollToTarget("auto");
-      }, BBOX_LAYOUT_SETTLE_MS);
-    };
 
     const attach = (): boolean => {
       let attached = false;
@@ -336,15 +409,12 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
         const img = pageEl?.querySelector("img");
         if (!img || cancelled) continue;
 
-        const onResize = () => {
+        const observer = new ResizeObserver(() => {
           updateHighlights();
-          scheduleScroll();
-        };
-
-        const observer = new ResizeObserver(onResize);
+        });
         observer.observe(img);
         observers.push(observer);
-        onResize();
+        updateHighlights();
         attached = true;
       }
       return attached;
@@ -362,7 +432,6 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
 
     return () => {
       cancelled = true;
-      if (settleTimer) clearTimeout(settleTimer);
       for (const observer of observers) {
         observer.disconnect();
       }
@@ -372,17 +441,21 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
     previewMode,
     targetRegionsKey,
     updateHighlights,
-    scrollToTarget,
     loadedPages,
   ]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const scrollEl = scrollRef.current;
     if (!scrollEl || previewMode !== "pdf") return;
 
-    const updateWidth = () => setScrollWidth(scrollEl.clientWidth);
-    updateWidth();
+    const updateWidth = () => {
+      const width = scrollEl.clientWidth;
+      if (width <= 0) return;
+      scrollWidthRef.current = width;
+      setScrollWidth(width);
+    };
 
+    updateWidth();
     const observer = new ResizeObserver(updateWidth);
     observer.observe(scrollEl);
     return () => observer.disconnect();
@@ -404,29 +477,16 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
       { root: scrollEl, rootMargin: "600px 0px", threshold: 0 },
     );
 
-    pageRefs.current.forEach((element) => observer.observe(element));
+    for (const element of pageRefs.current.values()) {
+      observer.observe(element);
+    }
     return () => observer.disconnect();
-  }, [ensurePagesLoaded, pageCount, pageNumbers, previewMode]);
-
-  useEffect(() => {
-    if (previewMode !== "pdf" || pageCount === null || scrollWidth <= 0) return;
-    const timer = window.setTimeout(() => {
-      scrollToTarget("auto");
-      if (highlightRegions.length) {
-        updateHighlights();
-      }
-    }, 60);
-    return () => window.clearTimeout(timer);
   }, [
-    highlightRegions,
+    ensurePagesLoaded,
     pageCount,
     previewMode,
-    renderScale,
-    scrollToTarget,
-    scrollWidth,
-    target.page,
-    updateHighlights,
-    zoom,
+    pageVirtualizer.range?.startIndex,
+    pageVirtualizer.range?.endIndex,
   ]);
 
   const goToPage = useCallback(
@@ -461,22 +521,13 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
     if (scrollSyncLockRef.current || pageCount === null) return;
 
     const scrollEl = scrollRef.current;
-    if (!scrollEl) return;
+    if (!scrollEl || estimatedPageRowHeight <= 0) return;
 
     const marker = scrollEl.scrollTop + scrollEl.clientHeight * 0.3;
-    let bestPage = 1;
-    let bestDistance = Number.POSITIVE_INFINITY;
-
-    for (let page = 1; page <= pageCount; page += 1) {
-      const element = pageRefs.current.get(page);
-      if (!element) continue;
-      const pageCenter = element.offsetTop + element.offsetHeight / 2;
-      const distance = Math.abs(marker - pageCenter);
-      if (distance < bestDistance) {
-        bestDistance = distance;
-        bestPage = page;
-      }
-    }
+    const bestPage = Math.min(
+      pageCount,
+      Math.max(1, Math.floor(marker / estimatedPageRowHeight) + 1),
+    );
 
     ensurePagesLoaded(bestPage);
     setCurrentPage((prev) => {
@@ -484,7 +535,7 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
       setPageInput(String(bestPage));
       return bestPage;
     });
-  }, [ensurePagesLoaded, pageCount]);
+  }, [ensurePagesLoaded, estimatedPageRowHeight, pageCount]);
 
   useEffect(() => {
     if (previewMode !== "pdf" || pageCount === null) return;
@@ -511,8 +562,31 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
   const handlePageLoad = useCallback((width: number, height: number) => {
     if (width <= 0) return;
     const aspect = height / width;
-    setPageAspect((prev) => (Math.abs(prev - aspect) < 0.01 ? prev : aspect));
+    setPageAspect((prev) => {
+      if (Math.abs(prev - aspect) < 0.01) return prev;
+      requestAnimationFrame(() => pageVirtualizerRef.current.measure?.());
+      return aspect;
+    });
   }, []);
+
+  const markPageImageReady = useCallback((page: number) => {
+    setReadyPageImages((prev) => {
+      if (prev.has(page)) return prev;
+      const next = new Set(prev);
+      next.add(page);
+      return next;
+    });
+  }, []);
+
+  useLayoutEffect(() => {
+    if (previewMode !== "pdf") return;
+    for (const page of loadedPages) {
+      const img = pageRefs.current.get(page)?.querySelector("img");
+      if (img?.complete && img.naturalWidth > 0) {
+        markPageImageReady(page);
+      }
+    }
+  }, [loadedPages, markPageImageReady, previewMode, targetRegionsKey]);
 
   const showToolbar =
     !error &&
@@ -538,71 +612,86 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
         >
           {previewMode === "pdf" ? (
             <div ref={scrollRef} className="doc-viewer-scroll" onScroll={handleScroll}>
-              <div className="doc-viewer-canvas doc-viewer-canvas--pdf">
+              <div
+                className="doc-viewer-canvas doc-viewer-canvas--pdf"
+                style={{ height: `${pageVirtualizer.getTotalSize()}px` }}
+              >
                 {error && <p className="doc-viewer-status error-text">{error}</p>}
                 {!error &&
-                  pageNumbers.map((page) => {
+                  pageVirtualizer.getVirtualItems().map((virtualRow) => {
+                    const page = virtualRow.index + 1;
                     const pageUrl = documentPageRenderUrl(
                       target.documentId,
                       page,
                       renderScale,
                     );
-                    const isLoaded = loadedPages.has(page);
+                    const isLoaded = effectiveLoadedPages.has(page);
                     const pageHighlights = highlightStylesByPage.get(page) ?? [];
+                    const imageReady = readyPageImages.has(page);
 
                     return (
                       <div
                         key={page}
-                        ref={(element) => registerPageRef(page, element)}
+                        data-index={virtualRow.index}
+                        ref={(element) => {
+                          pageVirtualizer.measureElement(element);
+                          registerPageRef(page, element);
+                        }}
                         className="doc-viewer-page"
                         data-page={page}
-                        style={
-                          isLoaded
-                            ? undefined
-                            : { minHeight: `${Math.round(placeholderHeight)}px` }
-                        }
+                        data-page-offset={virtualRow.start}
+                        style={{ transform: `translateY(${virtualRow.start}px)` }}
                       >
                         {isLoaded ? (
-                          <div className="doc-viewer-page-media">
+                          <div
+                            className="doc-viewer-page-media"
+                            style={{
+                              width: `${zoom}%`,
+                              height: `${Math.round(placeholderHeight)}px`,
+                            }}
+                          >
+                            <div
+                              className="doc-viewer-page-placeholder"
+                              aria-hidden="true"
+                            />
                             <img
                               src={pageUrl}
                               alt={`${target.documentName} p.${page}`}
-                              className="doc-viewer-image doc-viewer-image--pdf"
-                              style={{ width: `${zoom}%` }}
+                              className={`doc-viewer-image doc-viewer-image--pdf${imageReady ? "" : " doc-viewer-image--pending"}`}
+                              style={{ width: "100%" }}
                               draggable={false}
-                              loading="lazy"
+                              loading="eager"
                               onLoad={(event) => {
                                 warmPageImage(pageUrl);
                                 handlePageLoad(
                                   event.currentTarget.naturalWidth,
                                   event.currentTarget.naturalHeight,
                                 );
+                                markPageImageReady(page);
                                 if (
                                   highlightRegions.some((region) => region.page === page)
                                 ) {
                                   updateHighlights();
-                                  if (primaryRegion?.page === page) {
-                                    scrollToTarget("auto");
-                                  }
                                 }
                               }}
                               onError={() => setError(t("errors.loadDocumentFailed"))}
                             />
-                            {isLoaded
-                              ? pageHighlights.map((style, index) => (
-                                  <div
-                                    key={`${page}-${index}`}
-                                    className="doc-viewer-highlight"
-                                    style={style}
-                                    aria-hidden="true"
-                                  />
-                                ))
-                              : null}
+                            {pageHighlights.map((style, index) => (
+                              <div
+                                key={`${page}-${index}`}
+                                className="doc-viewer-highlight"
+                                style={style}
+                                aria-hidden="true"
+                              />
+                            ))}
                           </div>
                         ) : (
                           <div
                             className="doc-viewer-page-placeholder"
-                            style={{ width: `${zoom}%` }}
+                            style={{
+                              width: `${zoom}%`,
+                              minHeight: `${Math.round(placeholderHeight)}px`,
+                            }}
                             aria-hidden="true"
                           />
                         )}

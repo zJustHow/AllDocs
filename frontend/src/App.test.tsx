@@ -16,6 +16,7 @@ vi.mock("@tanstack/react-virtual", () => ({
         key: String(index),
       })),
     measureElement: vi.fn(),
+    measure: vi.fn(),
     scrollToIndex: vi.fn(),
   }),
 }));
@@ -109,11 +110,11 @@ function getRightPanelDomOrder(): Array<"settings" | "viewer"> {
   return Array.from(app.children)
     .filter(
       (el) =>
-        el.classList.contains("settings-panel") ||
+        el.classList.contains("settings-panel-slot") ||
         el.classList.contains("doc-viewer-slot"),
     )
     .map((el) =>
-      el.classList.contains("settings-panel") ? "settings" : "viewer",
+      el.classList.contains("settings-panel-slot") ? "settings" : "viewer",
     );
 }
 
@@ -190,6 +191,8 @@ describe("App", () => {
     vi.stubGlobal(
       "MediaRecorder",
       class MockMediaRecorder {
+        static isTypeSupported = vi.fn().mockReturnValue(true);
+        mimeType = "audio/webm";
         state = "inactive";
         ondataavailable: ((event: { data: Blob }) => void) | null = null;
         onstop: (() => void) | null = null;
@@ -202,7 +205,7 @@ describe("App", () => {
 
         requestData() {
           this.ondataavailable?.({
-            data: new Blob(["audio-bytes"], { type: "audio/webm" }),
+            data: new Blob(["x".repeat(600)], { type: "audio/webm" }),
           });
         }
 
@@ -372,24 +375,6 @@ describe("App", () => {
     );
   });
 
-  it("sends a suggestion chip from the welcome screen", async () => {
-    const user = userEvent.setup();
-    renderApp();
-
-    await screen.findByText("Manual.pdf");
-    await user.click(
-      screen.getByRole("button", { name: /How do I handle alarm E-204|如何处理 E-204/i }),
-    );
-
-    expect(await screen.findByText(/How do I handle alarm E-204|如何处理 E-204/i)).toBeInTheDocument();
-    expect(streamChat).toHaveBeenCalledWith(
-      "How do I handle alarm E-204?",
-      null,
-      ["doc-1"],
-      expect.any(Object),
-    );
-  });
-
   it("shows an error when chat streaming fails", async () => {
     streamChat.mockRejectedValue(new Error("Chat failed"));
     const user = userEvent.setup();
@@ -475,7 +460,7 @@ describe("App", () => {
     expect(screen.queryByRole("button", { name: /Close document preview|关闭/i })).not.toBeInTheDocument();
   });
 
-  it("unmounts the viewer slot after the close animation delay", async () => {
+  it("unmounts the viewer slot when closed", async () => {
     const user = userEvent.setup();
     renderApp();
 
@@ -484,15 +469,7 @@ describe("App", () => {
     expect(document.querySelector(".doc-viewer-slot.is-open")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: /Close document preview|关闭/i }));
-    expect(document.querySelector(".doc-viewer-slot.is-open")).not.toBeInTheDocument();
-    expect(document.querySelector(".doc-viewer-slot")).toBeInTheDocument();
-
-    await waitFor(
-      () => {
-        expect(document.querySelector(".doc-viewer-slot")).not.toBeInTheDocument();
-      },
-      { timeout: 1000 },
-    );
+    expect(document.querySelector(".doc-viewer-slot")).not.toBeInTheDocument();
   });
 
   it("keeps the settings panel open when the viewer is closed", async () => {
@@ -930,24 +907,6 @@ describe("App", () => {
     await user.click(document.querySelector(".sidebar-overlay") as HTMLElement);
 
     expect(document.querySelector(".sidebar.open")).not.toBeInTheDocument();
-  });
-
-  it("closes the sidebar after sending from a suggestion chip on mobile", async () => {
-    Object.defineProperty(window, "innerWidth", { value: 800, configurable: true });
-    const user = userEvent.setup();
-    renderApp();
-
-    await screen.findByText("Manual.pdf");
-    await user.click(screen.getByRole("button", { name: /Open sidebar|打开侧边栏/i }));
-    expect(document.querySelector(".sidebar.open")).toBeInTheDocument();
-
-    await user.click(
-      screen.getByRole("button", { name: /How do I handle alarm E-204|如何处理 E-204/i }),
-    );
-
-    await waitFor(() => {
-      expect(document.querySelector(".sidebar.open")).not.toBeInTheDocument();
-    });
   });
 
   it("closes the sidebar when the viewport switches to mobile", async () => {

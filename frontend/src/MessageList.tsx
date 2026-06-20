@@ -1,14 +1,11 @@
-import { useVirtualizer } from "@tanstack/react-virtual";
-import { memo, useEffect, type RefObject } from "react";
+import { memo, type RefObject } from "react";
 import type { ViewerTarget } from "./citations";
 import ChatMessageItem from "./ChatMessageItem";
-import { estimateMessageHeight } from "./messageEstimateSize";
 import type { ChatMessage } from "./types";
 
 interface MessageListProps {
   messages: ChatMessage[];
   scrollRef: RefObject<HTMLDivElement | null>;
-  scrollTargetId: string | null;
   onOpenDocument: (target: ViewerTarget) => void;
   registerRef: (id: string, el: HTMLElement | null) => void;
   spacerRef: RefObject<HTMLDivElement | null>;
@@ -17,56 +14,21 @@ interface MessageListProps {
 function MessageList({
   messages,
   scrollRef,
-  scrollTargetId,
   onOpenDocument,
   registerRef,
   spacerRef,
 }: MessageListProps) {
-  const virtualizer = useVirtualizer({
-    count: messages.length,
-    getScrollElement: () => scrollRef.current,
-    estimateSize: (index) => estimateMessageHeight(messages[index]),
-    overscan: 5,
-  });
-
-  useEffect(() => {
-    if (!scrollTargetId) return;
-    const index = messages.findIndex((message) => message.id === scrollTargetId);
-    if (index < 0) return;
-
-    requestAnimationFrame(() => {
-      virtualizer.scrollToIndex(index, { align: "start" });
-    });
-    // scrollTargetId is the only intentional trigger; messages/virtualizer are read at fire time.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scrollTargetId]);
-
   return (
     <section className="messages">
-      <div
-        className="messages-virtual-list"
-        style={{ height: `${virtualizer.getTotalSize()}px` }}
-      >
-        {virtualizer.getVirtualItems().map((item) => {
-          const message = messages[item.index];
-          return (
-            <div
-              key={message.id}
-              data-index={item.index}
-              ref={virtualizer.measureElement}
-              className="messages-virtual-row"
-              style={{ transform: `translateY(${item.start}px)` }}
-            >
-              <ChatMessageItem
-                message={message}
-                onOpenDocument={onOpenDocument}
-                registerRef={registerRef}
-                scrollContainerRef={scrollRef}
-              />
-            </div>
-          );
-        })}
-      </div>
+      {messages.map((message) => (
+        <ChatMessageItem
+          key={message.id}
+          message={message}
+          onOpenDocument={onOpenDocument}
+          registerRef={registerRef}
+          scrollContainerRef={scrollRef}
+        />
+      ))}
       <div
         ref={spacerRef}
         className="message-scroll-spacer"
