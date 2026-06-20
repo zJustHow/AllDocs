@@ -46,6 +46,17 @@ AGENT_TOOL_DEFINITIONS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "list_documents",
+            "description": (
+                "列出当前会话可用文档（名称、页数、id）。"
+                "多文档时用于消歧或在其他工具中指定 document_id。"
+            ),
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "list_outline",
             "description": "列出文档章节树（目录大纲）。适用于「有哪些章节」「目录结构」类问题。",
             "parameters": {"type": "object", "properties": {}},
@@ -62,6 +73,41 @@ AGENT_TOOL_DEFINITIONS: list[dict[str, Any]] = [
                     "question": {
                         "type": "string",
                         "description": "可选；默认使用用户原问题",
+                    },
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "read_pages",
+            "description": (
+                "按页码读取页面内全部 chunk（按 chunk_index 排序）。"
+                "适用于「第 N 页写了什么」；可指定单页 page 或 page_gte/page_lte 范围。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "page": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "单页页码（与 page_gte/page_lte 二选一）",
+                    },
+                    "page_gte": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "起始页码（含）",
+                    },
+                    "page_lte": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "结束页码（含）",
+                    },
+                    "document_id": {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "可选；限定文档",
                     },
                 },
             },
@@ -118,23 +164,30 @@ AGENT_TOOL_DEFINITIONS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
-            "name": "read_chunks",
+            "name": "lookup_asset",
             "description": (
-                "精读指定 chunk 的完整内容。chunk_id 必须来自上一步检索结果中的 id= 字段（UUID），"
-                "不要用 [1][2] 序号。"
+                "按图号/表号精确查找插图或表格及其关联 chunk。"
+                "适用于「图4-7是什么」「表2-1额定参数」；号格式如 4-7。"
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "chunk_ids": {
-                        "type": "array",
-                        "items": {"type": "string", "format": "uuid"},
-                        "minItems": 1,
-                        "maxItems": 10,
-                        "description": "要精读的 chunk UUID 列表",
+                    "figure_number": {
+                        "type": "string",
+                        "description": "图号/表号，如 4-7、2-1",
+                    },
+                    "kind": {
+                        "type": "string",
+                        "enum": ["figure", "table"],
+                        "description": "可选；限定 figure 或 table",
+                    },
+                    "document_id": {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "可选；限定文档",
                     },
                 },
-                "required": ["chunk_ids"],
+                "required": ["figure_number"],
             },
         },
     },
@@ -221,42 +274,92 @@ AGENT_TOOL_NAMES = frozenset(
 )
 
 
-def _tool_call_id(step_num: int) -> str:
-    return f"call_step_{step_num}"
+def _tool_call_id(step_num: int, index: int = 0) -> str:
+    if index == 0:
+        return f"call_step_{step_num}"
+    return f"call_step_{step_num}_{index}"
 
 
-def build_agent_messages(question: str, steps: list) -> list[dict[str, Any]]:
+def _step_tool_calls(step) -> list:
+    if step.tool_calls:
+        return step.tool_calls
+    from app.services.agent.state import AgentToolCall
+
+    return [
+        AgentToolCall(
+            action=step.action,
+            action_input=step.action_input,
+            observation=step.observation,
+        )
+    ]
+
+
+def build_agent_messages(
+    question: str,
+    steps: list,
+    *,
+    evidence: list[dict] | None = None,
+    history_snippet_max: int = 60,
+    keep_full_observation_steps: int = 1,
+    outline_preview_lines: int = 5,
+) -> list[dict[str, Any]]:
     """Build chat messages with assistant tool_calls and tool results."""
+    from app.services.agent.observation_compress import (
+        build_evidence_index,
+        compress_observation,
+    )
+
     messages: list[dict[str, Any]] = [
         {"role": "user", "content": f"用户问题：{question}"},
     ]
-    for step in steps:
+    total_steps = len(steps)
+    keep_full = max(1, keep_full_observation_steps)
+
+    for index, step in enumerate(steps):
+        is_recent = index >= total_steps - keep_full
+        tool_calls = _step_tool_calls(step)
         assistant_message: dict[str, Any] = {
             "role": "assistant",
             "content": step.thought or None,
             "tool_calls": [
                 {
-                    "id": _tool_call_id(step.step),
+                    "id": call.tool_call_id or _tool_call_id(step.step, call_index),
                     "type": "function",
                     "function": {
-                        "name": step.action,
+                        "name": call.action,
                         "arguments": json.dumps(
-                            step.action_input, ensure_ascii=False
+                            call.action_input, ensure_ascii=False
                         ),
                     },
                 }
+                for call_index, call in enumerate(tool_calls)
             ],
         }
-        if step.reasoning_content:
+        if is_recent and step.reasoning_content:
             assistant_message["reasoning_content"] = step.reasoning_content
         messages.append(assistant_message)
-        messages.append(
-            {
-                "role": "tool",
-                "tool_call_id": _tool_call_id(step.step),
-                "content": step.observation,
-            }
-        )
+        for call_index, call in enumerate(tool_calls):
+            messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": call.tool_call_id or _tool_call_id(
+                        step.step, call_index
+                    ),
+                    "content": compress_observation(
+                        call.observation,
+                        action=call.action,
+                        is_recent=is_recent,
+                        history_snippet_max=history_snippet_max,
+                        outline_preview_lines=outline_preview_lines,
+                    ),
+                }
+            )
+
+    if len(steps) >= 2 and evidence:
+        evidence_index = build_evidence_index(evidence)
+        if evidence_index:
+            messages.append({"role": "user", "content": evidence_index})
+
     return messages
 
 
@@ -277,7 +380,7 @@ def _message_reasoning_content(message: Any) -> str:
 
 
 def parse_agent_tool_response(message: Any) -> dict[str, Any]:
-    """Normalize an assistant message into {thought, action, action_input}."""
+    """Normalize an assistant message into agent action payload."""
     reasoning_content = _message_reasoning_content(message)
     thought = (message.content or "").strip()
     if not thought and reasoning_content:
@@ -285,28 +388,44 @@ def parse_agent_tool_response(message: Any) -> dict[str, Any]:
     tool_calls = message.tool_calls or []
 
     if tool_calls:
-        call = tool_calls[0]
-        action = (call.function.name or "").strip()
-        action_input = _parse_tool_arguments(call.function.arguments)
-        if len(tool_calls) > 1:
-            logger.info(
-                "Agent returned %d tool calls; using first: %s",
-                len(tool_calls),
-                action,
+        actions: list[dict[str, Any]] = []
+        for call in tool_calls:
+            action = (call.function.name or "").strip()
+            action_input = _parse_tool_arguments(call.function.arguments)
+            if action not in AGENT_TOOL_NAMES:
+                logger.warning("Unknown agent tool: %s", action)
+                continue
+            actions.append(
+                {
+                    "action": action,
+                    "action_input": action_input,
+                    "tool_call_id": getattr(call, "id", None) or "",
+                }
             )
-        if action not in AGENT_TOOL_NAMES:
-            logger.warning("Unknown agent tool: %s", action)
+
+        if not actions:
             return {
                 "thought": thought,
                 "reasoning_content": reasoning_content,
+                "actions": [],
                 "action": "finish",
-                "action_input": {"reason": f"unknown tool: {action}"},
+                "action_input": {"reason": "no valid tool calls"},
             }
+
+        if len(actions) > 1:
+            logger.info(
+                "Agent returned %d tool calls: %s",
+                len(actions),
+                [item["action"] for item in actions],
+            )
+
+        primary = actions[0]
         return {
             "thought": thought,
             "reasoning_content": reasoning_content,
-            "action": action,
-            "action_input": action_input,
+            "actions": actions,
+            "action": primary["action"],
+            "action_input": primary["action_input"],
         }
 
     if thought:

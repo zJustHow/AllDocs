@@ -61,8 +61,8 @@ describe("AgentSteps", () => {
         {
           step: 2,
           thought: "",
-          action: "read_chunks",
-          action_input: { chunk_ids: ["abc123"] },
+          action: "read_neighbor_chunks",
+          action_input: { chunk_id: "11111111-1111-1111-1111-111111111111", before: 1, after: 1 },
           observation: "",
           status: "running",
         },
@@ -70,6 +70,36 @@ describe("AgentSteps", () => {
       true,
     );
 
-    expect(screen.getByText(/Read chunks in progress/i)).toBeInTheDocument();
+    expect(screen.getByText(/Neighbor chunks in progress|正在相邻片段/i)).toBeInTheDocument();
+  });
+
+  it("translates parallel tool names joined with +", () => {
+    renderSteps(
+      [
+        {
+          step: 2,
+          thought: "",
+          action: "read_neighbor_chunks + search_chunks",
+          action_input: {
+            calls: [
+              {
+                action: "read_neighbor_chunks",
+                action_input: { chunk_id: "11111111-1111-1111-1111-111111111111", before: 1, after: 1 },
+              },
+              { action: "search_chunks", action_input: { query: "arcing time" } },
+            ],
+          },
+          observation: "",
+          status: "running",
+        },
+      ],
+      true,
+    );
+
+    expect(
+      screen.getByText(
+        /Neighbor chunks \+ Search in progress|正在相邻片段 \+ 语义检索/i,
+      ),
+    ).toBeInTheDocument();
   });
 });

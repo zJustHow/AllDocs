@@ -9,7 +9,7 @@ from app.services.shared_contract import (
 INLINE_CITATION_REF = inline_citation_ref_pattern()
 
 def strip_inline_citation_markers(content: str) -> str:
-    """Remove inline [n] / 【n】 / {{embed:n}} markers (e.g. before TTS)."""
+    """Remove inline [n] / 【n】 markers (e.g. before TTS)."""
     return strip_inline_markers(content)
 
 

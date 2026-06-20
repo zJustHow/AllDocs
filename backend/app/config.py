@@ -26,6 +26,10 @@ class Settings(BaseSettings):
     rag_agent_max_steps: int = 10
     rag_agent_max_retrievals: int = 6
     rag_batch_search_max: int = 3
+    rag_agent_history_snippet_max: int = 60
+    rag_agent_keep_full_observation_steps: int = 1
+    rag_agent_outline_preview_lines: int = 5
+    rag_agent_max_parallel_tools: int = 4
 
     rerank_enabled: bool = True
     rerank_model: str = "BAAI/bge-reranker-v2-m3"

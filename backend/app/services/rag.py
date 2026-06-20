@@ -405,6 +405,47 @@ class RAGService:
         score_map = {cid: 1.0 for cid in ordered_ids}
         return await self._load_chunks(db, ordered_ids, score_map), None
 
+    async def read_pages(
+        self,
+        db: AsyncSession,
+        *,
+        page: int | None = None,
+        page_gte: int | None = None,
+        page_lte: int | None = None,
+        document_id: UUID | None = None,
+        doc_ids: list[UUID] | None = None,
+        max_chunks: int = 30,
+    ) -> tuple[list[dict], str | None]:
+        if page is not None:
+            page_gte = page
+            page_lte = page
+        if page_gte is None and page_lte is None:
+            return [], "read_pages 需要 page 或 page_gte/page_lte。"
+
+        stmt = (
+            select(Chunk.id, Document.name)
+            .join(Document, Chunk.document_id == Document.id)
+            .where(Chunk.page.is_not(None))
+        )
+        if page_gte is not None:
+            stmt = stmt.where(Chunk.page >= page_gte)
+        if page_lte is not None:
+            stmt = stmt.where(Chunk.page <= page_lte)
+        if document_id is not None:
+            stmt = stmt.where(Chunk.document_id == document_id)
+        elif doc_ids:
+            stmt = stmt.where(Chunk.document_id.in_(doc_ids))
+        stmt = stmt.order_by(Document.name, Chunk.chunk_index).limit(max(1, max_chunks))
+
+        result = await db.execute(stmt)
+        rows = result.all()
+        if not rows:
+            return [], "未找到对应页码的 chunk。"
+
+        ordered_ids = [str(row[0]) for row in rows]
+        score_map = {chunk_id: 1.0 for chunk_id in ordered_ids}
+        return await self._load_chunks(db, ordered_ids, score_map), None
+
     def build_context(self, chunks: list[dict]) -> str:
         parts: list[str] = []
         for index, item in enumerate(chunks, start=1):

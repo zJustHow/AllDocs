@@ -38,11 +38,6 @@ def inline_citation_marker_pattern() -> re.Pattern[str]:
     return re.compile(load_markers()["regex"]["inlineCitationMarker"])
 
 
-@lru_cache
-def embed_marker_loose_pattern() -> re.Pattern[str]:
-    return re.compile(load_markers()["regex"]["embedMarkerLoose"])
-
-
 def embed_dedupe_key(payload: dict[str, Any]) -> str:
     content_hash = payload.get("content_hash")
     if content_hash:
@@ -64,6 +59,4 @@ def embed_dedupe_key(payload: dict[str, Any]) -> str:
 
 
 def strip_inline_markers(content: str) -> str:
-    text = inline_citation_marker_pattern().sub("", content)
-    text = embed_marker_loose_pattern().sub("", text)
-    return text.strip()
+    return inline_citation_marker_pattern().sub("", content).strip()

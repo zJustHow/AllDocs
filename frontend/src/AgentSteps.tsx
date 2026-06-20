@@ -24,8 +24,17 @@ function summarizeActionInput(action: string, input: Record<string, unknown>): s
   if (action === "lookup_toc" && typeof input.question === "string") {
     return [input.question];
   }
-  if (action === "read_chunks" && Array.isArray(input.chunk_ids)) {
-    return [`${input.chunk_ids.length} chunk(s)`];
+  if (action === "lookup_asset" && typeof input.figure_number === "string") {
+    const kind = typeof input.kind === "string" ? input.kind : "";
+    return kind ? [`${kind} ${input.figure_number}`] : [input.figure_number];
+  }
+  if (action === "read_pages") {
+    if (typeof input.page === "number") {
+      return [`p.${input.page}`];
+    }
+    const from = typeof input.page_gte === "number" ? input.page_gte : "?";
+    const to = typeof input.page_lte === "number" ? input.page_lte : "?";
+    return [`p.${from}–${to}`];
   }
   if (action === "read_neighbor_chunks" && typeof input.chunk_id === "string") {
     const before = typeof input.before === "number" ? input.before : 1;
@@ -60,9 +69,15 @@ function AgentSteps({ steps, running = false }: AgentStepsProps) {
   }, [running, steps.length]);
 
   const toolLabel = (action: string) => {
-    const key = `agent.tools.${action}`;
-    const label = t(key);
-    return label === key ? action : label;
+    const labelOne = (name: string) => {
+      const key = `agent.tools.${name}`;
+      const label = t(key);
+      return label === key ? name : label;
+    };
+    if (action.includes(" + ")) {
+      return action.split(" + ").map(labelOne).join(" + ");
+    }
+    return labelOne(action);
   };
 
   const visibleSteps = steps.filter((step) => step.action !== "planning" || step.status === "running");

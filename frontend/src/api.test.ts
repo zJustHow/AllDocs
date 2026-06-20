@@ -202,6 +202,57 @@ describe("streamChat", () => {
     });
     vi.unstubAllGlobals();
   });
+
+  it("forwards citations and embeds events to handlers", async () => {
+    const onCitations = vi.fn();
+    const onEmbeds = vi.fn();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        mockSseResponse([
+          { type: "citations", citations: [{ document_id: "d1" }] },
+          { type: "embeds", embeds: [{ ref: 1, document_id: "d1", page: 1, url: "/x.png" }] },
+          {
+            type: "done",
+            session_id: "s1",
+            citations: [],
+            embeds: [],
+            language: "en",
+          },
+        ]),
+      ),
+    );
+
+    await streamChat("hello", null, [], {
+      onCitations,
+      onEmbeds,
+      onDelta: vi.fn(),
+      onDone: vi.fn(),
+      onError: vi.fn(),
+    });
+
+    expect(onCitations).toHaveBeenCalled();
+    expect(onEmbeds).toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
+  it("throws when chat request fails", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+      }),
+    );
+
+    await expect(
+      streamChat("hello", null, [], {
+        onDelta: vi.fn(),
+        onDone: vi.fn(),
+        onError: vi.fn(),
+      }),
+    ).rejects.toThrow();
+    vi.unstubAllGlobals();
+  });
 });
 
 describe("settings API", () => {
@@ -216,6 +267,18 @@ describe("settings API", () => {
     await expect(fetchSettings()).resolves.toEqual(payload);
     await expect(patchSettings({ llm_model: "gpt-4" })).resolves.toEqual(payload);
     expect(fetchMock).toHaveBeenCalledTimes(2);
+    vi.unstubAllGlobals();
+  });
+
+  it("throws when fetch settings fails", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+      }),
+    );
+
+    await expect(fetchSettings()).rejects.toThrow();
     vi.unstubAllGlobals();
   });
 
@@ -246,6 +309,20 @@ describe("uploadDocument", () => {
 
     const file = new File(["bytes"], "Guide.pdf", { type: "application/pdf" });
     await expect(uploadDocument(file)).resolves.toEqual(doc);
+    vi.unstubAllGlobals();
+  });
+
+  it("throws the fallback upload error when response body is empty", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        text: async () => "",
+      }),
+    );
+
+    const file = new File(["bytes"], "Guide.pdf", { type: "application/pdf" });
+    await expect(uploadDocument(file)).rejects.toThrow(/Upload failed|上传失败/i);
     vi.unstubAllGlobals();
   });
 });

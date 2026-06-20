@@ -1296,12 +1296,23 @@ button {
   max-width: 100%;
 }
 
+.answer-section-flow {
+  display: flex;
+  flex-direction: column;
+}
+
+.answer-prose + .answer-media-figures,
+.answer-media-figures + .answer-prose {
+  margin-top: 10px;
+}
+
 .answer-embed--figure {
   display: flex;
   flex-direction: column;
   align-items: center;
+  flex: 0 0 auto;
   width: fit-content;
-  max-width: 100%;
+  max-width: none;
 }
 
 .answer-embed--table {
@@ -1328,52 +1339,27 @@ button {
 }
 
 .answer-media-block--compact .answer-media-figures {
-  width: 100%;
-  max-width: min(360px, 100%);
-  margin-inline: auto;
-  align-items: center;
-}
-
-.answer-media-block--compact .answer-embed-image {
-  max-height: 240px;
+  margin-inline: 0;
 }
 
 .answer-media-figures {
   display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  flex: 0 0 auto;
-  gap: 10px;
-  width: min(240px, 38%);
-  max-width: 240px;
-}
-
-.answer-media-figures--row {
   flex-direction: row;
   flex-wrap: nowrap;
   align-items: flex-start;
+  gap: 12px;
   width: 100%;
   max-width: 100%;
-  margin: 8px 0;
+  margin: 10px 0;
   overflow-x: auto;
   overflow-y: hidden;
-  gap: 12px;
   -webkit-overflow-scrolling: touch;
   scrollbar-width: thin;
 }
 
-.answer-media-figures--row .answer-embed--figure {
-  flex: 0 0 auto;
-  width: auto;
-  max-width: min(280px, 70vw);
-}
-
-.answer-media-figures--row .answer-embed-image {
-  max-height: 220px;
-  max-width: min(280px, 70vw);
-}
-
 .answer-media-block--table .answer-media-figures {
+  flex-direction: column;
+  overflow-x: visible;
   width: 100%;
   max-width: 100%;
 }
@@ -1401,11 +1387,12 @@ button {
 
 .answer-embed-image-btn {
   display: block;
+  width: auto;
+  max-width: none;
   padding: 0;
   border: none;
   background: none;
   cursor: zoom-in;
-  max-width: 100%;
 }
 
 .answer-embed-image-btn:focus-visible {
@@ -1416,15 +1403,19 @@ button {
 
 .answer-embed-image {
   display: block;
-  max-width: 100%;
-  max-height: 280px;
   width: auto;
+  max-width: none;
+  max-height: 280px;
   height: auto;
   object-fit: contain;
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
   background: var(--surface);
   transition: border-color 0.15s ease;
+}
+
+.answer-media-block--compact .answer-embed-image {
+  max-height: 240px;
 }
 
 .answer-embed-image-btn:hover .answer-embed-image {
@@ -1442,19 +1433,8 @@ button {
     flex-direction: column;
   }
 
-  .answer-media-figures:not(.answer-media-figures--row) {
-    width: 100%;
-    max-width: 100%;
-    align-items: center;
-  }
-
   .answer-embed--figure .answer-embed-image {
-    max-height: 360px;
-  }
-
-  .answer-media-figures--row .answer-embed-image {
-    max-height: 200px;
-    max-width: min(240px, 75vw);
+    max-height: 220px;
   }
 }
 

@@ -149,6 +149,32 @@ describe("createAssistantStreamController", () => {
     expect(getStreamingContent("assistant-1")).toBe("Delta");
   });
 
+  it("patches citations and embeds through dispatchPayload", () => {
+    const ctx = createController();
+    const citation = {
+      document_id: "doc-1",
+      document_name: "Manual",
+      page: 1,
+      section: null,
+      snippet: "note",
+      regions: [],
+    };
+    const embed = {
+      ref: 1,
+      document_id: "doc-1",
+      page: 1,
+      type: "figure",
+      url: "/x.png",
+      regions: [],
+    };
+
+    ctx.controller.dispatchPayload({ type: "citations", citations: [citation] });
+    ctx.controller.dispatchPayload({ type: "embeds", embeds: [embed] });
+
+    expect(ctx.messages[0]?.citations).toEqual([citation]);
+    expect(ctx.messages[0]?.embeds).toEqual([embed]);
+  });
+
   it("patches citations and embeds on intermediate events", () => {
     const ctx = createController();
     const citation = {
@@ -188,5 +214,15 @@ describe("createAssistantStreamController", () => {
       content: "Partial",
     });
     expect(getStreamingContent("assistant-1")).toBe("");
+  });
+
+  it("ignores unknown payload types", () => {
+    const ctx = createController();
+
+    expect(ctx.controller.dispatchPayload({ type: "heartbeat" })).toBe("continue");
+    expect(ctx.messages[0]).toMatchObject({
+      streaming: true,
+      content: "",
+    });
   });
 });

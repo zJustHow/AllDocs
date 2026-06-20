@@ -5,6 +5,14 @@ OnAgentStep = Callable[[dict], Awaitable[None] | None]
 
 
 @dataclass
+class AgentToolCall:
+    action: str
+    action_input: dict
+    observation: str
+    tool_call_id: str = ""
+
+
+@dataclass
 class AgentStep:
     step: int
     thought: str
@@ -12,6 +20,7 @@ class AgentStep:
     action_input: dict
     observation: str
     reasoning_content: str = ""
+    tool_calls: list[AgentToolCall] = field(default_factory=list)
 
 
 @dataclass

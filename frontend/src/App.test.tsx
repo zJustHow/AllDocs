@@ -106,6 +106,7 @@ function renderApp() {
 describe("App", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    window.localStorage.clear();
     activeVoiceSocket = null;
     listDocuments.mockResolvedValue(sampleDocuments);
     loadSupportedFormats.mockResolvedValue(undefined);
@@ -287,6 +288,50 @@ describe("App", () => {
     expect(document.querySelector(".doc-viewer-name")?.textContent).toBe("Manual.pdf");
   });
 
+  it("updates the viewer target when another citation is clicked while open", async () => {
+    streamChat.mockImplementation(async (_message, _sessionId, _docIds, handlers: StreamHandlers) => {
+      handlers.onDone({
+        sessionId: "session-1",
+        content: "See [1] and [2] for details.",
+        citations: [
+          {
+            document_id: "doc-1",
+            document_name: "Manual.pdf",
+            page: 1,
+            section: null,
+            snippet: "Page one note.",
+            regions: [],
+          },
+          {
+            document_id: "doc-1",
+            document_name: "Manual.pdf",
+            page: 3,
+            section: null,
+            snippet: "Page three note.",
+            regions: [],
+          },
+        ],
+        embeds: [],
+        language: "en",
+      });
+    });
+
+    const user = userEvent.setup();
+    renderApp();
+
+    await screen.findByText("Manual.pdf");
+    await user.type(screen.getByRole("textbox"), "Show pages");
+    await user.click(screen.getByRole("button", { name: /Send|发送/i }));
+
+    await user.click(await screen.findByRole("button", { name: "[1]" }));
+    expect(await screen.findByRole("textbox", { name: /Page number|页码/i })).toHaveValue("1");
+
+    await user.click(screen.getByRole("button", { name: "[2]" }));
+    await waitFor(() => {
+      expect(screen.getByRole("textbox", { name: /Page number|页码/i })).toHaveValue("3");
+    });
+  });
+
   it("reindexes a document after confirmation", async () => {
     const user = userEvent.setup();
     renderApp();
@@ -406,5 +451,143 @@ describe("App", () => {
     activeVoiceSocket?.onmessage?.({ data: "not-json" } as MessageEvent);
 
     expect(await screen.findByText(/Failed to parse voice|语音响应解析失败/i)).toBeInTheDocument();
+  });
+
+  it("shows an error when upload fails", async () => {
+    uploadDocument.mockRejectedValue(new Error("Upload failed"));
+    const user = userEvent.setup();
+    renderApp();
+
+    await screen.findByText("Manual.pdf");
+    const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+    await user.upload(fileInput, new File(["pdf"], "Bad.pdf", { type: "application/pdf" }));
+
+    expect(await screen.findByText(/Upload failed/)).toBeInTheDocument();
+  });
+
+  it("shows an error when reindex fails", async () => {
+    reindexDocument.mockRejectedValue(new Error("Reindex failed"));
+    const user = userEvent.setup();
+    renderApp();
+
+    await screen.findByText("Manual.pdf");
+    await user.click(screen.getAllByRole("button", { name: /^Reindex$|^重新索引$/i })[0]!);
+    const dialog = await screen.findByRole("alertdialog");
+    await user.click(within(dialog).getByRole("button", { name: /^Reindex$|^重新索引$/i }));
+
+    expect(await screen.findByText(/Reindex failed/)).toBeInTheDocument();
+  });
+
+  it("does not delete a document when confirmation is cancelled", async () => {
+    const user = userEvent.setup();
+    renderApp();
+
+    await screen.findByText("Manual.pdf");
+    await user.click(screen.getAllByRole("button", { name: /Delete document|删除/i })[0]!);
+    const dialog = await screen.findByRole("alertdialog");
+    await user.click(within(dialog).getByRole("button", { name: /Cancel|取消/i }));
+
+    expect(deleteDocument).not.toHaveBeenCalled();
+  });
+
+  it("switches locale from the header toggle", async () => {
+    const user = userEvent.setup();
+    renderApp();
+
+    await screen.findByText("Manual.pdf");
+    await user.click(screen.getByRole("button", { name: "中文" }));
+
+    expect(screen.getByRole("button", { name: "中文" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("surfaces voice websocket disconnects", async () => {
+    const user = userEvent.setup();
+    renderApp();
+
+    await screen.findByText("Manual.pdf");
+    await user.click(screen.getByRole("button", { name: /Voice question|语音/i }));
+    await user.click(screen.getByRole("button", { name: /Stop recording|停止/i }));
+
+    await waitFor(() => expect(activeVoiceSocket).not.toBeNull());
+    activeVoiceSocket?.onclose?.();
+
+    expect(await screen.findByText(/Voice connection closed|语音连接已断开/i)).toBeInTheDocument();
+  });
+
+  it("surfaces voice stream error payloads", async () => {
+    const user = userEvent.setup();
+    renderApp();
+
+    await screen.findByText("Manual.pdf");
+    await user.click(screen.getByRole("button", { name: /Voice question|语音/i }));
+    await user.click(screen.getByRole("button", { name: /Stop recording|停止/i }));
+
+    await waitFor(() => expect(activeVoiceSocket).not.toBeNull());
+    activeVoiceSocket?.onmessage?.({
+      data: JSON.stringify({ type: "error", message: "Voice model failed" }),
+    } as MessageEvent);
+
+    expect(await screen.findByText(/Voice model failed/)).toBeInTheDocument();
+  });
+
+  it("surfaces voice request timeout", async () => {
+    let voiceTimeoutHandler: (() => void) | null = null;
+    const originalSetTimeout = globalThis.setTimeout.bind(globalThis);
+    const setTimeoutSpy = vi
+      .spyOn(globalThis, "setTimeout")
+      .mockImplementation((handler, delay, ...args) => {
+        if (delay === 300_000) {
+          voiceTimeoutHandler = handler as () => void;
+          return 999 as unknown as ReturnType<typeof setTimeout>;
+        }
+        return originalSetTimeout(handler, delay, ...args);
+      });
+
+    try {
+      const user = userEvent.setup();
+      renderApp();
+
+      await screen.findByText("Manual.pdf");
+      await user.click(screen.getByRole("button", { name: /Voice question|语音/i }));
+      await user.click(screen.getByRole("button", { name: /Stop recording|停止/i }));
+
+      await waitFor(() => expect(activeVoiceSocket).not.toBeNull());
+      expect(voiceTimeoutHandler).not.toBeNull();
+      voiceTimeoutHandler!();
+
+      expect(
+        await screen.findByText(/Voice request timed out|语音处理超时/i),
+      ).toBeInTheDocument();
+    } finally {
+      setTimeoutSpy.mockRestore();
+    }
+  });
+
+  it("closes the sidebar when the overlay is clicked on mobile", async () => {
+    Object.defineProperty(window, "innerWidth", { value: 800, configurable: true });
+    const user = userEvent.setup();
+    renderApp();
+
+    await screen.findByText("Manual.pdf");
+    expect(document.querySelector(".sidebar.open")).toBeInTheDocument();
+
+    await user.click(document.querySelector(".sidebar-overlay") as HTMLElement);
+
+    expect(document.querySelector(".sidebar.open")).not.toBeInTheDocument();
+  });
+
+  it("closes the sidebar after sending from a suggestion chip on mobile", async () => {
+    Object.defineProperty(window, "innerWidth", { value: 800, configurable: true });
+    const user = userEvent.setup();
+    renderApp();
+
+    await screen.findByText("Manual.pdf");
+    await user.click(
+      screen.getByRole("button", { name: /How do I handle alarm E-204|如何处理 E-204/i }),
+    );
+
+    await waitFor(() => {
+      expect(document.querySelector(".sidebar.open")).not.toBeInTheDocument();
+    });
   });
 });

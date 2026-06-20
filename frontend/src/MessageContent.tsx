@@ -193,16 +193,13 @@ const SectionView = memo(function SectionView({
 
         const isTable = block.embeds.some((embed) => embed.type === "table");
         const compact = block.embeds.length === 1 && !isTable;
-        const isGallery = block.embeds.length > 1 && !isTable;
 
         return (
           <div
             key={`embeds-${index}`}
             className={`answer-media-figures${
               isTable ? " answer-media-block--table" : ""
-            }${compact ? " answer-media-block--compact" : ""}${
-              isGallery ? " answer-media-figures--row" : ""
-            }`}
+            }${compact ? " answer-media-block--compact" : ""}`}
           >
             {block.embeds.map((embed) => (
               <AnswerEmbedFigure

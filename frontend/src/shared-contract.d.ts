@@ -5,11 +5,7 @@ declare module "@shared/markers.json" {
     regex: {
       inlineCitationRef: string;
       inlineCitationMarker: string;
-      embedMarkerLoose: string;
       messageToken: string;
-    };
-    embed: {
-      markerTemplate: string;
     };
   };
   export default value;

@@ -79,46 +79,6 @@ export function embedToViewerTarget(embed: MessageEmbed): ViewerTarget {
   };
 }
 
-function parseInlineCitationRef(
-  inner: string,
-  citations: Citation[],
-): Citation | null {
-  const numericMatch = inner.match(/^\s*\[?(\d+)\]?\s*$/);
-  if (numericMatch) {
-    return citations[Number(numericMatch[1]) - 1] ?? null;
-  }
-
-  const pageMatch = inner.match(/p\.(\d+)/i);
-  const sectionMatch = inner.match(/§\s*(.+)$/);
-  const page = pageMatch ? Number(pageMatch[1]) : null;
-  const section = sectionMatch ? sectionMatch[1].trim() : null;
-  const docName = inner
-    .replace(/\s*p\.\d+/i, "")
-    .replace(/\s*§\s*.+$/, "")
-    .trim();
-
-  const exact = citations.find((citation) => {
-    if (citation.document_name !== docName) return false;
-    if (page !== null && citation.page !== page) return false;
-    if (section && citation.section !== section) return false;
-    return true;
-  });
-  if (exact) return exact;
-
-  const byName = citations.find(
-    (citation) =>
-      citation.document_name.includes(docName) ||
-      docName.includes(citation.document_name),
-  );
-  if (byName) return byName;
-
-  if (page !== null) {
-    return citations.find((citation) => citation.page === page) ?? null;
-  }
-
-  return null;
-}
-
 export type MessageSegment =
   | { type: "text"; value: string }
   | { type: "citation"; value: string; citation: Citation; index: number }
@@ -185,7 +145,6 @@ export function splitMessageWithCitations(
   const embedsBySentence = streaming
     ? new Map<number, MessageEmbed[]>()
     : indexEmbedsBy(embeds, (embed) => embed.sentence_index);
-  const embedsByRef = indexEmbedsBy(embeds, (embed) => embed.ref);
   const pattern = new RegExp(messageTokenPattern.source, "g");
   const shownEmbedKeys = new Set<string>();
 
@@ -229,40 +188,15 @@ export function splitMessageWithCitations(
       appendText(content.slice(lastIndex, match.index));
     }
 
-    const embedRef = match[1];
-    if (embedRef) {
-      flushEmbedsForCurrentSentence();
-      appendEmbedsForKey(
-        segments,
-        Number(embedRef),
-        embedsByRef,
-        shownEmbedKeys,
-      );
-      lastIndex = match.index + match[0].length;
-      continue;
-    }
-
-    const numericRef = match[2] ?? match[3];
-    if (numericRef) {
-      const index = Number(numericRef) - 1;
-      pushCitationSegment(
-        segments,
-        match[0],
-        citations[index],
-        index,
-        hideUnmatched,
-      );
-    } else {
-      const inner = match[4];
-      const citation = parseInlineCitationRef(inner, citations);
-      pushCitationSegment(
-        segments,
-        match[0],
-        citation,
-        citation ? citations.indexOf(citation) : -1,
-        hideUnmatched,
-      );
-    }
+    const numericRef = match[1] ?? match[2];
+    const index = Number(numericRef) - 1;
+    pushCitationSegment(
+      segments,
+      match[0],
+      citations[index],
+      index,
+      hideUnmatched,
+    );
     lastIndex = match.index + match[0].length;
   }
 

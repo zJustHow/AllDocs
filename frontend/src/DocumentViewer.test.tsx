@@ -1,10 +1,36 @@
 /** @vitest-environment jsdom */
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import DocumentViewer from "./DocumentViewer";
 import { I18nProvider } from "./i18n";
 import type { ViewerTarget } from "./citations";
+
+let intersectionCallback: IntersectionObserverCallback | null = null;
+
+beforeEach(() => {
+  intersectionCallback = null;
+  class IntersectionObserverMock implements IntersectionObserver {
+    readonly root = null;
+    readonly rootMargin = "";
+    readonly thresholds = [];
+
+    constructor(callback: IntersectionObserverCallback) {
+      intersectionCallback = callback;
+    }
+
+    observe = vi.fn();
+    disconnect = vi.fn();
+    unobserve = vi.fn();
+    takeRecords = vi.fn();
+  }
+
+  vi.stubGlobal("IntersectionObserver", IntersectionObserverMock);
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 const textTarget: ViewerTarget = {
   documentId: "doc-text",
@@ -129,6 +155,84 @@ describe("DocumentViewer", () => {
     await waitFor(() => {
       expect(pageInput).toHaveValue("1");
     });
+  });
+
+  it("shows an error when a PDF page image fails to load", async () => {
+    renderViewer(pdfTarget);
+
+    const image = await screen.findByRole("img", { name: /manual.pdf p\.1/i });
+    fireEvent.error(image);
+
+    expect(await screen.findByText(/Failed to load document|无法加载文档/i)).toBeInTheDocument();
+  });
+
+  it("lazy-loads distant PDF pages when they intersect the viewport", async () => {
+    renderViewer({ ...pdfTarget, page: 3, pageCount: 10 });
+
+    await screen.findByRole("textbox", { name: /Page number|页码/i });
+    const page8 = document.querySelector('[data-page="8"]') as HTMLElement;
+    expect(page8.querySelector(".doc-viewer-page-placeholder")).toBeInTheDocument();
+
+    intersectionCallback?.(
+      [{ isIntersecting: true, target: page8 } as IntersectionObserverEntry],
+      {} as IntersectionObserver,
+    );
+
+    await waitFor(() => {
+      expect(page8.querySelector("img")).toBeInTheDocument();
+    });
+  });
+
+  it("updates the current page while scrolling through the PDF", async () => {
+    renderViewer({ ...pdfTarget, pageCount: 2 });
+
+    const pageInput = await screen.findByRole("textbox", { name: /Page number|页码/i });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    const scrollEl = document.querySelector(".doc-viewer-scroll") as HTMLElement;
+    const page1 = document.querySelector('[data-page="1"]') as HTMLElement;
+    const page2 = document.querySelector('[data-page="2"]') as HTMLElement;
+
+    Object.defineProperty(page1, "offsetTop", { value: 0, configurable: true });
+    Object.defineProperty(page1, "offsetHeight", { value: 600, configurable: true });
+    Object.defineProperty(page2, "offsetTop", { value: 600, configurable: true });
+    Object.defineProperty(page2, "offsetHeight", { value: 600, configurable: true });
+    Object.defineProperty(scrollEl, "scrollTop", { value: 500, writable: true, configurable: true });
+    Object.defineProperty(scrollEl, "clientHeight", { value: 400, configurable: true });
+
+    fireEvent.scroll(scrollEl);
+
+    await waitFor(() => {
+      expect(pageInput).toHaveValue("2");
+    });
+  });
+
+  it("resets invalid page input on blur", async () => {
+    const user = userEvent.setup();
+    renderViewer(pdfTarget);
+
+    const pageInput = await screen.findByRole("textbox", { name: /Page number|页码/i });
+    await user.clear(pageInput);
+    await user.type(pageInput, "abc");
+    fireEvent.blur(pageInput);
+
+    expect(pageInput).toHaveValue("1");
+  });
+
+  it("renders image previews for supported image documents", () => {
+    renderViewer({
+      documentId: "doc-img",
+      documentName: "photo.png",
+      contentType: "image/png",
+      page: null,
+      section: null,
+      regions: [],
+    });
+
+    expect(screen.getByRole("img", { name: "photo.png" })).toHaveAttribute(
+      "src",
+      "/api/v1/documents/doc-img/file",
+    );
   });
 
   it("shows unsupported preview messaging for unknown file types", () => {

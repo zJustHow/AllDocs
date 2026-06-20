@@ -9,7 +9,7 @@ import type { MessageEmbed } from "../types";
 
 describe("stripInlineMarkers", () => {
   it("removes inline citation and embed markers", () => {
-    expect(stripInlineMarkers("Text [1] and {{embed:2}} end.")).toBe("Text  and  end.");
+    expect(stripInlineMarkers("Text [1] and [2] end.")).toBe("Text  and  end.");
   });
 });
 

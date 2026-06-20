@@ -17,6 +17,7 @@ const citation: Citation = {
 
 const embed: MessageEmbed = {
   ref: 1,
+  sentence_index: 0,
   document_id: "doc-1",
   document_name: "Manual",
   page: 2,
@@ -60,7 +61,7 @@ describe("MessageContent", () => {
 
   it("renders embed figures and opens the document from caption link", async () => {
     const user = userEvent.setup();
-    const { onOpenDocument } = renderMessage("See the diagram. {{embed:1}}", {
+    const { onOpenDocument } = renderMessage("See the diagram.", {
       embeds: [embed],
     });
 
@@ -84,5 +85,51 @@ describe("MessageContent", () => {
     );
 
     expect(container).toBeEmptyDOMElement();
+  });
+
+  it("renders table embeds with table layout classes", () => {
+    renderMessage("See the table.", {
+      embeds: [{ ...embed, type: "table", caption: "Table 1" }],
+    });
+
+    expect(document.querySelector(".answer-media-block--table")).toBeInTheDocument();
+    expect(document.querySelector(".answer-embed--table")).toBeInTheDocument();
+  });
+
+  it("opens the image lightbox from the embed preview", async () => {
+    const user = userEvent.setup();
+    renderMessage("See the diagram.", { embeds: [embed] });
+
+    await user.click(screen.getByRole("button", { name: /View enlarged|查看大图/i }));
+
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+  });
+
+  it("uses the document name when an embed has no caption", () => {
+    renderMessage("See the figure.", {
+      embeds: [{ ...embed, caption: undefined }],
+    });
+
+    expect(screen.getByRole("button", { name: /\[1\].*Manual/i })).toBeInTheDocument();
+  });
+
+  it("renders streaming content without sentence-boundary embed splits", () => {
+    renderMessage("Streaming answer [1].", {
+      streaming: true,
+      embeds: [embed],
+    });
+
+    expect(screen.getByText(/Streaming answer/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "[1]" })).toBeInTheDocument();
+  });
+
+  it("merges orphan trailing citation suffixes into the preceding prose block", () => {
+    renderMessage("See the diagram [1].", {
+      embeds: [{ ...embed, sentence_index: 0 }],
+      citations: [citation],
+    });
+
+    expect(screen.getByRole("img", { name: /Figure 1/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "[1]" })).toBeInTheDocument();
   });
 });

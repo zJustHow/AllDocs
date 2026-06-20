@@ -14,7 +14,6 @@ interface FileFormatEntry {
 const markers = markersContract as {
   regex: {
     inlineCitationMarker: string;
-    embedMarkerLoose: string;
     messageToken: string;
   };
 };
@@ -25,19 +24,13 @@ export const inlineCitationMarkerPattern = new RegExp(
   markers.regex.inlineCitationMarker,
   "g",
 );
-export const embedMarkerLoosePattern = new RegExp(
-  markers.regex.embedMarkerLoose,
-  "g",
-);
 export const messageTokenPattern = new RegExp(
   markers.regex.messageToken,
   "g",
 );
 
 export function stripInlineMarkers(content: string): string {
-  return content
-    .replace(inlineCitationMarkerPattern, "")
-    .replace(embedMarkerLoosePattern, "");
+  return content.replace(inlineCitationMarkerPattern, "");
 }
 
 export function embedDedupeKey(embed: MessageEmbed): string {

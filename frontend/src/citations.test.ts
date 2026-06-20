@@ -99,8 +99,8 @@ describe("splitMessageWithCitations", () => {
     makeCitation({ page: 7, snippet: "second" }),
   ];
 
-  it("strips inline markers when no citations or embeds are provided", () => {
-    const segments = splitMessageWithCitations("See [1] and {{embed:2}}.", [], {
+  it("strips inline citation markers when no citations or embeds are provided", () => {
+    const segments = splitMessageWithCitations("See [1] and [2].", [], {
       hideUnmatched: true,
     });
 
@@ -113,6 +113,22 @@ describe("splitMessageWithCitations", () => {
     });
 
     expect(segments.some((s) => s.type === "citation" && s.index === 1)).toBe(true);
+  });
+
+  it("keeps non-numeric bracket text as plain prose", () => {
+    const segments = splitMessageWithCitations("Press [START] then [1].", citations, {
+      hideUnmatched: true,
+    });
+
+    expect(segments).toEqual([
+      { type: "text", value: "Press [START] then " },
+      {
+        type: "citation",
+        value: "[1].",
+        citation: citations[0],
+        index: 0,
+      },
+    ]);
   });
 
   it("hides unmatched citation tokens when configured", () => {
@@ -131,9 +147,10 @@ describe("splitMessageWithCitations", () => {
     expect(segments).toEqual([{ type: "text", value: "[9]" }]);
   });
 
-  it("inserts embed segments by ref marker", () => {
+  it("inserts embed segments after the aligned sentence", () => {
     const embed: MessageEmbed = {
       ref: 2,
+      sentence_index: 0,
       document_id: "doc-1",
       page: 1,
       type: "figure",
@@ -141,12 +158,60 @@ describe("splitMessageWithCitations", () => {
       regions: [],
     };
 
-    const segments = splitMessageWithCitations("See {{embed:2}}.", citations, {
+    const segments = splitMessageWithCitations("See the diagram.", citations, {
       hideUnmatched: true,
       embeds: [embed],
     });
 
     expect(segments.some((s) => s.type === "embed" && s.embed.ref === 2)).toBe(true);
+  });
+
+  it("returns original content when every citation token is hidden", () => {
+    const segments = splitMessageWithCitations("[9]", citations, {
+      hideUnmatched: true,
+    });
+
+    expect(segments).toEqual([{ type: "text", value: "[9]" }]);
+  });
+
+  it("absorbs trailing punctuation before trailing embed segments", () => {
+    const embed: MessageEmbed = {
+      ref: 1,
+      sentence_index: 0,
+      document_id: "doc-1",
+      page: 1,
+      type: "figure",
+      url: "/x.png",
+      regions: [],
+    };
+
+    const segments = splitMessageWithCitations("See [1].", citations, {
+      hideUnmatched: true,
+      embeds: [embed],
+    });
+
+    const trailingText = segments.filter((segment) => segment.type === "text").at(-1)?.value ?? "";
+    expect(trailingText).not.toMatch(/^[\s,.;:!?。，；：！？…、）】」』《"''']+$/);
+  });
+
+  it("absorbs trailing punctuation into the preceding citation segment", () => {
+    const embed: MessageEmbed = {
+      ref: 1,
+      sentence_index: 0,
+      document_id: "doc-1",
+      page: 1,
+      type: "figure",
+      url: "/x.png",
+      regions: [],
+    };
+
+    const segments = splitMessageWithCitations("See [1].", citations, {
+      hideUnmatched: true,
+      embeds: [embed],
+    });
+
+    const citationSegment = segments.find((segment) => segment.type === "citation");
+    expect(citationSegment?.value).toBe("[1].");
   });
 
   it("does not split text on sentence boundaries in streaming mode", () => {
@@ -183,6 +248,26 @@ describe("segment helpers", () => {
     expect(text).toBe("Hello [1]");
   });
 
+  it("ignores embed segments when joining display text", () => {
+    const text = segmentsDisplayText([
+      { type: "text", value: "See " },
+      {
+        type: "embed",
+        embed: {
+          ref: 1,
+          sentence_index: 0,
+          document_id: "doc-1",
+          page: 1,
+          type: "figure",
+          url: "/x.png",
+          regions: [],
+        },
+      },
+    ]);
+
+    expect(text).toBe("See ");
+  });
+
   it("builds markdown source with citation placeholders", () => {
     const md = segmentsToMarkdownSource([
       { type: "text", value: "See " },
@@ -200,5 +285,21 @@ describe("segment helpers", () => {
       ]),
     ).toBe(true);
     expect(proseSegmentsHaveContent([{ type: "text", value: "Hi" }])).toBe(true);
+    expect(
+      proseSegmentsHaveContent([
+        {
+          type: "embed",
+          embed: {
+            ref: 1,
+            sentence_index: 0,
+            document_id: "doc-1",
+            page: 1,
+            type: "figure",
+            url: "/x.png",
+            regions: [],
+          },
+        },
+      ]),
+    ).toBe(false);
   });
 });
