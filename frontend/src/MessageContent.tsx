@@ -2,6 +2,7 @@ import { memo, useMemo, useState } from "react";
 import ImageLightbox from "./ImageLightbox";
 import {
   embedDedupeKey,
+  embedToViewerTarget,
   isOrphanInlineSuffix,
   isTrailingPunctuationOnly,
   proseSegmentsHaveContent,
@@ -9,8 +10,8 @@ import {
   segmentsToMarkdownSource,
   splitMessageWithCitations,
   type MessageSegment,
+  type ViewerTarget,
 } from "./citations";
-import { type ViewerTarget, embedToViewerTarget } from "./citations";
 import { useI18n } from "./i18n";
 import ProseBlock from "./ProseBlock";
 import type { Citation, MessageEmbed } from "./types";
@@ -19,6 +20,7 @@ interface MessageContentProps {
   content: string;
   citations?: Citation[];
   embeds?: MessageEmbed[];
+  streaming?: boolean;
   onOpenDocument: (target: ViewerTarget) => void;
 }
 
@@ -27,10 +29,67 @@ interface AnswerEmbedFigureProps {
   onOpenDocument: (target: ViewerTarget) => void;
 }
 
-function looksLikeImageDescription(text: string): boolean {
-  const trimmed = text.trim();
-  if (trimmed.length > 120) return true;
-  return /^(这是|图中|该图|本图|如图所示|照片展示)/.test(trimmed);
+type SectionBlock =
+  | { kind: "prose"; segments: MessageSegment[] }
+  | { kind: "embeds"; embeds: MessageEmbed[] };
+
+function buildSectionBlocks(segments: MessageSegment[]): SectionBlock[] {
+  const blocks: SectionBlock[] = [];
+  let proseBatch: MessageSegment[] = [];
+
+  const flushProse = () => {
+    if (!proseBatch.length) return;
+    blocks.push({ kind: "prose", segments: proseBatch });
+    proseBatch = [];
+  };
+
+  for (const segment of segments) {
+    if (segment.type === "embed") {
+      flushProse();
+      const last = blocks[blocks.length - 1];
+      if (last?.kind === "embeds") {
+        last.embeds.push(segment.embed);
+      } else {
+        blocks.push({ kind: "embeds", embeds: [segment.embed] });
+      }
+      continue;
+    }
+    proseBatch.push(segment);
+  }
+  flushProse();
+
+  while (blocks.length >= 2) {
+    const trailing = blocks[blocks.length - 1];
+    const beforeTrailing = blocks[blocks.length - 2];
+    if (
+      trailing.kind !== "prose" ||
+      beforeTrailing.kind !== "embeds" ||
+      blocks.length < 3
+    ) {
+      break;
+    }
+
+    const trailingText = segmentsDisplayText(trailing.segments);
+    if (
+      !isTrailingPunctuationOnly(trailingText) &&
+      !isOrphanInlineSuffix(trailing.segments)
+    ) {
+      break;
+    }
+
+    const anchor = blocks[blocks.length - 3];
+    if (anchor.kind !== "prose") {
+      break;
+    }
+
+    blocks[blocks.length - 3] = {
+      kind: "prose",
+      segments: [...anchor.segments, ...trailing.segments],
+    };
+    blocks.pop();
+  }
+
+  return blocks;
 }
 
 function embedDisplayCaption(
@@ -38,12 +97,11 @@ function embedDisplayCaption(
   t: (key: string, vars?: Record<string, unknown>) => string,
 ): string {
   const prefix = `[${embed.ref}]`;
-  let body: string | undefined;
-  if (embed.caption && !looksLikeImageDescription(embed.caption)) {
-    body = embed.caption;
-  } else if (embed.document_name) {
-    body = `${embed.document_name} ${t("viewer.pageHint", { page: embed.page })}`;
-  }
+  const body =
+    embed.caption?.trim() ||
+    (embed.document_name
+      ? `${embed.document_name} ${t("viewer.pageHint", { page: embed.page })}`
+      : undefined);
   if (!body) {
     return prefix;
   }
@@ -102,74 +160,16 @@ function AnswerEmbedFigure({ embed, onOpenDocument }: AnswerEmbedFigureProps) {
 }
 
 interface SectionViewProps {
-  segments: MessageSegment[];
+  blocks: SectionBlock[];
   citations: Citation[];
   onOpenDocument: (target: ViewerTarget) => void;
 }
 
-function SectionView({
-  segments,
+const SectionView = memo(function SectionView({
+  blocks,
   citations,
   onOpenDocument,
 }: SectionViewProps) {
-  const blocks: Array<
-    | { kind: "prose"; segments: MessageSegment[] }
-    | { kind: "embeds"; embeds: MessageEmbed[] }
-  > = [];
-  let proseBatch: MessageSegment[] = [];
-
-  const flushProse = () => {
-    if (!proseBatch.length) return;
-    blocks.push({ kind: "prose", segments: proseBatch });
-    proseBatch = [];
-  };
-
-  for (const segment of segments) {
-    if (segment.type === "embed") {
-      flushProse();
-      const last = blocks[blocks.length - 1];
-      if (last?.kind === "embeds") {
-        last.embeds.push(segment.embed);
-      } else {
-        blocks.push({ kind: "embeds", embeds: [segment.embed] });
-      }
-      continue;
-    }
-    proseBatch.push(segment);
-  }
-  flushProse();
-
-  while (blocks.length >= 2) {
-    const trailing = blocks[blocks.length - 1];
-    const beforeTrailing = blocks[blocks.length - 2];
-    if (
-      trailing.kind !== "prose" ||
-      beforeTrailing.kind !== "embeds" ||
-      blocks.length < 3
-    ) {
-      break;
-    }
-
-    const trailingText = segmentsDisplayText(trailing.segments);
-    if (
-      !isTrailingPunctuationOnly(trailingText) &&
-      !isOrphanInlineSuffix(trailing.segments)
-    ) {
-      break;
-    }
-
-    const anchor = blocks[blocks.length - 3];
-    if (anchor.kind !== "prose") {
-      break;
-    }
-
-    blocks[blocks.length - 3] = {
-      kind: "prose",
-      segments: [...anchor.segments, ...trailing.segments],
-    };
-    blocks.pop();
-  }
-
   if (!blocks.length) {
     return null;
   }
@@ -216,12 +216,13 @@ function SectionView({
       })}
     </div>
   );
-}
+});
 
 function MessageContent({
   content,
   citations = [],
   embeds = [],
+  streaming = false,
   onOpenDocument,
 }: MessageContentProps) {
   const segments = useMemo(
@@ -230,17 +231,20 @@ function MessageContent({
         ? splitMessageWithCitations(content, citations, {
             hideUnmatched: true,
             embeds,
+            streaming,
           })
         : [],
-    [content, citations, embeds],
+    [content, citations, embeds, streaming],
   );
+
+  const blocks = useMemo(() => buildSectionBlocks(segments), [segments]);
 
   if (!segments.length) return null;
 
   return (
     <div className="message-section-body">
       <SectionView
-        segments={segments}
+        blocks={blocks}
         citations={citations}
         onOpenDocument={onOpenDocument}
       />

@@ -1,6 +1,7 @@
 import unittest
 
-from app.services.citations_util import _resolve_citation_regions, public_citations
+from app.services.citations_util import public_citations
+from app.services.pdf_layout_regions import normalize_layout_regions
 from app.services.ingestion import (
     _block_spans_from_joined_blocks,
     _concat_pages,
@@ -89,14 +90,8 @@ class CitationRegionsTests(unittest.TestCase):
         self.assertEqual(citations[0]["regions"][1]["page"], 2)
         self.assertNotIn("bbox", citations[0])
 
-    def test_resolve_citation_regions_requires_layout_regions(self) -> None:
-        regions = _resolve_citation_regions(
-            {
-                "page": 3,
-                "text": "sample",
-                "layout_bbox": [1.0, 2.0, 3.0, 4.0],
-            }
-        )
+    def test_normalize_layout_regions_requires_region_list(self) -> None:
+        regions = normalize_layout_regions(None)
 
         self.assertEqual(regions, [])
 

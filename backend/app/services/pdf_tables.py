@@ -9,15 +9,19 @@ from dataclasses import dataclass
 import fitz
 
 from app.config import Settings
-from app.services.pdf_attach_reading_order import pick_preceding_chunk
+from app.services.pdf_layout_regions import layout_regions_for_asset
+from app.services.table_html import table_dimensions_meet_minimum
 from app.services.pdf_embedded_images import ParsedAttachedAsset
-from app.services.pdf_geometry import rect_area, rect_intersection_area
+from app.services.pdf_geometry import (
+    ASSET_OVERLAP_SKIP_RATIO,
+    rect_area,
+    rect_intersection_area,
+)
 from app.services.pdf_header_footer import HeaderFooterFilter
 
 
 logger = logging.getLogger(__name__)
 
-_BLOCK_OVERLAP_RATIO = 0.35
 _TABLE_SUMMARY_MAX_CHARS = 4000
 
 
@@ -33,6 +37,7 @@ class EmbeddedTable:
     height: int
     figure_number: str | None = None
     caption_text: str | None = None
+    layout_regions: tuple[dict, ...] | None = None
 
 
 def _overlaps_table_region(
@@ -42,7 +47,7 @@ def _overlaps_table_region(
     area = max(rect_area(bbox), 1.0)
     for table_bbox in table_bboxes:
         overlap = rect_intersection_area(bbox, table_bbox)
-        if overlap / area >= _BLOCK_OVERLAP_RATIO:
+        if overlap / area >= ASSET_OVERLAP_SKIP_RATIO:
             return True
     return False
 
@@ -124,69 +129,63 @@ def _render_table_png(
     return pixmap.tobytes("png"), pixmap.width, pixmap.height
 
 
-def extract_pdf_tables(
-    doc: fitz.Document,
+def extract_tables_from_page(
+    page: fitz.Page,
+    page_number: int,
     *,
     settings: Settings,
     section_resolver: Callable[[int, float | None], str | None],
-    should_skip_page: Callable[[int], bool] | None = None,
 ) -> list[EmbeddedTable]:
     if not settings.pdf_extract_tables:
         return []
 
-    tables: list[EmbeddedTable] = []
     scale = settings.pdf_table_render_scale
+    try:
+        finder = page.find_tables()
+    except AttributeError:
+        raise AttributeError("PyMuPDF find_tables is unavailable")
 
-    for page_index in range(doc.page_count):
-        page_number = page_index + 1
-        if should_skip_page and should_skip_page(page_number):
+    tables: list[EmbeddedTable] = []
+    for table in finder.tables:
+        if not table_dimensions_meet_minimum(
+            table.row_count,
+            table.col_count,
+            min_rows=settings.pdf_table_min_rows,
+            min_cols=settings.pdf_table_min_cols,
+        ):
             continue
 
-        page = doc[page_index]
+        summary = _table_summary(table)
+        if not summary.strip():
+            continue
+
+        bbox = tuple(float(value) for value in table.bbox)
+        if rect_area(bbox) <= 0:
+            continue
+
         try:
-            finder = page.find_tables()
-        except AttributeError:
-            logger.warning("PyMuPDF find_tables is unavailable; table extraction disabled")
-            return tables
-
-        for table in finder.tables:
-            if table.row_count < settings.pdf_table_min_rows:
-                continue
-            if table.col_count < settings.pdf_table_min_cols:
-                continue
-
-            summary = _table_summary(table)
-            if not summary.strip():
-                continue
-
-            bbox = tuple(float(value) for value in table.bbox)
-            if rect_area(bbox) <= 0:
-                continue
-
-            try:
-                png_bytes, width, height = _render_table_png(page, bbox, scale=scale)
-            except Exception:
-                logger.warning(
-                    "Failed to render table on page %s",
-                    page_number,
-                    exc_info=True,
-                )
-                continue
-
-            mid_y = (bbox[1] + bbox[3]) / 2
-            tables.append(
-                EmbeddedTable(
-                    page=page_number,
-                    section=section_resolver(page_number, mid_y),
-                    bbox=bbox,
-                    sort_key=float(bbox[1]),
-                    summary=summary,
-                    png_bytes=png_bytes,
-                    width=width,
-                    height=height,
-                )
+            png_bytes, width, height = _render_table_png(page, bbox, scale=scale)
+        except Exception:
+            logger.warning(
+                "Failed to render table on page %s",
+                page_number,
+                exc_info=True,
             )
+            continue
 
+        mid_y = (bbox[1] + bbox[3]) / 2
+        tables.append(
+            EmbeddedTable(
+                page=page_number,
+                section=section_resolver(page_number, mid_y),
+                bbox=bbox,
+                sort_key=float(bbox[1]),
+                summary=summary,
+                png_bytes=png_bytes,
+                width=width,
+                height=height,
+            )
+        )
     return tables
 
 
@@ -201,6 +200,11 @@ def _table_to_attached_asset(table: EmbeddedTable) -> ParsedAttachedAsset:
         text_summary=table.summary,
         figure_caption=table.caption_text,
         figure_number=table.figure_number,
+        layout_regions=layout_regions_for_asset(
+            page=table.page,
+            bbox=table.bbox,
+            layout_regions=list(table.layout_regions) if table.layout_regions else None,
+        ),
     )
 
 
@@ -209,21 +213,8 @@ def attach_tables_to_chunks(
     chunks: list,
 ) -> list[EmbeddedTable]:
     """Attach tables to preceding text chunks by reading order; return orphans."""
-    if not tables:
-        return []
-
-    orphans: list[EmbeddedTable] = []
-    for table in sorted(tables, key=lambda item: (item.page, item.sort_key)):
-        target = pick_preceding_chunk(
-            chunks,
-            page=table.page,
-            section=table.section,
-            asset_bbox=table.bbox,
-            asset_sort_key=table.sort_key,
-        )
-        if target is None:
-            orphans.append(table)
-            continue
-        target.attached_assets.append(_table_to_attached_asset(table))
-
-    return orphans
+    return attach_assets_by_reading_order(
+        tables,
+        chunks,
+        to_attached_asset=_table_to_attached_asset,
+    )

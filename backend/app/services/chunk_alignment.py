@@ -19,8 +19,10 @@ class _AssetLike(Protocol):
     figure_number: str | None
     figure_caption: str | None
     caption: str | None
+    vlm_caption: str | None
     page: int | None
     bbox: list[float] | None
+    layout_regions: list | None
 
 
 def split_sentences(text: str) -> list[str]:
@@ -42,8 +44,10 @@ def _asset_dict(asset: _AssetLike | dict[str, Any]) -> dict[str, Any]:
         "figure_number": asset.figure_number,
         "figure_caption": asset.figure_caption,
         "caption": asset.caption,
+        "vlm_caption": asset.vlm_caption,
         "page": asset.page,
         "bbox": asset.bbox,
+        "layout_regions": asset.layout_regions,
     }
 
 
@@ -94,7 +98,7 @@ def _assets_for_refs(
 
 def _append_index_text(base: str, asset: dict[str, Any]) -> str:
     parts = [base.strip()] if base.strip() else []
-    for field in ("figure_caption", "caption"):
+    for field in ("figure_caption", "caption", "vlm_caption"):
         value = str(asset.get(field) or "").strip()
         if value and value not in base:
             parts.append(value)

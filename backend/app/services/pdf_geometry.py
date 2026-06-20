@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+ASSET_OVERLAP_SKIP_RATIO = 0.35
+
 
 def rect_area(bbox: tuple[float, float, float, float]) -> float:
     x0, y0, x1, y1 = bbox

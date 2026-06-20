@@ -95,6 +95,24 @@ class SplitAnswerSentencesTests(unittest.TestCase):
         self.assertEqual(len(sentences), 1)
         self.assertEqual(sentences[0]["citation_refs"], [1])
 
+    def test_does_not_split_numbered_list_markers(self) -> None:
+        answer = (
+            "1. 接通伺服电源（回放模式下）：\n"
+            "   - 按下示教器上的【伺服准备】键 [1]。\n"
+            "2. 启动执行：\n"
+            "   - 按下【启动】键 [3]。"
+        )
+
+        sentences = split_answer_sentences(answer)
+
+        self.assertEqual(len(sentences), 2)
+        self.assertIn("1. 接通伺服电源", sentences[0]["raw_text"])
+        self.assertEqual(sentences[0]["citation_refs"], [1])
+        self.assertIn("2. 启动执行", sentences[1]["raw_text"])
+        self.assertEqual(sentences[1]["citation_refs"], [3])
+        self.assertTrue(sentences[0]["raw_text"].startswith("1. 接通"))
+        self.assertTrue(sentences[1]["raw_text"].startswith("2. 启动"))
+
 
 class BuildAlignedEmbedsTests(unittest.TestCase):
     def _chunk(

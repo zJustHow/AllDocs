@@ -77,10 +77,6 @@ def extract_page_captions(page: fitz.Page, page_number: int) -> list[LayoutCapti
     return captions
 
 
-def caption_bboxes(captions: list[LayoutCaption]) -> list[tuple[float, float, float, float]]:
-    return [caption.bbox for caption in captions]
-
-
 def _horizontal_overlap(
     a: tuple[float, float, float, float],
     b: tuple[float, float, float, float],

@@ -63,6 +63,10 @@ class Settings(BaseSettings):
     ocr_force: bool = False
     ocr_min_chars_per_page: int = 30
     ocr_render_scale: float = 2.0
+    ocr_table_promote_enabled: bool = True
+    ocr_table_min_filled_cells: int = 2
+    ocr_table_min_score: float = 0.0
+    ocr_table_promote_max_per_doc: int = 30
 
     pdf_extract_embedded_images: bool = True
     pdf_embedded_image_min_width: int = 64
@@ -74,6 +78,13 @@ class Settings(BaseSettings):
     pdf_table_min_rows: int = 2
     pdf_table_min_cols: int = 2
     pdf_table_render_scale: float = 2.0
+    pdf_merge_cross_page_tables: bool = True
+    pdf_cross_page_table_bottom_ratio: float = 0.82
+    pdf_cross_page_table_top_ratio: float = 0.18
+    pdf_stitch_cross_page_table_png: bool = True
+    pdf_cross_page_table_stitch_gap: int = 2
+
+    pdf_parallel_workers: int = 4
 
     pdf_filter_header_footer: bool = True
     pdf_header_margin_ratio: float = 0.08

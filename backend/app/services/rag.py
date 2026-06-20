@@ -12,6 +12,7 @@ from app.db.models import Chunk, ChunkAsset, Document
 from app.db.session import async_session_factory
 from app.services.asset_urls import asset_url
 from app.services.chunk_index import (
+    asset_caption_kwargs,
     captions_merged_into_text,
     chunk_display_snippet,
     chunk_rerank_text,
@@ -167,45 +168,22 @@ class RAGService:
                 continue
             chunk, document = rows[chunk_id]
             chunk_assets = assets_by_chunk.get(chunk_id, [])
-            asset_captions = [asset.caption for asset in chunk_assets if asset.caption]
-            asset_figure_captions = [
-                asset.figure_caption for asset in chunk_assets if asset.figure_caption
-            ]
-            merged_into_text = captions_merged_into_text(
-                chunk.text,
-                chunk_caption=chunk.caption,
-                asset_figure_captions=asset_figure_captions,
-                asset_captions=asset_captions,
-            )
+            caption_kwargs = asset_caption_kwargs(chunk.caption, chunk_assets)
+            merged_into_text = captions_merged_into_text(chunk.text, **caption_kwargs)
             body_text = (
                 chunk.text
                 if merged_into_text
-                else format_context_body(
-                    chunk.text,
-                    caption=chunk.caption,
-                    asset_figure_captions=asset_figure_captions,
-                    asset_captions=asset_captions,
-                )
+                else format_context_body(chunk.text, **caption_kwargs)
             )
             index_text = (
                 chunk.text
                 if merged_into_text
-                else chunk_rerank_text(
-                    chunk.text,
-                    caption=chunk.caption,
-                    asset_figure_captions=asset_figure_captions,
-                    asset_captions=asset_captions,
-                )
+                else chunk_rerank_text(chunk.text, **caption_kwargs)
             )
             snippet = (
                 chunk.text[:300]
                 if merged_into_text
-                else chunk_display_snippet(
-                    chunk.text,
-                    caption=chunk.caption,
-                    asset_figure_captions=asset_figure_captions,
-                    asset_captions=asset_captions,
-                )
+                else chunk_display_snippet(chunk.text, **caption_kwargs)
             )
             chunks.append(
                 {
@@ -230,10 +208,12 @@ class RAGService:
                             "page": asset.page,
                             "url": asset_url(asset.id),
                             "caption": asset.caption,
+                            "vlm_caption": asset.vlm_caption,
                             "figure_caption": asset.figure_caption,
                             "figure_number": asset.figure_number,
                             "content_hash": asset.content_hash,
                             "bbox": asset.bbox,
+                            "layout_regions": asset.layout_regions,
                         }
                         for asset in chunk_assets
                     ],

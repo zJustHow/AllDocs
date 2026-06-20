@@ -5,9 +5,10 @@ import {
   messageTokenPattern,
   stripInlineMarkers,
 } from "./shared/contract";
+import { forEachTextRunBoundary } from "./sentenceBoundary";
 import type { BboxRegion } from "./viewerPosition";
 
-export { embedDedupeKey } from "./shared/contract";
+export { embedDedupeKey };
 
 export interface ViewerTarget {
   documentId: string;
@@ -25,34 +26,16 @@ export function formatCitationLabel(index: number): string {
 }
 
 const SNIPPET_LEADING_PUNCT = /^[,.;:!?。，；：！？…、（【「『《"''']/;
-const SNIPPET_TRAILING_PUNCT = /[,.;:!?。，；：！？…、）】」』》"''']$/;
+const SNIPPET_TRAILING_PUNCT = /[,.;:!?。，；：！？…、）】」』《"''']$/;
 const TRAILING_PUNCT_ONLY = /^[\s,.;:!?。，；：！？…、）】」』《"''']+$/;
-/** Flush embeds once the preceding sentence ends (Chinese + English punctuation). */
-// Keep newlines so Markdown list items (e.g. after "[1]。\n- item") stay on separate lines.
-const INLINE_RUN_BOUNDARY = /(?<=[。！？.!?；;:])[ \t]*/;
 
-function appendTextSegment(
-  segments: MessageSegment[],
-  text: string,
-  flushEmbedsForCurrentSentence: () => void,
-): void {
-  if (!text) return;
-
-  let rest = text;
-  while (rest.length > 0) {
-    const match = INLINE_RUN_BOUNDARY.exec(rest);
-    if (!match || match.index === undefined) {
-      segments.push({ type: "text", value: rest });
-      return;
-    }
-
-    if (match.index > 0) {
-      segments.push({ type: "text", value: rest.slice(0, match.index) });
-    }
-
-    flushEmbedsForCurrentSentence();
-    rest = rest.slice(match.index + match[0].length);
-  }
+export function formatCitationTooltip(
+  citation: Citation,
+  pageHint = "",
+): string {
+  return `${citation.document_name}${pageHint}${
+    citation.section ? ` · ${citation.section}` : ""
+  }\n${formatCitationSnippetExcerpt(citation.snippet)}`;
 }
 
 export function formatCitationSnippetExcerpt(text: string): string {
@@ -100,16 +83,9 @@ function parseInlineCitationRef(
   inner: string,
   citations: Citation[],
 ): Citation | null {
-  const numericRefs = inner.match(/\d+/g);
-  if (numericRefs?.length === 1 && /^\s*\d+\s*$/.test(inner)) {
-    const index = Number(numericRefs[0]) - 1;
-    return citations[index] ?? null;
-  }
-
-  const indexMatch = inner.match(/^\[?(\d+)\]?$/);
-  if (indexMatch) {
-    const index = Number(indexMatch[1]) - 1;
-    return citations[index] ?? null;
+  const numericMatch = inner.match(/^\s*\[?(\d+)\]?\s*$/);
+  if (numericMatch) {
+    return citations[Number(numericMatch[1]) - 1] ?? null;
   }
 
   const pageMatch = inner.match(/p\.(\d+)/i);
@@ -146,57 +122,50 @@ function parseInlineCitationRef(
 export type MessageSegment =
   | { type: "text"; value: string }
   | { type: "citation"; value: string; citation: Citation; index: number }
-  | { type: "embed"; value: string; embed: MessageEmbed };
+  | { type: "embed"; embed: MessageEmbed };
 
-function indexEmbedsBySentence(
+function indexEmbedsBy(
   embeds: MessageEmbed[],
+  pickIndex: (embed: MessageEmbed) => number | null | undefined,
 ): Map<number, MessageEmbed[]> {
-  const bySentence = new Map<number, MessageEmbed[]>();
+  const byKey = new Map<number, MessageEmbed[]>();
   for (const embed of embeds) {
-    if (embed.sentence_index == null) continue;
-    const bucket = bySentence.get(embed.sentence_index) ?? [];
+    const index = pickIndex(embed);
+    if (index == null) continue;
+    const bucket = byKey.get(index) ?? [];
     bucket.push(embed);
-    bySentence.set(embed.sentence_index, bucket);
+    byKey.set(index, bucket);
   }
-  return bySentence;
+  return byKey;
 }
 
-function indexEmbedsByRef(embeds: MessageEmbed[]): Map<number, MessageEmbed[]> {
-  const byRef = new Map<number, MessageEmbed[]>();
-  for (const embed of embeds) {
-    if (embed.ref == null) continue;
-    const bucket = byRef.get(embed.ref) ?? [];
-    bucket.push(embed);
-    byRef.set(embed.ref, bucket);
-  }
-  return byRef;
-}
-
-function appendEmbedsForSentence(
+function appendEmbedsForKey(
   segments: MessageSegment[],
-  sentenceIndex: number,
-  embedsBySentence: Map<number, MessageEmbed[]>,
+  key: number,
+  embedsByKey: Map<number, MessageEmbed[]>,
   shownEmbedKeys: Set<string>,
 ): void {
-  for (const embed of embedsBySentence.get(sentenceIndex) ?? []) {
-    const key = embedDedupeKey(embed);
-    if (shownEmbedKeys.has(key)) continue;
-    shownEmbedKeys.add(key);
-    segments.push({ type: "embed", value: "", embed });
+  for (const embed of embedsByKey.get(key) ?? []) {
+    const dedupeKey = embedDedupeKey(embed);
+    if (shownEmbedKeys.has(dedupeKey)) continue;
+    shownEmbedKeys.add(dedupeKey);
+    segments.push({ type: "embed", embed });
   }
 }
 
-function appendEmbedsForRef(
+function pushCitationSegment(
   segments: MessageSegment[],
-  ref: number,
-  embedsByRef: Map<number, MessageEmbed[]>,
-  shownEmbedKeys: Set<string>,
+  token: string,
+  citation: Citation | null | undefined,
+  index: number,
+  hideUnmatched: boolean,
 ): void {
-  for (const embed of embedsByRef.get(ref) ?? []) {
-    const key = embedDedupeKey(embed);
-    if (shownEmbedKeys.has(key)) continue;
-    shownEmbedKeys.add(key);
-    segments.push({ type: "embed", value: "", embed });
+  if (citation) {
+    segments.push({ type: "citation", value: token, citation, index });
+    return;
+  }
+  if (!hideUnmatched) {
+    segments.push({ type: "text", value: token });
   }
 }
 
@@ -206,12 +175,17 @@ export function splitMessageWithCitations(
   options?: {
     hideUnmatched?: boolean;
     embeds?: MessageEmbed[];
+    /** Skip sentence-boundary embed placement during streaming. */
+    streaming?: boolean;
   },
 ): MessageSegment[] {
   const hideUnmatched = options?.hideUnmatched ?? false;
+  const streaming = options?.streaming ?? false;
   const embeds = options?.embeds ?? [];
-  const embedsBySentence = indexEmbedsBySentence(embeds);
-  const embedsByRef = indexEmbedsByRef(embeds);
+  const embedsBySentence = streaming
+    ? new Map<number, MessageEmbed[]>()
+    : indexEmbedsBy(embeds, (embed) => embed.sentence_index);
+  const embedsByRef = indexEmbedsBy(embeds, (embed) => embed.ref);
   const pattern = new RegExp(messageTokenPattern.source, "g");
   const shownEmbedKeys = new Set<string>();
 
@@ -225,7 +199,8 @@ export function splitMessageWithCitations(
   let match: RegExpExecArray | null;
 
   const flushEmbedsForCurrentSentence = () => {
-    appendEmbedsForSentence(
+    if (streaming) return;
+    appendEmbedsForKey(
       segments,
       currentSentenceIndex,
       embedsBySentence,
@@ -234,19 +209,30 @@ export function splitMessageWithCitations(
     currentSentenceIndex += 1;
   };
 
+  const appendText = (text: string) => {
+    if (!text) return;
+    if (streaming) {
+      segments.push({ type: "text", value: text });
+      return;
+    }
+    forEachTextRunBoundary(
+      text,
+      (run) => {
+        segments.push({ type: "text", value: run });
+      },
+      flushEmbedsForCurrentSentence,
+    );
+  };
+
   while ((match = pattern.exec(content)) !== null) {
     if (match.index > lastIndex) {
-      appendTextSegment(
-        segments,
-        content.slice(lastIndex, match.index),
-        flushEmbedsForCurrentSentence,
-      );
+      appendText(content.slice(lastIndex, match.index));
     }
 
     const embedRef = match[1];
     if (embedRef) {
       flushEmbedsForCurrentSentence();
-      appendEmbedsForRef(
+      appendEmbedsForKey(
         segments,
         Number(embedRef),
         embedsByRef,
@@ -259,37 +245,41 @@ export function splitMessageWithCitations(
     const numericRef = match[2] ?? match[3];
     if (numericRef) {
       const index = Number(numericRef) - 1;
-      const citation = citations[index];
-      if (citation) {
-        segments.push({ type: "citation", value: match[0], citation, index });
-      } else if (!hideUnmatched) {
-        segments.push({ type: "text", value: match[0] });
-      }
+      pushCitationSegment(
+        segments,
+        match[0],
+        citations[index],
+        index,
+        hideUnmatched,
+      );
     } else {
       const inner = match[4];
       const citation = parseInlineCitationRef(inner, citations);
-      if (citation) {
-        const index = citations.indexOf(citation);
-        segments.push({ type: "citation", value: match[0], citation, index });
-      } else if (!hideUnmatched) {
-        segments.push({ type: "text", value: match[0] });
-      }
+      pushCitationSegment(
+        segments,
+        match[0],
+        citation,
+        citation ? citations.indexOf(citation) : -1,
+        hideUnmatched,
+      );
     }
     lastIndex = match.index + match[0].length;
   }
 
   if (lastIndex < content.length) {
-    appendTextSegment(
-      segments,
-      content.slice(lastIndex),
-      flushEmbedsForCurrentSentence,
-    );
+    appendText(content.slice(lastIndex));
   }
-  flushEmbedsForCurrentSentence();
+  if (!streaming) {
+    flushEmbedsForCurrentSentence();
+  }
 
-  return segments.length
-    ? absorbTrailingPunctuationBeforeEmbeds(segments)
-    : [{ type: "text", value: content }];
+  if (!segments.length) {
+    return [{ type: "text", value: content }];
+  }
+  if (streaming) {
+    return segments;
+  }
+  return absorbTrailingPunctuationBeforeEmbeds(segments);
 }
 
 function absorbTrailingPunctuationBeforeEmbeds(

@@ -8,10 +8,9 @@ from dataclasses import dataclass
 import fitz
 
 from app.config import Settings
-from app.services.pdf_attach_reading_order import pick_preceding_chunk
-from app.services.pdf_geometry import rect_area, rect_intersection_area
-
-_OVERLAP_SKIP_RATIO = 0.35
+from app.services.pdf_layout_regions import layout_region
+from app.services.pdf_attach_reading_order import attach_assets_by_reading_order
+from app.services.pdf_geometry import ASSET_OVERLAP_SKIP_RATIO, rect_area, rect_intersection_area
 
 
 @dataclass(frozen=True)
@@ -39,6 +38,7 @@ class ParsedAttachedAsset:
     text_summary: str = ""
     figure_caption: str | None = None
     figure_number: str | None = None
+    layout_regions: list[dict] | None = None
 
 
 def _bbox_key(bbox: tuple[float, float, float, float]) -> tuple[int, int, int, int]:
@@ -61,12 +61,15 @@ def _xref_to_png(doc: fitz.Document, xref: int) -> tuple[bytes, int, int] | None
             pix = None
 
 
-def extract_pdf_embedded_figures(
+def extract_figures_from_page(
+    page: fitz.Page,
+    page_number: int,
     doc: fitz.Document,
     *,
     settings: Settings,
     section_resolver: Callable[[int, float | None], str | None],
-    should_skip_page: Callable[[int], bool] | None = None,
+    png_cache: dict[int, tuple[bytes, int, int]],
+    seen_placements: set[tuple[int, int, tuple[int, int, int, int]]],
 ) -> list[EmbeddedFigure]:
     if not settings.pdf_extract_embedded_images:
         return []
@@ -76,79 +79,70 @@ def extract_pdf_embedded_figures(
     max_coverage = settings.pdf_embedded_image_max_page_coverage
     max_per_page = settings.pdf_embedded_image_max_per_page
 
+    page_area = float(page.rect.width * page.rect.height)
+    if page_area <= 0:
+        return []
+
     figures: list[EmbeddedFigure] = []
-    seen_placements: set[tuple[int, int, tuple[int, int, int, int]]] = set()
-    png_cache: dict[int, tuple[bytes, int, int]] = {}
+    page_count = 0
+    for image in page.get_images(full=True):
+        if page_count >= max_per_page:
+            break
 
-    for page_index in range(doc.page_count):
-        page_number = page_index + 1
-        if should_skip_page and should_skip_page(page_number):
+        xref = int(image[0])
+        try:
+            rects = page.get_image_rects(xref)
+        except Exception:
+            continue
+        if not rects:
             continue
 
-        page = doc[page_index]
-        page_area = float(page.rect.width * page.rect.height)
-        if page_area <= 0:
+        if xref not in png_cache:
+            converted = _xref_to_png(doc, xref)
+            if converted is None:
+                png_cache[xref] = (b"", 0, 0)
+            else:
+                png_cache[xref] = converted
+
+        png_bytes, width, height = png_cache[xref]
+        if not png_bytes:
+            continue
+        if width < min_width or height < min_height:
             continue
 
-        page_count = 0
-        for image in page.get_images(full=True):
+        for rect in rects:
             if page_count >= max_per_page:
                 break
 
-            xref = int(image[0])
-            try:
-                rects = page.get_image_rects(xref)
-            except Exception:
+            bbox = (float(rect.x0), float(rect.y0), float(rect.x1), float(rect.y1))
+            key = (page_number, xref, _bbox_key(bbox))
+            if key in seen_placements:
                 continue
-            if not rects:
-                continue
+            seen_placements.add(key)
 
-            if xref not in png_cache:
-                converted = _xref_to_png(doc, xref)
-                if converted is None:
-                    png_cache[xref] = (b"", 0, 0)
-                else:
-                    png_cache[xref] = converted
-
-            png_bytes, width, height = png_cache[xref]
-            if not png_bytes:
-                continue
-            if width < min_width or height < min_height:
+            if rect_area(bbox) / page_area > max_coverage:
                 continue
 
-            for rect in rects:
-                if page_count >= max_per_page:
-                    break
+            display_width = max(1.0, bbox[2] - bbox[0])
+            display_height = max(1.0, bbox[3] - bbox[1])
+            if display_width < min_width or display_height < min_height:
+                continue
 
-                bbox = (float(rect.x0), float(rect.y0), float(rect.x1), float(rect.y1))
-                key = (page_number, xref, _bbox_key(bbox))
-                if key in seen_placements:
-                    continue
-                seen_placements.add(key)
-
-                if rect_area(bbox) / page_area > max_coverage:
-                    continue
-
-                display_width = max(1.0, bbox[2] - bbox[0])
-                display_height = max(1.0, bbox[3] - bbox[1])
-                if display_width < min_width or display_height < min_height:
-                    continue
-
-                mid_y = (bbox[1] + bbox[3]) / 2
-                text = page.get_text("text", clip=rect).strip()
-                figures.append(
-                    EmbeddedFigure(
-                        page=page_number,
-                        section=section_resolver(page_number, mid_y),
-                        bbox=bbox,
-                        sort_key=float(rect.y0),
-                        text=text,
-                        png_bytes=png_bytes,
-                        width=width,
-                        height=height,
-                    )
+            mid_y = (bbox[1] + bbox[3]) / 2
+            text = page.get_text("text", clip=rect).strip()
+            figures.append(
+                EmbeddedFigure(
+                    page=page_number,
+                    section=section_resolver(page_number, mid_y),
+                    bbox=bbox,
+                    sort_key=float(rect.y0),
+                    text=text,
+                    png_bytes=png_bytes,
+                    width=width,
+                    height=height,
                 )
-                page_count += 1
+            )
+            page_count += 1
 
     return figures
 
@@ -164,6 +158,7 @@ def _figure_to_attached_asset(figure: EmbeddedFigure) -> ParsedAttachedAsset:
         text_summary=figure.text.strip(),
         figure_caption=figure.caption_text,
         figure_number=figure.figure_number,
+        layout_regions=[layout_region(figure.page, figure.bbox)],
     )
 
 
@@ -181,7 +176,7 @@ def _figure_overlaps_table_asset(figure: EmbeddedFigure, chunk) -> bool:
         overlap = rect_intersection_area(figure.bbox, attached.bbox)
         if overlap <= 0:
             continue
-        if overlap / max(rect_area(figure.bbox), 1.0) >= _OVERLAP_SKIP_RATIO:
+        if overlap / max(rect_area(figure.bbox), 1.0) >= ASSET_OVERLAP_SKIP_RATIO:
             return True
     return False
 
@@ -194,9 +189,16 @@ def figure_overlaps_bboxes(
         overlap = rect_intersection_area(figure.bbox, bbox)
         if overlap <= 0:
             continue
-        if overlap / max(rect_area(figure.bbox), 1.0) >= _OVERLAP_SKIP_RATIO:
+        if overlap / max(rect_area(figure.bbox), 1.0) >= ASSET_OVERLAP_SKIP_RATIO:
             return True
     return False
+
+
+def _should_skip_overlapping_table(figure: EmbeddedFigure, chunks: list) -> bool:
+    page_chunks = [
+        chunk for chunk in chunks if getattr(chunk, "page", None) == figure.page
+    ]
+    return any(_figure_overlaps_table_asset(figure, chunk) for chunk in page_chunks)
 
 
 def attach_figures_to_chunks(
@@ -204,29 +206,9 @@ def attach_figures_to_chunks(
     chunks: list,
 ) -> list[EmbeddedFigure]:
     """Attach figures to preceding text chunks by reading order; return orphans."""
-    if not figures:
-        return []
-
-    orphans: list[EmbeddedFigure] = []
-    for figure in sorted(figures, key=lambda item: (item.page, item.sort_key)):
-        page_chunks = [
-            chunk
-            for chunk in chunks
-            if getattr(chunk, "page", None) == figure.page
-        ]
-        if any(_figure_overlaps_table_asset(figure, chunk) for chunk in page_chunks):
-            continue
-
-        target = pick_preceding_chunk(
-            chunks,
-            page=figure.page,
-            section=figure.section,
-            asset_bbox=figure.bbox,
-            asset_sort_key=figure.sort_key,
-        )
-        if target is None:
-            orphans.append(figure)
-            continue
-        target.attached_assets.append(_figure_to_attached_asset(figure))
-
-    return orphans
+    return attach_assets_by_reading_order(
+        figures,
+        chunks,
+        to_attached_asset=_figure_to_attached_asset,
+        should_skip=_should_skip_overlapping_table,
+    )

@@ -109,10 +109,7 @@ def apply_ingest_captions(
             target, caption = future.result()
             if not caption:
                 continue
-            for asset in asset_rows:
-                if asset.id == target.id:
-                    asset.caption = caption
-                    break
+            target.vlm_caption = caption
             generated += 1
 
     if generated:

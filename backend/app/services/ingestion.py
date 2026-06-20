@@ -1,6 +1,8 @@
 import html
+import logging
 import re
 from collections.abc import Callable
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from io import BytesIO
 
@@ -14,22 +16,26 @@ from app.services.pdf_embedded_images import (
     ParsedAttachedAsset,
     _figure_to_attached_asset,
     attach_figures_to_chunks,
-    extract_pdf_embedded_figures,
+    extract_figures_from_page,
     figure_bboxes_on_page,
     figure_overlaps_bboxes,
 )
 from app.services.pdf_captions import apply_page_caption_matches, extract_page_captions
-from app.services.pdf_refs import attach_by_explicit_refs
+from app.services.pdf_layout_regions import layout_region
+from app.services.pdf_raster_tables import promote_figures_to_raster_tables
+from app.services.pdf_table_merge import merge_cross_page_tables
 from app.services.pdf_header_footer import HeaderFooterFilter, build_header_footer_filter
 from app.services.pdf_tables import (
     EmbeddedTable,
     _table_to_attached_asset,
-    extract_pdf_tables,
     attach_tables_to_chunks,
+    extract_tables_from_page,
     filter_page_blocks,
     filter_page_text,
     table_bboxes_on_page,
 )
+
+logger = logging.getLogger(__name__)
 
 _SECTION_PATH_MAX_LEN = 512
 _SECTION_PATH_SEPARATOR = " > "
@@ -310,13 +316,6 @@ def _bbox_for_offset(
     return bbox
 
 
-def _layout_region(
-    page: int,
-    bbox: tuple[float, float, float, float],
-) -> LayoutRegion:
-    return {"page": page, "bbox": [float(value) for value in bbox]}
-
-
 def _regions_for_range(
     page_spans: list[tuple[int, int, tuple[float, float, float, float] | None]],
     block_spans: list[BlockSpan],
@@ -358,7 +357,7 @@ def _regions_for_range(
         else:
             region_bbox = page_bbox
 
-        regions.append(_layout_region(page, region_bbox))
+        regions.append(layout_region(page, region_bbox))
 
     return regions
 
@@ -608,8 +607,9 @@ def _build_toc_paths(
     return with_paths
 
 
-def build_toc_anchors(doc: fitz.Document) -> list[TocAnchor]:
-    parsed = _parse_raw_toc(doc)
+def _toc_anchors_from_parsed(
+    parsed: list[tuple[int, str, int, float | None]],
+) -> list[TocAnchor]:
     if not parsed:
         return []
 
@@ -628,12 +628,13 @@ def build_toc_anchors(doc: fitz.Document) -> list[TocAnchor]:
     return sorted(anchors, key=lambda anchor: (anchor.page, anchor.y, anchor.level))
 
 
-def build_toc_entries(doc: fitz.Document) -> list[TocEntry]:
-    parsed = _parse_raw_toc(doc)
+def _toc_entries_from_parsed(
+    parsed: list[tuple[int, str, int, float | None]],
+    page_count: int,
+) -> list[TocEntry]:
     if not parsed:
         return []
 
-    page_count = doc.page_count
     normalized: list[tuple[int, str, int, int]] = []
     for index, (level, title, page, _y) in enumerate(parsed):
         start_page = max(1, int(page))
@@ -664,6 +665,26 @@ def build_toc_entries(doc: fitz.Document) -> list[TocEntry]:
                 path=_truncate_section_path(path),
             )
         )
+    return entries
+
+
+def parse_pdf_toc(doc: fitz.Document) -> tuple[list[TocEntry], list[TocAnchor]]:
+    parsed = _parse_raw_toc(doc)
+    if not parsed:
+        return [], []
+    return (
+        _toc_entries_from_parsed(parsed, doc.page_count),
+        _toc_anchors_from_parsed(parsed),
+    )
+
+
+def build_toc_anchors(doc: fitz.Document) -> list[TocAnchor]:
+    _, anchors = parse_pdf_toc(doc)
+    return anchors
+
+
+def build_toc_entries(doc: fitz.Document) -> list[TocEntry]:
+    entries, _ = parse_pdf_toc(doc)
     return entries
 
 
@@ -832,7 +853,7 @@ def _orphan_figure_chunk(figure: EmbeddedFigure) -> ParsedChunk:
         section=figure.section,
         chunk_index=0,
         layout_bbox=figure.bbox,
-        layout_regions=[_layout_region(figure.page, figure.bbox)],
+        layout_regions=[layout_region(figure.page, figure.bbox)],
         sort_key=float(figure.bbox[1]),
         layout_y1=float(figure.bbox[3]),
         attached_assets=[_figure_to_attached_asset(figure)],
@@ -841,13 +862,18 @@ def _orphan_figure_chunk(figure: EmbeddedFigure) -> ParsedChunk:
 
 def _orphan_table_chunk(table: EmbeddedTable) -> ParsedChunk:
     """Standalone table chunk; summary stays on attached asset, not chunk.text."""
+    regions = (
+        list(table.layout_regions)
+        if table.layout_regions
+        else [layout_region(table.page, table.bbox)]
+    )
     return ParsedChunk(
         text="",
         page=table.page,
         section=table.section,
         chunk_index=0,
         layout_bbox=table.bbox,
-        layout_regions=[_layout_region(table.page, table.bbox)],
+        layout_regions=regions,
         sort_key=float(table.bbox[1]),
         layout_y1=float(table.bbox[3]),
         attached_assets=[_table_to_attached_asset(table)],
@@ -906,22 +932,114 @@ class IngestionService:
         self.settings = settings or get_settings()
         self.ocr = OCRService(self.settings) if self.settings.ocr_enabled else None
 
-    def _extract_page_text(
+    def _render_page_for_ocr(self, page: fitz.Page) -> tuple[bytes, float]:
+        scale = self.settings.ocr_render_scale
+        matrix = fitz.Matrix(scale, scale)
+        pixmap = page.get_pixmap(matrix=matrix, alpha=False)
+        return pixmap.tobytes("png"), float(page.rect.height) * scale
+
+    def _recognize_rendered_page(
+        self,
+        png_bytes: bytes,
+        page_height: float,
+        hf: HeaderFooterFilter | None,
+    ) -> str:
+        if self.ocr is None:
+            return ""
+        return self.ocr.recognize_bytes(
+            png_bytes,
+            page_height=page_height,
+            hf=hf,
+        )
+
+    def _extract_page_text_with_ocr_future(
         self,
         page: fitz.Page,
-        hf: HeaderFooterFilter | None = None,
+        *,
+        hf: HeaderFooterFilter | None,
+        exclude_bboxes: list[tuple[float, float, float, float]],
+        ocr_future: Future[str] | None,
     ) -> tuple[str, bool]:
         native_text = _extract_native_page_text(page, hf=hf)
-        if not _page_needs_ocr(native_text, self.settings):
-            return native_text, False
 
-        if self.ocr is None:
-            return native_text, False
+        if exclude_bboxes and not self.settings.ocr_force:
+            return filter_page_text(page, exclude_bboxes, hf=hf), False
 
-        ocr_text = self.ocr.recognize_page(page, hf=hf)
-        if len(ocr_text.strip()) > len(native_text.strip()):
-            return ocr_text, True
-        return native_text, False
+        used_ocr = False
+        if _page_needs_ocr(native_text, self.settings) and self.ocr is not None:
+            if ocr_future is not None:
+                ocr_text = ocr_future.result()
+            else:
+                png_bytes, page_height = self._render_page_for_ocr(page)
+                ocr_text = self._recognize_rendered_page(png_bytes, page_height, hf)
+            if len(ocr_text.strip()) > len(native_text.strip()):
+                native_text = ocr_text
+                used_ocr = True
+
+        page_text = native_text
+        if exclude_bboxes and page_text.strip():
+            page_text = filter_page_text(page, exclude_bboxes, hf=hf) or page_text
+        return page_text, used_ocr
+
+    def _append_page_text_rows(
+        self,
+        pages: list[PageRow],
+        *,
+        page: fitz.Page,
+        page_number: int,
+        page_text: str,
+        used_ocr: bool,
+        exclude_bboxes: list[tuple[float, float, float, float]],
+        toc_anchors: list[TocAnchor],
+        toc_entries: list[TocEntry],
+        use_y_split: bool,
+        hf_filter: HeaderFooterFilter | None,
+    ) -> None:
+        if not page_text.strip() and not exclude_bboxes:
+            return
+        if page_text.strip() and is_toc_text(page_text):
+            return
+
+        fallback_section = section_for_page(toc_entries, page_number)
+        if use_y_split and not used_ocr and page_text.strip():
+            blocks = filter_page_blocks(page, exclude_bboxes, hf=hf_filter)
+            if blocks:
+                for section, segment_text, segment_bbox, block_spans in _segment_page_by_anchors(
+                    toc_anchors,
+                    page_number,
+                    blocks,
+                    fallback_section,
+                ):
+                    if segment_text.strip():
+                        pages.append(
+                            (
+                                section,
+                                segment_text.strip(),
+                                page_number,
+                                segment_bbox,
+                                block_spans,
+                            )
+                        )
+            elif page_text.strip():
+                pages.append(
+                    (
+                        fallback_section,
+                        page_text.strip(),
+                        page_number,
+                        _page_content_bbox(page, exclude_bboxes, hf=hf_filter),
+                        None,
+                    )
+                )
+        elif page_text.strip():
+            blocks = filter_page_blocks(page, exclude_bboxes, hf=hf_filter)
+            row = _page_row_from_blocks(
+                fallback_section,
+                page_number,
+                blocks,
+                _page_content_bbox(page, exclude_bboxes, hf=hf_filter),
+            )
+            if row is not None:
+                pages.append(row)
 
     def parse_pdf(
         self,
@@ -930,8 +1048,7 @@ class IngestionService:
     ) -> ParseResult:
         doc = fitz.open(stream=file_bytes, filetype="pdf")
         page_count = doc.page_count
-        toc_entries = build_toc_entries(doc)
-        toc_anchors = build_toc_anchors(doc)
+        toc_entries, toc_anchors = parse_pdf_toc(doc)
         use_y_split = any(anchor.has_y for anchor in toc_anchors)
         skip_front_matter = lambda page_number: should_skip_front_matter(
             page_number, toc_entries
@@ -951,134 +1068,125 @@ class IngestionService:
 
         pages: list[PageRow] = []
         ocr_pages = 0
+        extracted_tables: list[EmbeddedTable] = []
+        embedded_figures: list[EmbeddedFigure] = []
+        png_cache: dict[int, tuple[bytes, int, int]] = {}
+        seen_placements: set[tuple[int, int, tuple[int, int, int, int]]] = set()
+        tables_available = True
+        promote_processed = 0
+        max_workers = max(1, self.settings.pdf_parallel_workers)
 
-        extracted_tables = extract_pdf_tables(
-            doc,
-            settings=self.settings,
-            section_resolver=section_resolver,
-            should_skip_page=skip_front_matter,
-        )
-        tables_by_page = {
-            page: table_bboxes_on_page(extracted_tables, page)
-            for page in {table.page for table in extracted_tables}
-        }
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            for page_index in range(page_count):
+                page_number = page_index + 1
+                if should_skip_front_matter(page_number, toc_entries):
+                    continue
 
-        embedded_figures = extract_pdf_embedded_figures(
-            doc,
-            settings=self.settings,
-            section_resolver=section_resolver,
-            should_skip_page=skip_front_matter,
-        )
-        embedded_figures = [
-            figure
-            for figure in embedded_figures
-            if not figure_overlaps_bboxes(
-                figure, tables_by_page.get(figure.page, [])
-            )
-        ]
+                page = doc[page_index]
 
-        figures_by_page_number: dict[int, list[EmbeddedFigure]] = {}
-        tables_by_page_number: dict[int, list[EmbeddedTable]] = {}
-        for figure in embedded_figures:
-            figures_by_page_number.setdefault(figure.page, []).append(figure)
-        for table in extracted_tables:
-            tables_by_page_number.setdefault(table.page, []).append(table)
-
-        updated_figures: list[EmbeddedFigure] = []
-        updated_tables: list[EmbeddedTable] = []
-        for page_index in range(page_count):
-            page_number = page_index + 1
-            if should_skip_front_matter(page_number, toc_entries):
-                continue
-            page = doc[page_index]
-            page_figures = figures_by_page_number.get(page_number, [])
-            page_tables = tables_by_page_number.get(page_number, [])
-            page_captions = extract_page_captions(page, page_number)
-            matched_figures, matched_tables = apply_page_caption_matches(
-                page_captions,
-                page_figures,
-                page_tables,
-            )
-            updated_figures.extend(matched_figures)
-            updated_tables.extend(matched_tables)
-
-        embedded_figures = updated_figures
-        extracted_tables = updated_tables
-        figures_by_page = {
-            page: figure_bboxes_on_page(embedded_figures, page)
-            for page in {figure.page for figure in embedded_figures}
-        }
-
-        for page_index in range(page_count):
-            page = doc[page_index]
-            page_number = page_index + 1
-            if should_skip_front_matter(page_number, toc_entries):
-                continue
-
-            fallback_section = section_for_page(toc_entries, page_number)
-            exclude_bboxes = (
-                tables_by_page.get(page_number, [])
-                + figures_by_page.get(page_number, [])
-            )
-
-            if exclude_bboxes and not self.settings.ocr_force:
-                page_text = filter_page_text(page, exclude_bboxes, hf=hf_filter)
-                used_ocr = False
-            else:
-                page_text, used_ocr = self._extract_page_text(page, hf=hf_filter)
-                if exclude_bboxes and page_text.strip():
-                    page_text = (
-                        filter_page_text(page, exclude_bboxes, hf=hf_filter) or page_text
-                    )
-
-            if used_ocr:
-                ocr_pages += 1
-            if not page_text.strip() and not exclude_bboxes:
-                continue
-            if page_text.strip() and is_toc_text(page_text):
-                continue
-
-            if use_y_split and not used_ocr and page_text.strip():
-                blocks = filter_page_blocks(page, exclude_bboxes, hf=hf_filter)
-                if blocks:
-                    for section, segment_text, segment_bbox, block_spans in _segment_page_by_anchors(
-                        toc_anchors,
-                        page_number,
-                        blocks,
-                        fallback_section,
-                    ):
-                        if segment_text.strip():
-                            pages.append(
-                                (
-                                    section,
-                                    segment_text.strip(),
-                                    page_number,
-                                    segment_bbox,
-                                    block_spans,
-                                )
-                            )
-                elif page_text.strip():
-                    pages.append(
-                        (
-                            fallback_section,
-                            page_text.strip(),
+                page_tables: list[EmbeddedTable] = []
+                if tables_available:
+                    try:
+                        page_tables = extract_tables_from_page(
+                            page,
                             page_number,
-                            _page_content_bbox(page, exclude_bboxes, hf=hf_filter),
-                            None,
+                            settings=self.settings,
+                            section_resolver=section_resolver,
                         )
-                    )
-            elif page_text.strip():
-                blocks = filter_page_blocks(page, exclude_bboxes, hf=hf_filter)
-                row = _page_row_from_blocks(
-                    fallback_section,
+                    except AttributeError:
+                        logger.warning(
+                            "PyMuPDF find_tables is unavailable; table extraction disabled"
+                        )
+                        tables_available = False
+
+                page_figures = extract_figures_from_page(
+                    page,
                     page_number,
-                    blocks,
-                    _page_content_bbox(page, exclude_bboxes, hf=hf_filter),
+                    doc,
+                    settings=self.settings,
+                    section_resolver=section_resolver,
+                    png_cache=png_cache,
+                    seen_placements=seen_placements,
                 )
-                if row is not None:
-                    pages.append(row)
-            if on_page_progress is not None:
-                on_page_progress(page_number, page_count)
+                table_bboxes = table_bboxes_on_page(page_tables, page_number)
+                page_figures = [
+                    figure
+                    for figure in page_figures
+                    if not figure_overlaps_bboxes(figure, table_bboxes)
+                ]
+
+                page_figures, promoted, promote_processed = promote_figures_to_raster_tables(
+                    page_figures,
+                    settings=self.settings,
+                    executor=executor,
+                    processed=promote_processed,
+                )
+                page_tables = [*page_tables, *promoted]
+
+                page_captions = extract_page_captions(page, page_number)
+                page_figures, page_tables = apply_page_caption_matches(
+                    page_captions,
+                    page_figures,
+                    page_tables,
+                )
+                embedded_figures.extend(page_figures)
+                extracted_tables.extend(page_tables)
+
+                exclude_bboxes = (
+                    table_bboxes_on_page(page_tables, page_number)
+                    + figure_bboxes_on_page(page_figures, page_number)
+                )
+
+                native_text = _extract_native_page_text(page, hf=hf_filter)
+                will_need_ocr = (
+                    not (exclude_bboxes and not self.settings.ocr_force)
+                    and _page_needs_ocr(native_text, self.settings)
+                    and self.ocr is not None
+                )
+                ocr_future: Future[str] | None = None
+                if will_need_ocr:
+                    png_bytes, page_height = self._render_page_for_ocr(page)
+                    ocr_future = executor.submit(
+                        self._recognize_rendered_page,
+                        png_bytes,
+                        page_height,
+                        hf_filter,
+                    )
+
+                page_text, used_ocr = self._extract_page_text_with_ocr_future(
+                    page,
+                    hf=hf_filter,
+                    exclude_bboxes=exclude_bboxes,
+                    ocr_future=ocr_future,
+                )
+                if used_ocr:
+                    ocr_pages += 1
+
+                self._append_page_text_rows(
+                    pages,
+                    page=page,
+                    page_number=page_number,
+                    page_text=page_text,
+                    used_ocr=used_ocr,
+                    exclude_bboxes=exclude_bboxes,
+                    toc_anchors=toc_anchors,
+                    toc_entries=toc_entries,
+                    use_y_split=use_y_split,
+                    hf_filter=hf_filter,
+                )
+                if on_page_progress is not None:
+                    on_page_progress(page_number, page_count)
+
+        if extracted_tables:
+            page_heights = {
+                page_index + 1: float(doc[page_index].rect.height)
+                for page_index in range(page_count)
+            }
+            extracted_tables = merge_cross_page_tables(
+                extracted_tables,
+                page_heights=page_heights,
+                settings=self.settings,
+            )
 
         if not pages and not embedded_figures and not extracted_tables:
             doc.close()

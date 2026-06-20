@@ -1,5 +1,6 @@
 import re
 
+from app.services.pdf_layout_regions import normalize_layout_regions
 from app.services.shared_contract import (
     inline_citation_ref_pattern,
     strip_inline_markers,
@@ -55,26 +56,6 @@ def finalize_answer(
     return answer, public_citations(cited_chunks), public_embeds(embeds)
 
 
-def _resolve_citation_regions(chunk: dict) -> list[dict]:
-    regions = chunk.get("layout_regions")
-    if not regions:
-        return []
-
-    resolved: list[dict] = []
-    for item in regions:
-        page = item.get("page")
-        bbox = item.get("bbox")
-        if page is None or not bbox or len(bbox) != 4:
-            continue
-        resolved.append(
-            {
-                "page": int(page),
-                "bbox": [float(value) for value in bbox],
-            }
-        )
-    return resolved
-
-
 def public_citations(chunks: list[dict]) -> list[dict]:
     return [
         {
@@ -84,7 +65,7 @@ def public_citations(chunks: list[dict]) -> list[dict]:
             "section": item["section"],
             "snippet": item["snippet"],
             "score": item["score"],
-            "regions": _resolve_citation_regions(item),
+            "regions": normalize_layout_regions(item.get("layout_regions")),
         }
         for item in chunks
     ]

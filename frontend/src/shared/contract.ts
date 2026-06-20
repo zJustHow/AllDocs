@@ -13,24 +13,14 @@ interface FileFormatEntry {
 
 const markers = markersContract as {
   regex: {
-    inlineCitationRef: string;
     inlineCitationMarker: string;
     embedMarkerLoose: string;
     messageToken: string;
-  };
-  embed: {
-    markerTemplate: string;
   };
 };
 
 const fileFormats = fileFormatsContract as { types: FileFormatEntry[] };
 
-export const inlineCitationMarkerSource = markers.regex.inlineCitationMarker;
-
-export const inlineCitationRefPattern = new RegExp(
-  markers.regex.inlineCitationRef,
-  "g",
-);
 export const inlineCitationMarkerPattern = new RegExp(
   markers.regex.inlineCitationMarker,
   "g",
@@ -43,10 +33,6 @@ export const messageTokenPattern = new RegExp(
   markers.regex.messageToken,
   "g",
 );
-
-export function formatEmbedMarker(ref: number): string {
-  return markers.embed.markerTemplate.replace("{ref}", String(ref));
-}
 
 export function stripInlineMarkers(content: string): string {
   return content

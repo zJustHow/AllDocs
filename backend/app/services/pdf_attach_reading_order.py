@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 _MAX_FALLBACK_PAGE_GAP = 2
 _SAME_PAGE_Y_TOLERANCE_PT = 4.0
 
@@ -126,3 +128,34 @@ def pick_preceding_chunk(
         return None
 
     return _pick_latest_chunk(pool)
+
+
+def attach_assets_by_reading_order(
+    assets: list,
+    chunks: list,
+    *,
+    to_attached_asset: Callable[[object], object],
+    should_skip: Callable[[object, list], bool] | None = None,
+) -> list:
+    """Attach assets to preceding text chunks by reading order; return orphans."""
+    if not assets:
+        return []
+
+    orphans: list = []
+    for asset in sorted(assets, key=lambda item: (item.page, item.sort_key)):
+        if should_skip is not None and should_skip(asset, chunks):
+            continue
+
+        target = pick_preceding_chunk(
+            chunks,
+            page=asset.page,
+            section=asset.section,
+            asset_bbox=asset.bbox,
+            asset_sort_key=asset.sort_key,
+        )
+        if target is None:
+            orphans.append(asset)
+            continue
+        target.attached_assets.append(to_attached_asset(asset))
+
+    return orphans

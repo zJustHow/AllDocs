@@ -13,12 +13,11 @@ from app.services.document_delete import (
     finalize_document_deletion,
     rollback_document_deletion,
 )
-from app.services.embedding import chunk_embedding_text
+from app.services.chunk_alignment import build_chunk_sub_index
+from app.services.chunk_index import asset_caption_kwargs, chunk_embedding_text, merge_captions
 from app.services.embedding_provider import get_embedding_service
 from app.services.fulltext_store import FulltextStore
 from app.services.ingest_caption import apply_ingest_captions
-from app.services.chunk_alignment import build_chunk_sub_index
-from app.services.chunk_index import chunk_fulltext_caption
 from app.services.ingestion import IngestionService, toc_entry_to_dict
 from app.services.infra_init import ensure_external_stores
 from app.services.storage import StorageService
@@ -57,6 +56,7 @@ class _PendingAssetUpload:
     figure_caption: str | None = None
     figure_number: str | None = None
     content_hash: str = ""
+    layout_regions: list[dict] | None = None
 
 
 def _collect_pending_asset_uploads(
@@ -78,6 +78,7 @@ def _collect_pending_asset_uploads(
         text_summary: str = "",
         figure_caption: str | None = None,
         figure_number: str | None = None,
+        layout_regions: list[dict] | None = None,
     ) -> None:
         asset_id = uuid.uuid4()
         content_hash = _asset_content_hash(png_bytes)
@@ -97,6 +98,7 @@ def _collect_pending_asset_uploads(
                 figure_caption=figure_caption,
                 figure_number=figure_number,
                 content_hash=content_hash,
+                layout_regions=layout_regions,
             )
         )
 
@@ -113,6 +115,7 @@ def _collect_pending_asset_uploads(
                 text_summary=attached.text_summary,
                 figure_caption=attached.figure_caption,
                 figure_number=attached.figure_number,
+                layout_regions=attached.layout_regions,
             )
     return pending
 
@@ -253,6 +256,7 @@ def process_document(document_id: str) -> None:
                         figure_caption=initial_figure_caption,
                         figure_number=item.figure_number,
                         content_hash=item.content_hash,
+                        layout_regions=item.layout_regions,
                     )
                 )
             db.flush()
@@ -278,20 +282,6 @@ def process_document(document_id: str) -> None:
             for asset in asset_rows:
                 assets_by_chunk.setdefault(str(asset.chunk_id), []).append(asset)
 
-            def _asset_captions(chunk_id: uuid.UUID) -> list[str]:
-                return [
-                    asset.caption
-                    for asset in assets_by_chunk.get(str(chunk_id), [])
-                    if asset.caption
-                ]
-
-            def _asset_figure_captions(chunk_id: uuid.UUID) -> list[str]:
-                return [
-                    asset.figure_caption
-                    for asset in assets_by_chunk.get(str(chunk_id), [])
-                    if asset.figure_caption
-                ]
-
             for chunk in chunk_rows:
                 chunk.sub_index = build_chunk_sub_index(
                     chunk.text,
@@ -306,9 +296,10 @@ def process_document(document_id: str) -> None:
                 chunk_embedding_text(
                     chunk.text,
                     chunk.section,
-                    caption=chunk.caption,
-                    asset_captions=_asset_captions(chunk.id),
-                    asset_figure_captions=_asset_figure_captions(chunk.id),
+                    **asset_caption_kwargs(
+                        chunk.caption,
+                        assets_by_chunk.get(str(chunk.id), []),
+                    ),
                 )
                 for chunk in chunk_rows
             ]
@@ -362,10 +353,11 @@ def process_document(document_id: str) -> None:
                     chunk_ids=[chunk.id for chunk in chunk_rows],
                     texts=[chunk.text for chunk in chunk_rows],
                     captions=[
-                        chunk_fulltext_caption(
-                            chunk.caption,
-                            _asset_captions(chunk.id),
-                            asset_figure_captions=_asset_figure_captions(chunk.id),
+                        merge_captions(
+                            **asset_caption_kwargs(
+                                chunk.caption,
+                                assets_by_chunk.get(str(chunk.id), []),
+                            )
                         )
                         for chunk in chunk_rows
                     ],

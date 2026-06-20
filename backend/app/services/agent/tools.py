@@ -44,7 +44,9 @@ def _format_chunks(chunks: list[dict], *, source_tool: str) -> str:
         if item.get("assets"):
             header += " visual=1"
         if item.get("caption") or any(
-            asset.get("caption") or asset.get("figure_caption")
+            asset.get("caption")
+            or asset.get("figure_caption")
+            or asset.get("vlm_caption")
             for asset in item.get("assets") or []
         ):
             header += " caption=1"

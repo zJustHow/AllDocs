@@ -12,8 +12,8 @@ import { useI18n } from "./i18n";
 import { AllDocsIcon, ProfileIcon } from "./icons";
 import MessageContent from "./MessageContent";
 import { useStreamingContent } from "./streamingContent";
-import type { ChatMessage } from "./types";
 import type { ViewerTarget } from "./citations";
+import type { ChatMessage } from "./types";
 
 interface ChatMessageItemProps {
   message: ChatMessage;
@@ -88,6 +88,7 @@ function ChatMessageItem({
               content={content}
               citations={message.citations ?? []}
               embeds={message.embeds ?? []}
+              streaming={message.streaming}
               onOpenDocument={onOpenDocument}
             />
           ) : (

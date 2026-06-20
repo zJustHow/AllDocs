@@ -25,17 +25,12 @@ _FORMAT_RULES = {
         "格式：用 Markdown 排版，结构清晰；多要点时分节或列表，短答可直接段落，勿强行套模板。"
         "引用 [n] 写在句末；下一条步骤或下一节须另起一行，"
         "勿紧接在同一行（错误示例：[1]。3.xxx）。"
-        "若用大节分隔线 ---，须单独占一行且前后各留一空行，例如「…[1]。\\n\\n---\\n\\n## 下一节」；"
-        "禁止在句末或列表项末尾写 ---（错误示例：…[1]。 ---）。"
     ),
     "en": (
         "Format: Use Markdown with clear structure; use sections or lists for multi-point "
         "answers and plain paragraphs for short answers—do not force a template. "
         "Place [n] at the end of each cited sentence; each next step or section "
         "must start on a new line (never inline like [1]. 3. Next section). "
-        "If you use --- between major sections, it must be alone on its own line with a "
-        "blank line before and after (e.g. '...[1].\\n\\n---\\n\\n## Next section'). "
-        "Never append --- at the end of a sentence or list item (wrong: '...[1]. ---')."
     ),
 }
 

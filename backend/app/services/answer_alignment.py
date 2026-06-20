@@ -15,9 +15,9 @@ from app.services.shared_contract import (
     strip_inline_markers,
 )
 from app.services.embeds_util import _embed_for_asset
+from app.services.sentence_boundary import split_answer_text
 from app.services.visual_asset_util import chunk_visual_assets
 
-_SENTENCE_SPLIT = re.compile(r"(?<=[。！？.!?；;:])\s*")
 _INLINE_CITATION = inline_citation_ref_pattern()
 _GFM_TABLE_SEPARATOR = re.compile(r"^\|?[\s:-]+\|[\s|:-]+$")
 
@@ -89,13 +89,9 @@ def _extract_citation_refs(raw_text: str) -> list[int]:
 
 def split_answer_sentences(answer: str) -> list[dict[str, Any]]:
     """Split answer into sentences; collect inline [n] refs in each sentence."""
-    answer = answer.strip()
-    if not answer:
-        return []
-
-    parts = [part.strip() for part in _SENTENCE_SPLIT.split(answer) if part.strip()]
+    parts = split_answer_text(answer)
     if not parts:
-        parts = [answer]
+        return []
 
     sentences: list[dict[str, Any]] = []
     for raw_text in parts:

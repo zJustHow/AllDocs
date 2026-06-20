@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from app.services.asset_urls import asset_url
+from app.services.pdf_layout_regions import resolve_asset_regions
 from app.services.visual_asset_util import VISUAL_ASSET_TYPES
 
 
@@ -21,13 +22,6 @@ def _embed_display_caption(chunk: dict, asset: dict) -> str | None:
         if candidate and str(candidate).strip():
             return str(candidate).strip()
     return None
-
-
-def _embed_regions(asset: dict, *, page: int) -> list[dict]:
-    bbox = asset.get("bbox")
-    if not bbox or len(bbox) != 4:
-        return []
-    return [{"page": int(page), "bbox": [float(value) for value in bbox]}]
 
 
 def _embed_for_asset(
@@ -60,10 +54,8 @@ def _embed_for_asset(
         "url": asset.get("url") or asset_url(str(asset_id)),
         "asset_id": str(asset_id),
         "content_hash": asset.get("content_hash"),
-        "regions": _embed_regions(asset, page=int(page)),
+        "regions": resolve_asset_regions(asset),
         "caption": _embed_display_caption(chunk, asset),
-        "figure_caption": asset.get("figure_caption"),
-        "figure_number": asset.get("figure_number"),
     }
     if sentence_index is not None:
         payload["sentence_index"] = sentence_index
@@ -84,8 +76,6 @@ def public_embeds(embeds: list[dict]) -> list[dict]:
             "content_hash": item.get("content_hash"),
             "regions": item.get("regions") or [],
             "caption": item.get("caption"),
-            "figure_caption": item.get("figure_caption"),
-            "figure_number": item.get("figure_number"),
         }
         for item in embeds
     ]

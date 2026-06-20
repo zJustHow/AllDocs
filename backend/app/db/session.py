@@ -42,10 +42,14 @@ def _ensure_chunk_asset_columns(sync_conn) -> None:
         sync_conn.execute(
             text("ALTER TABLE chunk_assets ADD COLUMN figure_caption TEXT")
         )
+    if "vlm_caption" not in columns:
+        sync_conn.execute(text("ALTER TABLE chunk_assets ADD COLUMN vlm_caption TEXT"))
     if "content_hash" not in columns:
         sync_conn.execute(
             text("ALTER TABLE chunk_assets ADD COLUMN content_hash VARCHAR(64)")
         )
+    if "layout_regions" not in columns:
+        sync_conn.execute(text("ALTER TABLE chunk_assets ADD COLUMN layout_regions JSONB"))
     if "chunks" in inspector.get_table_names():
         chunk_columns = {column["name"] for column in inspector.get_columns("chunks")}
         if "sub_index" not in chunk_columns:

@@ -2,8 +2,10 @@ const MAX_ENTRIES = 128;
 
 const htmlByKey = new Map<string, string>();
 
-function cacheKey(content: string, inline: boolean): string {
-  return `${inline ? "i" : "b"}\0${content}`;
+export type MarkdownCacheKind = "block" | "citations";
+
+function cacheKey(content: string, kind: MarkdownCacheKind): string {
+  return `${kind === "citations" ? "c" : "b"}\0${content}`;
 }
 
 function touchEntry(key: string, html: string): string {
@@ -18,9 +20,9 @@ function touchEntry(key: string, html: string): string {
 
 export function getCachedMarkdownHtml(
   content: string,
-  inline: boolean,
+  kind: MarkdownCacheKind,
 ): string | null {
-  const key = cacheKey(content, inline);
+  const key = cacheKey(content, kind);
   const hit = htmlByKey.get(key);
   if (!hit) return null;
   htmlByKey.delete(key);
@@ -30,8 +32,8 @@ export function getCachedMarkdownHtml(
 
 export function setCachedMarkdownHtml(
   content: string,
-  inline: boolean,
+  kind: MarkdownCacheKind,
   html: string,
 ): string {
-  return touchEntry(cacheKey(content, inline), html);
+  return touchEntry(cacheKey(content, kind), html);
 }

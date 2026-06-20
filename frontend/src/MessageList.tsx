@@ -1,10 +1,9 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { memo, useEffect, type RefObject } from "react";
-import ChatMessageItem from "./ChatMessageItem";
-import type { ChatMessage } from "./types";
 import type { ViewerTarget } from "./citations";
-
-const ESTIMATED_MESSAGE_HEIGHT = 140;
+import ChatMessageItem from "./ChatMessageItem";
+import { estimateMessageHeight } from "./messageEstimateSize";
+import type { ChatMessage } from "./types";
 
 interface MessageListProps {
   messages: ChatMessage[];
@@ -26,7 +25,7 @@ function MessageList({
   const virtualizer = useVirtualizer({
     count: messages.length,
     getScrollElement: () => scrollRef.current,
-    estimateSize: () => ESTIMATED_MESSAGE_HEIGHT,
+    estimateSize: (index) => estimateMessageHeight(messages[index]),
     overscan: 5,
   });
 
