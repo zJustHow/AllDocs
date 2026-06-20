@@ -2,7 +2,17 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Enum, ForeignKey, Integer, PrimaryKeyConstraint, String, Text, func
+from sqlalchemy import (
+    DateTime,
+    Enum,
+    ForeignKey,
+    Index,
+    Integer,
+    PrimaryKeyConstraint,
+    String,
+    Text,
+    func,
+)
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -45,6 +55,10 @@ class Document(Base):
 
 class Chunk(Base):
     __tablename__ = "chunks"
+    __table_args__ = (
+        Index("ix_chunks_document_id_chunk_index", "document_id", "chunk_index"),
+        Index("ix_chunks_document_id_page", "document_id", "page"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     document_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("documents.id", ondelete="CASCADE"))
@@ -65,7 +79,11 @@ class Chunk(Base):
 
 class ChunkAsset(Base):
     __tablename__ = "chunk_assets"
-    __table_args__ = (PrimaryKeyConstraint("id", "chunk_id"),)
+    __table_args__ = (
+        PrimaryKeyConstraint("id", "chunk_id"),
+        Index("ix_chunk_assets_chunk_id", "chunk_id"),
+        Index("ix_chunk_assets_document_id_figure_number", "document_id", "figure_number"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), default=uuid.uuid4)
     chunk_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("chunks.id", ondelete="CASCADE"))
@@ -88,6 +106,7 @@ class ChunkAsset(Base):
 
 class Session(Base):
     __tablename__ = "sessions"
+    __table_args__ = (Index("ix_sessions_doc_ids", "doc_ids", postgresql_using="gin"),)
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     doc_ids: Mapped[list] = mapped_column(JSONB, default=list)

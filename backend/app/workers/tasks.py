@@ -355,7 +355,6 @@ def process_document(document_id: str) -> None:
                     ],
                     payloads=payloads,
                 )
-                fulltext_store.refresh_index()
 
             if _abort_if_deleting(db, document):
                 vector_store.delete_by_document(doc_uuid)

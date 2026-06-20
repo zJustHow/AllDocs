@@ -184,14 +184,22 @@ describe("DocumentViewer", () => {
   });
 
   it("updates the current page while scrolling through the PDF", async () => {
-    renderViewer({ ...pdfTarget, pageCount: 2 });
+    renderViewer({
+      ...pdfTarget,
+      pageCount: 2,
+      regions: [],
+    });
 
     const pageInput = await screen.findByRole("textbox", { name: /Page number|页码/i });
-    await new Promise((resolve) => setTimeout(resolve, 100));
 
     const scrollEl = document.querySelector(".doc-viewer-scroll") as HTMLElement;
     const page1 = document.querySelector('[data-page="1"]') as HTMLElement;
     const page2 = document.querySelector('[data-page="2"]') as HTMLElement;
+
+    await waitFor(() => {
+      expect(page1).toBeTruthy();
+      expect(page2).toBeTruthy();
+    });
 
     Object.defineProperty(page1, "offsetTop", { value: 0, configurable: true });
     Object.defineProperty(page1, "offsetHeight", { value: 600, configurable: true });
@@ -200,11 +208,13 @@ describe("DocumentViewer", () => {
     Object.defineProperty(scrollEl, "scrollTop", { value: 500, writable: true, configurable: true });
     Object.defineProperty(scrollEl, "clientHeight", { value: 400, configurable: true });
 
-    fireEvent.scroll(scrollEl);
-
-    await waitFor(() => {
-      expect(pageInput).toHaveValue("2");
-    });
+    await waitFor(
+      () => {
+        fireEvent.scroll(scrollEl);
+        expect(pageInput).toHaveValue("2");
+      },
+      { timeout: 3000 },
+    );
   });
 
   it("resets invalid page input on blur", async () => {

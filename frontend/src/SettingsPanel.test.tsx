@@ -45,9 +45,16 @@ const samplePayload = {
   ],
 };
 
-function renderPanel(open = true, onClose = vi.fn()) {
+function renderPanel(open = true, onClose = vi.fn(), withOverlay = false) {
   return render(
     <I18nProvider>
+      {withOverlay ? (
+        <div
+          className="settings-overlay visible"
+          onClick={onClose}
+          aria-hidden="true"
+        />
+      ) : null}
       <SettingsPanel open={open} onClose={onClose} />
     </I18nProvider>,
   );
@@ -60,9 +67,10 @@ describe("SettingsPanel", () => {
     patchSettings.mockResolvedValue(samplePayload);
   });
 
-  it("does not render when closed", () => {
+  it("hides the panel when closed", () => {
     renderPanel(false);
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByRole("dialog", { hidden: true })).toHaveAttribute("aria-hidden", "true");
+    expect(fetchSettings).not.toHaveBeenCalled();
   });
 
   it("loads settings and renders fields when opened", async () => {
@@ -135,13 +143,13 @@ describe("SettingsPanel", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it("closes when clicking the backdrop", async () => {
+  it("closes when clicking the overlay", async () => {
     const onClose = vi.fn();
     const user = userEvent.setup();
-    renderPanel(true, onClose);
+    renderPanel(true, onClose, true);
 
     await screen.findByRole("dialog");
-    await user.click(document.querySelector(".settings-panel-backdrop") as HTMLElement);
+    await user.click(document.querySelector(".settings-overlay") as HTMLElement);
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
@@ -232,5 +240,149 @@ describe("SettingsPanel", () => {
     await user.type(screen.getByRole("searchbox"), "does-not-exist");
 
     expect(await screen.findByText(/No matching settings|没有匹配的设置/i)).toBeInTheDocument();
+  });
+
+  it("expands collapsed groups while searching", async () => {
+    const user = userEvent.setup();
+    renderPanel();
+
+    await screen.findByRole("dialog");
+    const toggle = screen.getByRole("button", { name: /LLM|大模型/i });
+    await user.click(toggle);
+    expect(screen.queryByLabelText(/模型|Model/i)).not.toBeInTheDocument();
+
+    await user.type(screen.getByRole("searchbox"), "llm_model");
+    expect(screen.getByLabelText(/模型|Model/i)).toBeInTheDocument();
+  });
+
+  it("closes from the header close button", async () => {
+    const onClose = vi.fn();
+    const user = userEvent.setup();
+    renderPanel(true, onClose);
+
+    await screen.findByRole("dialog");
+    await user.click(screen.getByRole("button", { name: /Close dialog|关闭对话框/i }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("closes from the footer cancel button", async () => {
+    const onClose = vi.fn();
+    const user = userEvent.setup();
+    renderPanel(true, onClose);
+
+    await screen.findByRole("dialog");
+    await user.click(screen.getByRole("button", { name: /Cancel|取消/i }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("saves a new secret field value", async () => {
+    const user = userEvent.setup();
+    renderPanel();
+
+    await screen.findByRole("dialog");
+    const apiKeyInput = screen.getByLabelText(/API Key/i);
+    await user.type(apiKeyInput, "sk-new-secret");
+
+    await user.click(screen.getByRole("button", { name: /保存|Save/i }));
+
+    await waitFor(() => {
+      expect(patchSettings).toHaveBeenCalledWith({ llm_api_key: "sk-new-secret" });
+    });
+  });
+
+  it("renders and saves float fields", async () => {
+    const floatPayload = {
+      groups: [
+        {
+          id: "rag",
+          fields: [
+            {
+              key: "rag_min_rerank_score",
+              type: "float" as const,
+              secret: false,
+              default: 0.5,
+              overridden: false,
+              value: 0.5,
+            },
+          ],
+        },
+      ],
+    };
+    fetchSettings.mockResolvedValue(floatPayload);
+    patchSettings.mockResolvedValue(floatPayload);
+
+    const user = userEvent.setup();
+    renderPanel();
+
+    await screen.findByRole("dialog");
+    const scoreInput = screen.getByLabelText(/Min rerank score|最小 rerank/i);
+    fireEvent.change(scoreInput, { target: { value: "0.75" } });
+
+    await user.click(screen.getByRole("button", { name: /保存|Save/i }));
+
+    await waitFor(() => {
+      expect(patchSettings).toHaveBeenCalledWith({ rag_min_rerank_score: 0.75 });
+    });
+  });
+
+  it("restores numeric defaults when the input is cleared", async () => {
+    const ingestPayload = {
+      groups: [
+        {
+          id: "ingest_caption",
+          fields: [
+            {
+              key: "ingest_caption_max_per_page",
+              type: "int" as const,
+              secret: false,
+              default: 2,
+              overridden: false,
+              value: 2,
+            },
+          ],
+        },
+      ],
+    };
+    fetchSettings.mockResolvedValue(ingestPayload);
+    patchSettings.mockResolvedValue(ingestPayload);
+
+    const user = userEvent.setup();
+    renderPanel();
+
+    await screen.findByRole("dialog");
+    const maxInput = screen.getByLabelText(/Max VLM analyses per page|每页最多/i);
+    fireEvent.change(maxInput, { target: { value: "4" } });
+    fireEvent.change(maxInput, { target: { value: "" } });
+
+    expect(maxInput).toHaveValue(2);
+    expect(screen.getByRole("button", { name: /保存|Save/i })).toBeDisabled();
+  });
+
+  it("shows the masked secret hint when the field is set", async () => {
+    const secretPayload = {
+      groups: [
+        {
+          id: "llm",
+          fields: [
+            {
+              key: "llm_api_key",
+              type: "secret" as const,
+              secret: true,
+              default: "",
+              overridden: true,
+              value: null,
+              set: true,
+              masked: "sk-test****",
+            },
+          ],
+        },
+      ],
+    };
+    fetchSettings.mockResolvedValue(secretPayload);
+
+    renderPanel();
+
+    await screen.findByRole("dialog");
+    expect(screen.getByText(/Currently set: sk-test\*\*\*\*|当前已设置：sk-test\*\*\*\*/i)).toBeInTheDocument();
   });
 });

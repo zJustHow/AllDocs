@@ -135,6 +135,7 @@
   --layout-header: 56px;
   --chat-content-top: 32px;
   --sidebar-width: 260px;
+  --settings-width: 380px;
   --content-max: 768px;
   --viewer-duration: 0.32s;
   --viewer-ease: cubic-bezier(0.32, 0.72, 0, 1);
@@ -1800,33 +1801,59 @@ button {
   margin-left: 4px;
 }
 
-.settings-panel-root {
-  position: fixed;
-  inset: 0;
-  z-index: 110;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
+.settings-btn.hidden {
+  visibility: hidden;
+  pointer-events: none;
 }
 
-.settings-panel-backdrop {
-  position: absolute;
-  inset: 0;
-  border: none;
-  background: var(--overlay-bg);
-  cursor: pointer;
+.settings-overlay {
+  display: none;
 }
+
+/* ── Settings panel (right slide-out) ── */
 
 .settings-panel {
-  position: relative;
-  z-index: 1;
+  width: var(--settings-width);
+  flex-shrink: 0;
+  align-self: stretch;
+  height: 100%;
+  min-height: 0;
+  background: var(--sidebar-bg);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  -webkit-backdrop-filter: blur(var(--glass-blur))
+    saturate(var(--glass-saturate));
+  border: none;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--panel-shadow-elevated);
   display: flex;
   flex-direction: column;
-  width: min(100%, 720px);
-  max-height: min(88vh, 900px);
-  border-radius: var(--radius-lg);
-  animation: confirm-dialog-in 0.18s var(--panel-ease);
+  min-height: 0;
+  overflow: visible;
+  transition:
+    width var(--panel-duration) var(--panel-ease),
+    margin var(--panel-duration) var(--panel-ease),
+    opacity var(--panel-duration) var(--panel-ease),
+    box-shadow var(--panel-duration) var(--panel-ease);
+  z-index: 20;
+}
+
+.settings-panel.collapsed {
+  width: 0;
+  opacity: 0;
+  margin-left: calc(var(--app-padding) * -1);
+  box-shadow: none;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.settings-panel-inner {
+  width: var(--settings-width);
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  border-radius: inherit;
 }
 
 .settings-panel-header {
@@ -1961,10 +1988,6 @@ button {
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   gap: 12px;
   padding: 0 12px 12px;
-}
-
-.settings-group h3 {
-  display: none;
 }
 
 .settings-field {
@@ -2171,28 +2194,6 @@ button {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.doc-viewer-close {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 40px;
-  height: 40px;
-  border: none;
-  border-radius: var(--radius-full);
-  background: var(--surface-muted);
-  backdrop-filter: blur(var(--glass-blur-light)) saturate(var(--glass-saturate));
-  -webkit-backdrop-filter: blur(var(--glass-blur-light))
-    saturate(var(--glass-saturate));
-  color: var(--text-secondary);
-  flex-shrink: 0;
-  box-shadow: var(--panel-shadow);
-  transition: background 0.15s;
-}
-
-.doc-viewer-close:hover {
-  background: var(--surface-hover);
 }
 
 .doc-viewer-stage {
@@ -2414,6 +2415,7 @@ button {
   :root {
     --app-padding: 0;
     --mobile-sidebar-width: min(86vw, 300px);
+    --mobile-settings-width: min(92vw, 380px);
     --layout-header: 52px;
     --chat-content-top: 20px;
   }
@@ -2480,6 +2482,63 @@ button {
 
   .sidebar-overlay.visible {
     opacity: 1;
+    pointer-events: auto;
+  }
+
+  .settings-panel {
+    position: fixed;
+    top: var(--safe-top);
+    right: var(--safe-right);
+    bottom: var(--safe-bottom);
+    width: var(--mobile-settings-width);
+    margin-left: 0;
+    border-radius: var(--radius-lg) 0 0 var(--radius-lg);
+    transform: translateX(calc(100% + var(--safe-right)));
+    transition:
+      transform var(--panel-duration) var(--panel-ease),
+      opacity var(--panel-duration) var(--panel-ease);
+    box-shadow: var(--panel-shadow-elevated);
+    z-index: 26;
+  }
+
+  .settings-panel-inner {
+    width: var(--mobile-settings-width);
+  }
+
+  .settings-panel.open {
+    transform: translateX(0);
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .settings-panel.collapsed {
+    width: var(--mobile-settings-width);
+    transform: translateX(calc(100% + var(--safe-right)));
+    opacity: 0;
+    margin-left: 0;
+    pointer-events: none;
+  }
+
+  .settings-overlay {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: var(--overlay-bg);
+    backdrop-filter: blur(var(--overlay-blur));
+    -webkit-backdrop-filter: blur(var(--overlay-blur));
+    z-index: 25;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity var(--panel-duration) var(--panel-ease);
+  }
+
+  .settings-overlay.visible {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .settings-btn.hidden {
+    visibility: visible;
     pointer-events: auto;
   }
 
@@ -2590,27 +2649,6 @@ button {
   .app.with-viewer .main {
     flex: 1;
     max-width: none;
-  }
-
-  .settings-panel-root,
-  .confirm-dialog-root,
-  .image-lightbox-root {
-    padding:
-      var(--safe-top)
-      var(--safe-right)
-      var(--safe-bottom)
-      var(--safe-left);
-  }
-
-  .settings-panel-root {
-    align-items: stretch;
-  }
-
-  .settings-panel {
-    width: 100%;
-    max-height: none;
-    height: 100%;
-    border-radius: 0;
   }
 
   .settings-fields {

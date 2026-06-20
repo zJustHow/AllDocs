@@ -16,6 +16,7 @@ describe("fileTypes", () => {
     expect(getPreviewMode("photo.png", "image/png")).toBe("image");
     expect(getPreviewMode("notes.txt", "text/plain")).toBe("text");
     expect(getPreviewMode("archive.zip")).toBe("unsupported");
+    expect(getPreviewMode("noextension", "image/png")).toBe("image");
   });
 
   it("loads supported formats from API", async () => {

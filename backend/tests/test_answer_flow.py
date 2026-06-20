@@ -26,7 +26,6 @@ def test_stream_synthesis_emits_clarification() -> None:
         _collect_events(
             _stream_synthesis(
                 agent,
-                AsyncMock(),
                 "问题",
                 result,
                 [],
@@ -54,7 +53,6 @@ def test_stream_synthesis_emits_fallback_without_llm() -> None:
         _collect_events(
             _stream_synthesis(
                 agent,
-                AsyncMock(),
                 "question",
                 result,
                 [],
@@ -109,7 +107,6 @@ def test_stream_synthesis_streams_answer_and_complete_payload() -> None:
             _collect_events(
                 _stream_synthesis(
                     agent,
-                    AsyncMock(),
                     "问题",
                     result,
                     [],
@@ -155,7 +152,6 @@ def test_stream_agent_answer_yields_steps_then_synthesis() -> None:
         _collect_events(
             stream_agent_answer(
                 agent,
-                AsyncMock(),
                 "报警代码",
                 None,
                 None,

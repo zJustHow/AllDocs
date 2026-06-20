@@ -51,13 +51,21 @@ EDITABLE_FIELDS: tuple[SettingField, ...] = (
     SettingField("ocr_enabled", "ocr", "bool"),
     SettingField("ocr_lang", "ocr", "string"),
     SettingField("ocr_force", "ocr", "bool"),
+    # PDF table header detection
+    SettingField("pdf_table_header_detect_enabled", "pdf_table_header", "bool"),
+    SettingField("pdf_table_header_y_tolerance", "pdf_table_header", "float"),
+    SettingField("pdf_table_header_margin", "pdf_table_header", "float"),
+    SettingField("pdf_table_header_top_padding", "pdf_table_header", "float"),
+    SettingField("pdf_table_header_clip_bottom_ratio", "pdf_table_header", "float"),
+    SettingField("pdf_table_header_snap_y_tolerance", "pdf_table_header", "float"),
+    SettingField("pdf_table_header_join_y_tolerance", "pdf_table_header", "float"),
 )
 
 EDITABLE_KEYS: frozenset[str] = frozenset(field.key for field in EDITABLE_FIELDS)
 SECRET_KEYS: frozenset[str] = frozenset(field.key for field in EDITABLE_FIELDS if field.secret)
 FIELD_BY_KEY: dict[str, SettingField] = {field.key: field for field in EDITABLE_FIELDS}
 
-GROUP_ORDER: tuple[str, ...] = ("llm", "ingest_caption", "rag", "retrieval", "ocr")
+GROUP_ORDER: tuple[str, ...] = ("llm", "ingest_caption", "rag", "retrieval", "ocr", "pdf_table_header")
 
 
 def coerce_setting_value(field: SettingField, raw: str) -> Any:

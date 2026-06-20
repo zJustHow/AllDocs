@@ -1,16 +1,14 @@
-import asyncio
 import json
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.schemas import ChatRequest
 from app.config import get_settings
 from app.db.models import Message, Session
-from app.db.session import get_db
+from app.db.session import async_session_factory
 from app.services.agent.answer_flow import persist_turn, stream_agent_answer
 from app.services.deps import get_agent_service
 from app.services.rag import detect_language
@@ -19,7 +17,7 @@ router = APIRouter(prefix="/chat", tags=["chat"])
 
 
 async def _get_or_create_session(
-    db: AsyncSession,
+    db,
     session_id: uuid.UUID | None,
     doc_ids: list[uuid.UUID],
 ) -> Session:
@@ -47,22 +45,21 @@ def _sse(payload: dict) -> str:
 
 
 @router.post("")
-async def chat(
-    payload: ChatRequest,
-    db: AsyncSession = Depends(get_db),
-):
+async def chat(payload: ChatRequest):
     settings = get_settings()
-    session = await _get_or_create_session(db, payload.session_id, payload.doc_ids)
-    await db.commit()
-    history_result = await db.execute(
-        select(Message).where(Message.session_id == session.id).order_by(Message.created_at)
-    )
-    history = [
-        {"role": message.role, "content": message.content}
-        for message in history_result.scalars().all()
-    ]
+    async with async_session_factory() as db:
+        session = await _get_or_create_session(db, payload.session_id, payload.doc_ids)
+        await db.commit()
+        session_id = session.id
+        history_result = await db.execute(
+            select(Message).where(Message.session_id == session_id).order_by(Message.created_at)
+        )
+        history = [
+            {"role": message.role, "content": message.content}
+            for message in history_result.scalars().all()
+        ]
+        doc_ids = payload.doc_ids or [uuid.UUID(doc_id) for doc_id in session.doc_ids]
 
-    doc_ids = payload.doc_ids or [uuid.UUID(doc_id) for doc_id in session.doc_ids]
     chunk_filters = payload.filters
     lang = detect_language(payload.message)
     agent = get_agent_service()
@@ -71,7 +68,6 @@ async def chat(
         try:
             async for event in stream_agent_answer(
                 agent,
-                db,
                 payload.message,
                 doc_ids or None,
                 chunk_filters,
@@ -86,12 +82,13 @@ async def chat(
                     yield _sse(
                         {
                             "type": "done",
-                            "session_id": str(session.id),
+                            "session_id": str(session_id),
                             "citations": [],
                             "language": event["language"],
                         }
                     )
-                    await persist_turn(db, session.id, payload.message, content, [])
+                    async with async_session_factory() as persist_db:
+                        await persist_turn(persist_db, session_id, payload.message, content, [])
                     return
 
                 if event_type == "fallback":
@@ -100,12 +97,13 @@ async def chat(
                     yield _sse(
                         {
                             "type": "done",
-                            "session_id": str(session.id),
+                            "session_id": str(session_id),
                             "citations": [],
                             "language": event["language"],
                         }
                     )
-                    await persist_turn(db, session.id, payload.message, content, [])
+                    async with async_session_factory() as persist_db:
+                        await persist_turn(persist_db, session_id, payload.message, content, [])
                     return
 
                 if event_type == "citations":
@@ -124,26 +122,26 @@ async def chat(
                     yield _sse(
                         {
                             "type": "done",
-                            "session_id": str(session.id),
+                            "session_id": str(session_id),
                             "content": event["answer"],
                             "citations": event["citations"],
                             "embeds": event["embeds"],
                             "language": event["language"],
                         }
                     )
-                    await persist_turn(
-                        db,
-                        session.id,
-                        payload.message,
-                        event["answer"],
-                        event["citations"],
-                        event["embeds"],
-                    )
+                    async with async_session_factory() as persist_db:
+                        await persist_turn(
+                            persist_db,
+                            session_id,
+                            payload.message,
+                            event["answer"],
+                            event["citations"],
+                            event["embeds"],
+                        )
                     return
 
                 yield _sse(event)
         except Exception as exc:
-            await db.rollback()
             yield _sse({"type": "error", "message": str(exc)})
 
     return StreamingResponse(

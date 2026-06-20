@@ -2,7 +2,7 @@ import html
 import logging
 import re
 from collections.abc import Callable
-from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from io import BytesIO
 
@@ -110,6 +110,18 @@ class ParseResult:
     page_count: int
     ocr_pages: int
     toc_entries: list[TocEntry]
+
+
+@dataclass
+class _PdfPageParseResult:
+    page_number: int
+    pages: list[PageRow]
+    tables: list[EmbeddedTable]
+    figures: list[EmbeddedFigure]
+    ocr_pages: int
+    png_cache: dict[int, tuple[bytes, int, int]]
+    seen_placements: set[tuple[int, int, tuple[int, int, int, int]]]
+    tables_available: bool
 
 
 def toc_entry_to_dict(entry: TocEntry) -> dict:
@@ -1046,6 +1058,195 @@ class IngestionService:
             if row is not None:
                 pages.append(row)
 
+    def _section_resolver(
+        self,
+        toc_entries: list[TocEntry],
+        toc_anchors: list[TocAnchor],
+        use_y_split: bool,
+    ) -> Callable[[int, float | None], str | None]:
+        def section_resolver(page_number: int, y: float | None = None) -> str | None:
+            if y is not None and use_y_split:
+                resolved = section_at_position(toc_anchors, page_number, y)
+                if resolved:
+                    return resolved
+            return section_for_page(toc_entries, page_number)
+
+        return section_resolver
+
+    def _parse_pdf_page(
+        self,
+        *,
+        doc: fitz.Document,
+        page_index: int,
+        toc_entries: list[TocEntry],
+        toc_anchors: list[TocAnchor],
+        use_y_split: bool,
+        hf_filter: HeaderFooterFilter,
+        tables_available: bool,
+        ocr_executor: ThreadPoolExecutor | None = None,
+    ) -> _PdfPageParseResult:
+        page_number = page_index + 1
+        page = doc[page_index]
+        section_resolver = self._section_resolver(toc_entries, toc_anchors, use_y_split)
+        page_rows: list[PageRow] = []
+        png_cache: dict[int, tuple[bytes, int, int]] = {}
+        seen_placements: set[tuple[int, int, tuple[int, int, int, int]]] = set()
+
+        page_tables: list[EmbeddedTable] = []
+        if tables_available:
+            try:
+                page_tables = extract_tables_from_page(
+                    page,
+                    page_number,
+                    settings=self.settings,
+                    section_resolver=section_resolver,
+                )
+            except AttributeError:
+                logger.warning(
+                    "PyMuPDF find_tables is unavailable; table extraction disabled"
+                )
+                tables_available = False
+
+        page_figures = extract_figures_from_page(
+            page,
+            page_number,
+            doc,
+            settings=self.settings,
+            section_resolver=section_resolver,
+            png_cache=png_cache,
+            seen_placements=seen_placements,
+        )
+        table_bboxes = table_bboxes_on_page(page_tables, page_number)
+        page_figures = [
+            figure
+            for figure in page_figures
+            if not figure_overlaps_bboxes(figure, table_bboxes)
+        ]
+
+        page_captions = extract_page_captions(page, page_number)
+        page_figures, page_tables = apply_page_caption_matches(
+            page_captions,
+            page_figures,
+            page_tables,
+        )
+
+        page_figures, promoted = route_figures_via_vlm(
+            page_figures,
+            settings=self.settings,
+            caption_service=self.caption_service,
+        )
+        page_tables = [*page_tables, *promoted]
+
+        exclude_bboxes = (
+            table_bboxes_on_page(page_tables, page_number)
+            + figure_bboxes_on_page(page_figures, page_number)
+        )
+
+        native_text = _extract_native_page_text(page, hf=hf_filter)
+        will_need_ocr = (
+            not (exclude_bboxes and not self.settings.ocr_force)
+            and _page_needs_ocr(native_text, self.settings)
+            and self.ocr is not None
+        )
+        ocr_future: Future[str] | None = None
+        if will_need_ocr:
+            png_bytes, page_height = self._render_page_for_ocr(page)
+            if ocr_executor is not None:
+                ocr_future = ocr_executor.submit(
+                    self._recognize_rendered_page,
+                    png_bytes,
+                    page_height,
+                    hf_filter,
+                )
+            else:
+                ocr_future = None
+                inline_ocr = self._recognize_rendered_page(
+                    png_bytes,
+                    page_height,
+                    hf_filter,
+                )
+                ocr_future = Future()
+                ocr_future.set_result(inline_ocr)
+
+        page_text, used_ocr = self._extract_page_text_with_ocr_future(
+            page,
+            hf=hf_filter,
+            exclude_bboxes=exclude_bboxes,
+            ocr_future=ocr_future if will_need_ocr else None,
+        )
+
+        self._append_page_text_rows(
+            page_rows,
+            page=page,
+            page_number=page_number,
+            page_text=page_text,
+            used_ocr=used_ocr,
+            exclude_bboxes=exclude_bboxes,
+            toc_anchors=toc_anchors,
+            toc_entries=toc_entries,
+            use_y_split=use_y_split,
+            hf_filter=hf_filter,
+        )
+
+        return _PdfPageParseResult(
+            page_number=page_number,
+            pages=page_rows,
+            tables=page_tables,
+            figures=page_figures,
+            ocr_pages=1 if used_ocr else 0,
+            png_cache=png_cache,
+            seen_placements=seen_placements,
+            tables_available=tables_available,
+        )
+
+    def _parse_pdf_page_from_bytes(
+        self,
+        file_bytes: bytes,
+        page_index: int,
+        toc_entries: list[TocEntry],
+        toc_anchors: list[TocAnchor],
+        use_y_split: bool,
+        hf_filter: HeaderFooterFilter,
+        tables_available: bool,
+    ) -> _PdfPageParseResult:
+        doc = fitz.open(stream=file_bytes, filetype="pdf")
+        try:
+            return self._parse_pdf_page(
+                doc=doc,
+                page_index=page_index,
+                toc_entries=toc_entries,
+                toc_anchors=toc_anchors,
+                use_y_split=use_y_split,
+                hf_filter=hf_filter,
+                tables_available=tables_available,
+                ocr_executor=None,
+            )
+        finally:
+            doc.close()
+
+    def _merge_pdf_page_results(
+        self,
+        results: list[_PdfPageParseResult],
+        *,
+        pages: list[PageRow],
+        extracted_tables: list[EmbeddedTable],
+        embedded_figures: list[EmbeddedFigure],
+        png_cache: dict[int, tuple[bytes, int, int]],
+        seen_placements: set[tuple[int, int, tuple[int, int, int, int]]],
+    ) -> tuple[bool, int]:
+        tables_available = True
+        ocr_pages = 0
+        for result in sorted(results, key=lambda item: item.page_number):
+            pages.extend(result.pages)
+            extracted_tables.extend(result.tables)
+            embedded_figures.extend(result.figures)
+            png_cache.update(result.png_cache)
+            seen_placements.update(result.seen_placements)
+            ocr_pages += result.ocr_pages
+            if not result.tables_available:
+                tables_available = False
+        return tables_available, ocr_pages
+
     def parse_pdf(
         self,
         file_bytes: bytes,
@@ -1064,13 +1265,6 @@ class IngestionService:
             should_skip_page=skip_front_matter,
         )
 
-        def section_resolver(page_number: int, y: float | None = None) -> str | None:
-            if y is not None and use_y_split:
-                resolved = section_at_position(toc_anchors, page_number, y)
-                if resolved:
-                    return resolved
-            return section_for_page(toc_entries, page_number)
-
         pages: list[PageRow] = []
         ocr_pages = 0
         extracted_tables: list[EmbeddedTable] = []
@@ -1079,107 +1273,64 @@ class IngestionService:
         seen_placements: set[tuple[int, int, tuple[int, int, int, int]]] = set()
         tables_available = True
         max_workers = max(1, self.settings.pdf_parallel_workers)
+        page_indices = [
+            page_index
+            for page_index in range(page_count)
+            if not should_skip_front_matter(page_index + 1, toc_entries)
+        ]
 
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            for page_index in range(page_count):
-                page_number = page_index + 1
-                if should_skip_front_matter(page_number, toc_entries):
-                    continue
-
-                page = doc[page_index]
-
-                page_tables: list[EmbeddedTable] = []
-                if tables_available:
-                    try:
-                        page_tables = extract_tables_from_page(
-                            page,
-                            page_number,
-                            settings=self.settings,
-                            section_resolver=section_resolver,
-                        )
-                    except AttributeError:
-                        logger.warning(
-                            "PyMuPDF find_tables is unavailable; table extraction disabled"
-                        )
-                        tables_available = False
-
-                page_figures = extract_figures_from_page(
-                    page,
-                    page_number,
-                    doc,
-                    settings=self.settings,
-                    section_resolver=section_resolver,
-                    png_cache=png_cache,
-                    seen_placements=seen_placements,
-                )
-                table_bboxes = table_bboxes_on_page(page_tables, page_number)
-                page_figures = [
-                    figure
-                    for figure in page_figures
-                    if not figure_overlaps_bboxes(figure, table_bboxes)
-                ]
-
-                page_captions = extract_page_captions(page, page_number)
-                page_figures, page_tables = apply_page_caption_matches(
-                    page_captions,
-                    page_figures,
-                    page_tables,
-                )
-
-                page_figures, promoted = route_figures_via_vlm(
-                    page_figures,
-                    settings=self.settings,
-                    caption_service=self.caption_service,
-                )
-                page_tables = [*page_tables, *promoted]
-
-                embedded_figures.extend(page_figures)
-                extracted_tables.extend(page_tables)
-
-                exclude_bboxes = (
-                    table_bboxes_on_page(page_tables, page_number)
-                    + figure_bboxes_on_page(page_figures, page_number)
-                )
-
-                native_text = _extract_native_page_text(page, hf=hf_filter)
-                will_need_ocr = (
-                    not (exclude_bboxes and not self.settings.ocr_force)
-                    and _page_needs_ocr(native_text, self.settings)
-                    and self.ocr is not None
-                )
-                ocr_future: Future[str] | None = None
-                if will_need_ocr:
-                    png_bytes, page_height = self._render_page_for_ocr(page)
-                    ocr_future = executor.submit(
-                        self._recognize_rendered_page,
-                        png_bytes,
-                        page_height,
+        if max_workers > 1 and len(page_indices) > 1:
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                futures = [
+                    executor.submit(
+                        self._parse_pdf_page_from_bytes,
+                        file_bytes,
+                        page_index,
+                        toc_entries,
+                        toc_anchors,
+                        use_y_split,
                         hf_filter,
+                        tables_available,
                     )
-
-                page_text, used_ocr = self._extract_page_text_with_ocr_future(
-                    page,
-                    hf=hf_filter,
-                    exclude_bboxes=exclude_bboxes,
-                    ocr_future=ocr_future,
-                )
-                if used_ocr:
-                    ocr_pages += 1
-
-                self._append_page_text_rows(
-                    pages,
-                    page=page,
-                    page_number=page_number,
-                    page_text=page_text,
-                    used_ocr=used_ocr,
-                    exclude_bboxes=exclude_bboxes,
-                    toc_anchors=toc_anchors,
-                    toc_entries=toc_entries,
-                    use_y_split=use_y_split,
-                    hf_filter=hf_filter,
-                )
-                if on_page_progress is not None:
-                    on_page_progress(page_number, page_count)
+                    for page_index in page_indices
+                ]
+                page_results: list[_PdfPageParseResult] = []
+                completed = 0
+                for future in as_completed(futures):
+                    page_results.append(future.result())
+                    completed += 1
+                    if on_page_progress is not None:
+                        on_page_progress(completed, page_count)
+            _, ocr_pages = self._merge_pdf_page_results(
+                page_results,
+                pages=pages,
+                extracted_tables=extracted_tables,
+                embedded_figures=embedded_figures,
+                png_cache=png_cache,
+                seen_placements=seen_placements,
+            )
+        else:
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                for page_index in page_indices:
+                    result = self._parse_pdf_page(
+                        doc=doc,
+                        page_index=page_index,
+                        toc_entries=toc_entries,
+                        toc_anchors=toc_anchors,
+                        use_y_split=use_y_split,
+                        hf_filter=hf_filter,
+                        tables_available=tables_available,
+                        ocr_executor=executor,
+                    )
+                    pages.extend(result.pages)
+                    extracted_tables.extend(result.tables)
+                    embedded_figures.extend(result.figures)
+                    png_cache.update(result.png_cache)
+                    seen_placements.update(result.seen_placements)
+                    ocr_pages += result.ocr_pages
+                    tables_available = result.tables_available
+                    if on_page_progress is not None:
+                        on_page_progress(result.page_number, page_count)
 
         if extracted_tables:
             page_heights = {

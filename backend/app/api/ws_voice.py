@@ -114,115 +114,117 @@ async def voice_websocket(websocket: WebSocket) -> None:
                     await db.flush()
                     await db.commit()
 
+                session_id = session.id
                 history_result = await db.execute(
-                    select(Message).where(Message.session_id == session.id).order_by(Message.created_at)
+                    select(Message).where(Message.session_id == session_id).order_by(Message.created_at)
                 )
                 history = [
                     {"role": message.role, "content": message.content}
                     for message in history_result.scalars().all()
                 ]
-
                 effective_doc_ids = parsed_doc_ids or [uuid.UUID(doc_id) for doc_id in session.doc_ids]
 
-                async def on_agent_step(event: dict) -> None:
+            async def on_agent_step(event: dict) -> None:
+                await _send_json(websocket, event)
+
+            pending_tts = ""
+            answering_sent = False
+
+            async for event in stream_agent_answer(
+                agent,
+                question,
+                effective_doc_ids or None,
+                chunk_filters,
+                history,
+                settings,
+                lang,
+                on_agent_step=on_agent_step,
+            ):
+                event_type = event["type"]
+
+                if event_type == "clarify":
+                    content = event["content"]
+                    await _send_json(websocket, {"type": "answer_delta", "content": content})
+                    if with_audio:
+                        await _synthesize_sentence(websocket, speech, content, lang)
+                    async with async_session_factory() as persist_db:
+                        await persist_turn(persist_db, session_id, question, content, [])
+                    await _send_json(
+                        websocket,
+                        {
+                            "type": "done",
+                            "session_id": str(session_id),
+                            "citations": [],
+                            "language": lang,
+                        },
+                    )
+                    break
+
+                if event_type == "fallback":
+                    content = event["content"]
+                    await _send_json(websocket, {"type": "answer_delta", "content": content})
+                    if with_audio:
+                        await _synthesize_sentence(websocket, speech, content, lang)
+                    async with async_session_factory() as persist_db:
+                        await persist_turn(persist_db, session_id, question, content, [])
+                    await _send_json(
+                        websocket,
+                        {
+                            "type": "done",
+                            "session_id": str(session_id),
+                            "citations": [],
+                            "language": lang,
+                        },
+                    )
+                    break
+
+                if event_type == "citations":
                     await _send_json(websocket, event)
+                    continue
 
-                pending_tts = ""
-                answering_sent = False
+                if event_type == "delta":
+                    if not answering_sent:
+                        await _send_json(websocket, {"type": "status", "stage": "answering"})
+                        answering_sent = True
+                    delta = event["content"]
+                    await _send_json(websocket, {"type": "answer_delta", "content": delta})
+                    if with_audio:
+                        pending_tts += delta
+                        complete, pending_tts = _split_sentences(pending_tts)
+                        for sentence in complete:
+                            await _synthesize_sentence(websocket, speech, sentence, lang)
+                    continue
 
-                async for event in stream_agent_answer(
-                    agent,
-                    db,
-                    question,
-                    effective_doc_ids or None,
-                    chunk_filters,
-                    history,
-                    settings,
-                    lang,
-                    on_agent_step=on_agent_step,
-                ):
-                    event_type = event["type"]
+                if event_type == "embeds":
+                    await _send_json(websocket, event)
+                    continue
 
-                    if event_type == "clarify":
-                        content = event["content"]
-                        await _send_json(websocket, {"type": "answer_delta", "content": content})
-                        if with_audio:
-                            await _synthesize_sentence(websocket, speech, content, lang)
-                        await persist_turn(db, session.id, question, content, [])
-                        await _send_json(
-                            websocket,
-                            {
-                                "type": "done",
-                                "session_id": str(session.id),
-                                "citations": [],
-                                "language": lang,
-                            },
-                        )
-                        break
-
-                    if event_type == "fallback":
-                        content = event["content"]
-                        await _send_json(websocket, {"type": "answer_delta", "content": content})
-                        if with_audio:
-                            await _synthesize_sentence(websocket, speech, content, lang)
-                        await persist_turn(db, session.id, question, content, [])
-                        await _send_json(
-                            websocket,
-                            {
-                                "type": "done",
-                                "session_id": str(session.id),
-                                "citations": [],
-                                "language": lang,
-                            },
-                        )
-                        break
-
-                    if event_type == "citations":
-                        await _send_json(websocket, event)
-                        continue
-
-                    if event_type == "delta":
-                        if not answering_sent:
-                            await _send_json(websocket, {"type": "status", "stage": "answering"})
-                            answering_sent = True
-                        delta = event["content"]
-                        await _send_json(websocket, {"type": "answer_delta", "content": delta})
-                        if with_audio:
-                            pending_tts += delta
-                            complete, pending_tts = _split_sentences(pending_tts)
-                            for sentence in complete:
-                                await _synthesize_sentence(websocket, speech, sentence, lang)
-                        continue
-
-                    if event_type == "embeds":
-                        await _send_json(websocket, event)
-                        continue
-
-                    if event_type == "complete":
-                        if with_audio and pending_tts.strip():
-                            await _synthesize_sentence(websocket, speech, pending_tts.strip(), lang)
+                if event_type == "complete":
+                    if with_audio and pending_tts.strip():
+                        await _synthesize_sentence(websocket, speech, pending_tts.strip(), lang)
+                    async with async_session_factory() as persist_db:
                         await persist_turn(
-                            db,
-                            session.id,
+                            persist_db,
+                            session_id,
                             question,
                             event["answer"],
                             event["citations"],
                             event["embeds"],
                         )
-                        await _send_json(
-                            websocket,
-                            {
-                                "type": "done",
-                                "session_id": str(session.id),
-                                "content": event["answer"],
-                                "citations": event["citations"],
-                                "embeds": event["embeds"],
-                                "language": lang,
-                            },
-                        )
-                        break
+                    await _send_json(
+                        websocket,
+                        {
+                            "type": "done",
+                            "session_id": str(session_id),
+                            "content": event["answer"],
+                            "citations": event["citations"],
+                            "embeds": event["embeds"],
+                            "language": lang,
+                        },
+                    )
+                    break
 
-                    await _send_json(websocket, event)
+                await _send_json(websocket, event)
     except WebSocketDisconnect:
         return
     except Exception as exc:

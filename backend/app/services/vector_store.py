@@ -20,6 +20,12 @@ def get_qdrant_client() -> QdrantClient:
     return QdrantClient(url=settings.qdrant_url)
 
 
+def reset_vector_store_cache() -> None:
+    global _collection_ready
+    _collection_ready = False
+    get_qdrant_client.cache_clear()
+
+
 def ensure_collection(settings: Settings | None = None) -> None:
     global _collection_ready
     if _collection_ready:

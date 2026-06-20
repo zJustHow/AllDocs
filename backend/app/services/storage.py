@@ -21,6 +21,12 @@ def get_minio_client() -> Minio:
     )
 
 
+def reset_storage_cache() -> None:
+    global _bucket_ready
+    _bucket_ready = False
+    get_minio_client.cache_clear()
+
+
 def ensure_bucket(settings: Settings | None = None) -> None:
     global _bucket_ready
     if _bucket_ready:

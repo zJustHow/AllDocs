@@ -1,10 +1,33 @@
 import asyncio
 import uuid
+from collections.abc import Generator
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from app.config import Settings
 from app.services.agent.service import AgentRAGService
 from app.services.agent.state import AgentStep
+
+
+class _MockSessionContext:
+    def __init__(self, db: AsyncMock | None = None) -> None:
+        self._db = db or AsyncMock()
+
+    async def __aenter__(self) -> AsyncMock:
+        return self._db
+
+    async def __aexit__(self, *_args) -> None:
+        return None
+
+
+@pytest.fixture(autouse=True)
+def mock_agent_tool_sessions() -> Generator[None, None, None]:
+    with patch(
+        "app.services.agent.service.async_session_factory",
+        lambda: _MockSessionContext(),
+    ):
+        yield
 
 
 def _make_service() -> AgentRAGService:
@@ -66,7 +89,7 @@ def test_agent_run_finish_after_search() -> None:
     service.llm.decide_agent_action_stream = fake_decide_stream
 
     result = asyncio.run(
-        service.run(AsyncMock(), "E001 是什么报警", doc_ids=None, filters=None)
+        service.run("E001 是什么报警", doc_ids=None, filters=None)
     )
 
     assert call_count >= 1
@@ -148,7 +171,7 @@ def test_agent_run_finish_prioritizes_key_evidence_ids() -> None:
     service.llm.decide_agent_action_stream = fake_decide_stream
 
     result = asyncio.run(
-        service.run(AsyncMock(), "E001 怎么处理", doc_ids=None, filters=None)
+        service.run("E001 怎么处理", doc_ids=None, filters=None)
     )
 
     assert [item["chunk_id"] for item in result.evidence] == [
@@ -174,7 +197,7 @@ def test_agent_run_ask_user_returns_clarification() -> None:
 
     service.llm.decide_agent_action_stream = fake_decide_stream
 
-    result = asyncio.run(service.run(AsyncMock(), "报警怎么办", doc_ids=None, filters=None))
+    result = asyncio.run(service.run("报警怎么办", doc_ids=None, filters=None))
 
     assert result.clarification == "请提供设备型号。"
     assert result.evidence == []
@@ -222,7 +245,7 @@ def test_agent_run_low_relevance_fallback() -> None:
 
     service.llm.decide_agent_action_stream = fake_decide_stream
 
-    result = asyncio.run(service.run(AsyncMock(), "随机问题", doc_ids=None, filters=None))
+    result = asyncio.run(service.run("随机问题", doc_ids=None, filters=None))
 
     assert result.fallback_message is not None
     assert "相关性" in result.fallback_message
@@ -287,7 +310,7 @@ def test_agent_run_executes_multiple_tool_calls_in_parallel() -> None:
     service.llm.decide_agent_action_stream = fake_decide_stream
 
     result = asyncio.run(
-        service.run(AsyncMock(), "E001 怎么处理", doc_ids=None, filters=None)
+        service.run("E001 怎么处理", doc_ids=None, filters=None)
     )
 
     assert len(result.steps) == 2

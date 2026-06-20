@@ -268,8 +268,11 @@ class RAGService:
     async def _embed_query(self, question: str) -> list[float]:
         return await self.embedding.embed_query_async(question)
 
-    async def _embed_queries(self, texts: list[str]) -> list[list[float]]:
+    async def embed_queries(self, texts: list[str]) -> list[list[float]]:
         return await self.embedding.embed_queries_async(texts)
+
+    async def _embed_queries(self, texts: list[str]) -> list[list[float]]:
+        return await self.embed_queries(texts)
 
     async def _rerank(self, question: str, chunks: list[dict]) -> list[dict]:
         return await self.reranker.rerank_async(question, chunks)

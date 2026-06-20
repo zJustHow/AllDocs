@@ -32,10 +32,6 @@ def _table_near_page_top(
     return float(bbox[1]) <= page_height * ratio
 
 
-def _sections_compatible(left: str | None, right: str | None) -> bool:
-    return (left or None) == (right or None)
-
-
 def _figure_numbers_compatible(left: str | None, right: str | None) -> bool:
     if not left or not right:
         return True
@@ -51,7 +47,7 @@ def can_merge_cross_page_tables(
 ) -> bool:
     if right.page != left.page + 1:
         return False
-    if not _sections_compatible(left.section, right.section):
+    if (left.section or None) != (right.section or None):
         return False
     if not _figure_numbers_compatible(left.figure_number, right.figure_number):
         return False

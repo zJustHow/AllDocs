@@ -146,6 +146,7 @@ const zh = {
       rag: "RAG",
       retrieval: "检索",
       ocr: "OCR",
+      pdf_table_header: "PDF 表头检测",
     },
     fields: {
       llm_api_base_url: "API Base URL",
@@ -174,6 +175,13 @@ const zh = {
       ocr_enabled: "启用 OCR",
       ocr_lang: "OCR 语言",
       ocr_force: "强制 OCR",
+      pdf_table_header_detect_enabled: "启用表头引导检测",
+      pdf_table_header_y_tolerance: "表头行 Y 容差",
+      pdf_table_header_margin: "列边界外扩边距",
+      pdf_table_header_top_padding: "裁剪区顶部留白",
+      pdf_table_header_clip_bottom_ratio: "无章节时裁剪底部比例",
+      pdf_table_header_snap_y_tolerance: "find_tables Y 对齐容差",
+      pdf_table_header_join_y_tolerance: "find_tables 行合并容差",
     },
   },
   errors: {

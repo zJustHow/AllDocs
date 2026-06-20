@@ -13,6 +13,7 @@ from app.db.models import AppSetting
 from app.services.settings_registry import (
     EDITABLE_KEYS,
     FIELD_BY_KEY,
+    GROUP_ORDER,
     SECRET_KEYS,
     coerce_setting_value,
     serialize_setting_value,
@@ -37,8 +38,14 @@ def get_overrides() -> dict[str, str]:
 
 def invalidate_service_caches() -> None:
     from app.services.deps import get_agent_service
+    from app.services.fulltext_store import reset_fulltext_store_cache
+    from app.services.storage import reset_storage_cache
+    from app.services.vector_store import reset_vector_store_cache
 
     get_agent_service.cache_clear()
+    reset_storage_cache()
+    reset_vector_store_cache()
+    reset_fulltext_store_cache()
 
 
 def set_overrides(overrides: dict[str, str]) -> None:
@@ -89,7 +96,7 @@ def build_settings_response() -> dict[str, Any]:
     overrides = get_overrides()
     effective = apply_overrides(env, overrides)
 
-    groups: dict[str, list[dict[str, Any]]] = {group: [] for group in ("llm", "ingest_caption", "rag", "retrieval", "ocr")}
+    groups: dict[str, list[dict[str, Any]]] = {group: [] for group in GROUP_ORDER}
     for field in FIELD_BY_KEY.values():
         default = getattr(env, field.key)
         overridden = field.key in overrides
@@ -108,8 +115,6 @@ def build_settings_response() -> dict[str, Any]:
         else:
             entry["value"] = getattr(effective, field.key)
         groups[field.group].append(entry)
-
-    from app.services.settings_registry import GROUP_ORDER
 
     return {
         "groups": [{"id": group_id, "fields": groups[group_id]} for group_id in GROUP_ORDER],

@@ -36,7 +36,6 @@ def test_parse_batch_searches_skips_empty_queries() -> None:
                 {"query": "伺服报警"},
             ]
         },
-        "fallback",
         max_items=5,
     )
 
@@ -276,7 +275,7 @@ def tool_registry() -> AgentToolRegistry:
             }
         ]
     )
-    rag._embed_queries = AsyncMock(return_value=[[0.1, 0.2]])
+    rag.embed_queries = AsyncMock(return_value=[[0.1, 0.2]])
     rag.read_neighbor_chunks = AsyncMock(return_value=([], None))
     return AgentToolRegistry(rag)
 

@@ -527,7 +527,7 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
         <div className="doc-viewer-meta">
           <span className="doc-viewer-name">{target.documentName}</span>
         </div>
-        <button className="doc-viewer-close" onClick={onClose} aria-label={t("viewer.close")}>
+        <button type="button" className="icon-btn" onClick={onClose} aria-label={t("viewer.close")}>
           <CloseIcon />
         </button>
       </div>

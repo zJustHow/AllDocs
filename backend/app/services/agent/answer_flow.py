@@ -39,7 +39,6 @@ async def persist_turn(
 
 async def _stream_synthesis(
     agent: AgentRAGService,
-    db: AsyncSession,
     message: str,
     result: AgentResult,
     history: list[dict[str, str]],
@@ -89,7 +88,6 @@ async def _stream_synthesis(
 
 async def stream_agent_answer(
     agent: AgentRAGService,
-    db: AsyncSession,
     message: str,
     doc_ids: list[UUID] | None,
     chunk_filters: ChunkFilter | None,
@@ -112,7 +110,6 @@ async def stream_agent_answer(
     async def run_agent() -> AgentResult:
         try:
             return await agent.run(
-                db,
                 message,
                 doc_ids,
                 chunk_filters,
@@ -130,5 +127,5 @@ async def stream_agent_answer(
             yield event
 
     result = await agent_task
-    async for event in _stream_synthesis(agent, db, message, result, history, settings, lang):
+    async for event in _stream_synthesis(agent, message, result, history, settings, lang):
         yield event

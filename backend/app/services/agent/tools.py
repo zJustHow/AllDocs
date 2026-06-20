@@ -1,3 +1,4 @@
+import asyncio
 import json
 from uuid import UUID
 
@@ -6,15 +7,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Document
+from app.db.session import async_session_factory
 from app.services.asset_lookup import lookup_asset
 from app.services.chunk_filter import ChunkFilter, chunk_asset_types
 from app.services.rag import RAGService
 from app.services.toc_lookup import format_documents_outline, lookup_toc, outline_to_chunks
 
 RETRIEVAL_TOOLS = frozenset({"search_chunks", "search_chunks_batch", "search_keyword"})
-SEMANTIC_SEARCH_ACTIONS = frozenset(
-    {"search_chunks", "search_chunks_batch", "search_keyword"}
-)
 SEARCH_SNIPPET_MAX = 240
 BATCH_SNIPPET_MAX = 160
 NEIGHBOR_READ_MAX = 3
@@ -107,7 +106,8 @@ def _format_score(score: object) -> str | None:
         value = float(score)
     except (TypeError, ValueError):
         return None
-    if value >= 0.999:
+    # Semantic similarity is 0–1; near-perfect values are not useful in headers.
+    if 0.0 <= value <= 1.0 and value >= 0.999:
         return None
     return f"score={value:.3f}"
 
@@ -286,7 +286,7 @@ def merge_chunks_into_evidence(
     *,
     source_action: str | None = None,
 ) -> None:
-    mark_semantic = source_action in SEMANTIC_SEARCH_ACTIONS
+    mark_semantic = source_action in RETRIEVAL_TOOLS
     for chunk in chunks:
         key = _evidence_key(chunk)
         if key in seen_keys:
@@ -308,7 +308,7 @@ def parse_tool_filters(raw: dict | None, doc_ids: list[UUID] | None) -> ChunkFil
     return ChunkFilter.from_request(doc_ids, filters if filters.has_constraints() else None)
 
 
-def parse_batch_searches(action_input: dict, question: str, *, max_items: int) -> list[dict]:
+def parse_batch_searches(action_input: dict, *, max_items: int) -> list[dict]:
     raw = action_input.get("searches")
     if not isinstance(raw, list):
         return []
@@ -346,7 +346,7 @@ def _parse_optional_positive_int(raw: object) -> int | None:
 
 def count_retrieval_units(action: str, action_input: dict, *, max_batch: int) -> int:
     if action == "search_chunks_batch":
-        return len(parse_batch_searches(action_input, "", max_items=max_batch))
+        return len(parse_batch_searches(action_input, max_items=max_batch))
     if action in RETRIEVAL_TOOLS:
         return 1
     return 0
@@ -506,28 +506,42 @@ class AgentToolRegistry:
 
         if action == "search_chunks_batch":
             max_batch = self.rag.settings.rag_batch_search_max
-            searches = parse_batch_searches(action_input, question, max_items=max_batch)
+            searches = parse_batch_searches(action_input, max_items=max_batch)
             if retrieval_budget is not None:
                 searches = searches[:retrieval_budget]
             if not searches:
                 return "search_chunks_batch 需要非空 searches 列表。", [], 0
 
-            queries = [str(item.get("query") or question).strip() for item in searches]
-            query_vectors = await self.rag._embed_queries(queries)
+            queries = [str(item.get("query") or "").strip() for item in searches]
+            query_vectors = await self.rag.embed_queries(queries)
 
-            results: list[tuple[str, list[dict]]] = []
-            for search_item, query_vector in zip(searches, query_vectors, strict=True):
-                query = str(search_item.get("query") or question).strip()
-                chunks = await self._search_chunks(
-                    db,
-                    query=query,
-                    question=question,
-                    doc_ids=doc_ids,
-                    explicit_filters=explicit_filters,
-                    search_input=search_item,
-                    query_vector=query_vector,
+            async def run_search(
+                search_item: dict,
+                query: str,
+                query_vector: list[float],
+            ) -> tuple[str, list[dict]]:
+                async with async_session_factory() as search_db:
+                    chunks = await self._search_chunks(
+                        search_db,
+                        query=query,
+                        question=question,
+                        doc_ids=doc_ids,
+                        explicit_filters=explicit_filters,
+                        search_input=search_item,
+                        query_vector=query_vector,
+                    )
+                return query, chunks
+
+            results = list(
+                await asyncio.gather(
+                    *[
+                        run_search(search_item, query, query_vector)
+                        for search_item, query, query_vector in zip(
+                            searches, queries, query_vectors, strict=True
+                        )
+                    ]
                 )
-                results.append((query, chunks))
+            )
             merged = _merge_batch_chunks(results)
             return _format_batch_observation(results), merged, len(searches)
 

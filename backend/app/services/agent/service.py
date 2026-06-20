@@ -7,6 +7,7 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings, get_settings
+from app.db.session import async_session_factory
 from app.services.agent.state import (
     AgentResult,
     AgentState,
@@ -16,7 +17,6 @@ from app.services.agent.state import (
 )
 from app.services.agent.tools import (
     RETRIEVAL_TOOLS,
-    SEMANTIC_SEARCH_ACTIONS,
     AgentToolRegistry,
     count_retrieval_units,
     merge_chunks_into_evidence,
@@ -204,7 +204,6 @@ class AgentRAGService:
 
     async def _execute_tool_batch(
         self,
-        db: AsyncSession,
         state: AgentState,
         actions: list[dict],
         *,
@@ -238,6 +237,7 @@ class AgentRAGService:
         async def run_item(
             item: dict,
             *,
+            tool_db: AsyncSession,
             retrieval_budget: int | None,
         ) -> tuple[AgentToolCall, list[dict], int]:
             action = item["action"]
@@ -257,7 +257,7 @@ class AgentRAGService:
                 )
 
             observation, chunks, retrieval_units = await self._execute_one_tool(
-                db,
+                tool_db,
                 action=action,
                 action_input=action_input,
                 question=question,
@@ -276,11 +276,23 @@ class AgentRAGService:
                 retrieval_units,
             )
 
+        async def run_item_with_session(
+            item: dict,
+            *,
+            retrieval_budget: int | None,
+        ) -> tuple[AgentToolCall, list[dict], int]:
+            async with async_session_factory() as tool_db:
+                return await run_item(
+                    item,
+                    tool_db=tool_db,
+                    retrieval_budget=retrieval_budget,
+                )
+
         results: list[tuple[AgentToolCall, list[dict], int]] = []
         if use_parallel:
             gathered = await asyncio.gather(
                 *[
-                    run_item(item, retrieval_budget=None)
+                    run_item_with_session(item, retrieval_budget=None)
                     for item in valid_actions
                 ]
             )
@@ -315,7 +327,7 @@ class AgentRAGService:
                     )
                     if planned_units > budget_left:
                         budget = budget_left
-                tool_call, chunks, retrieval_units = await run_item(
+                tool_call, chunks, retrieval_units = await run_item_with_session(
                     item,
                     retrieval_budget=budget,
                 )
@@ -330,7 +342,7 @@ class AgentRAGService:
             )
             state.tool_cache.setdefault(cache_key, tool_call.observation)
             state.retrieval_calls += retrieval_units
-            if tool_call.action in SEMANTIC_SEARCH_ACTIONS and retrieval_units > 0:
+            if tool_call.action in RETRIEVAL_TOOLS and retrieval_units > 0:
                 state.semantic_search_units += retrieval_units
             merge_chunks_into_evidence(
                 state.evidence,
@@ -343,7 +355,6 @@ class AgentRAGService:
 
     async def run(
         self,
-        db: AsyncSession,
         question: str,
         doc_ids: list[UUID] | None = None,
         filters: ChunkFilter | None = None,
@@ -481,7 +492,6 @@ class AgentRAGService:
                 break
 
             tool_calls = await self._execute_tool_batch(
-                db,
                 state,
                 actions,
                 question=question,

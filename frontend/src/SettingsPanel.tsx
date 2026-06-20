@@ -28,17 +28,15 @@ function normalizeSearch(query: string): string {
 
 function fieldMatchesSearch(
   field: SettingField,
-  groupId: string,
-  query: string,
+  normalizedQuery: string,
   label: string,
   groupLabel: string,
 ): boolean {
-  const normalized = normalizeSearch(query);
-  if (!normalized) return true;
+  if (!normalizedQuery) return true;
   return (
-    label.toLowerCase().includes(normalized) ||
-    groupLabel.toLowerCase().includes(normalized) ||
-    field.key.toLowerCase().includes(normalized)
+    label.toLowerCase().includes(normalizedQuery) ||
+    groupLabel.toLowerCase().includes(normalizedQuery) ||
+    field.key.toLowerCase().includes(normalizedQuery)
   );
 }
 
@@ -58,7 +56,7 @@ function SettingsFieldRow({
   onReset,
 }: SettingsFieldRowProps) {
   const { t } = useI18n();
-  const resetToDefault = draft === null || (field.secret && draft === null);
+  const resetToDefault = draft === null;
 
   return (
     <label className="settings-field">
@@ -198,7 +196,6 @@ export default function SettingsPanel({ open, onClose }: SettingsPanelProps) {
         const visibleFields = group.fields.filter((field) =>
           fieldMatchesSearch(
             field,
-            group.id,
             query,
             t(`settings.fields.${field.key}`),
             groupLabel,
@@ -276,21 +273,17 @@ export default function SettingsPanel({ open, onClose }: SettingsPanelProps) {
     }
   };
 
-  if (!open) return null;
-
   return (
-    <div className="settings-panel-root" role="presentation">
-      <button
-        type="button"
-        className="settings-panel-backdrop"
-        aria-label={t("dialog.close")}
-        onClick={onClose}
-      />
+    <aside
+      className={`settings-panel ${open ? "open" : "collapsed"}`}
+      aria-hidden={!open}
+    >
       <div
-        className="settings-panel glass-strong"
+        className="settings-panel-inner"
         role="dialog"
-        aria-modal="true"
+        aria-modal={open}
         aria-labelledby="settings-panel-title"
+        aria-hidden={!open}
       >
         <header className="settings-panel-header">
           <div>
@@ -380,6 +373,6 @@ export default function SettingsPanel({ open, onClose }: SettingsPanelProps) {
           </button>
         </footer>
       </div>
-    </div>
+    </aside>
   );
 }

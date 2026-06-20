@@ -51,4 +51,35 @@ describe("ProseBlock", () => {
       }),
     );
   });
+
+  it("returns null for empty content", () => {
+    const { container } = renderProse("   ");
+    expect(container.querySelector(".markdown-preview")).not.toBeInTheDocument();
+  });
+
+  it("sets citation tooltips without a page hint when page is missing", async () => {
+    const user = userEvent.setup();
+    const citationWithoutPage: Citation = {
+      ...citation,
+      page: null,
+    };
+    const content = `See ${citationPlaceholder(0)} for details.`;
+
+    render(
+      <I18nProvider>
+        <ProseBlock
+          content={content}
+          citations={[citationWithoutPage]}
+          onOpenDocument={vi.fn()}
+        />
+      </I18nProvider>,
+    );
+
+    const citationButton = screen.getByRole("button", { name: "[1]" });
+    expect(citationButton.title).toContain("Manual");
+    expect(citationButton.title).not.toMatch(/Page|页/);
+
+    await user.click(citationButton);
+    expect(citationButton).toBeInTheDocument();
+  });
 });

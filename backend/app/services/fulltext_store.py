@@ -57,6 +57,12 @@ def get_elasticsearch_client() -> Elasticsearch:
     return Elasticsearch(settings.elasticsearch_url)
 
 
+def reset_fulltext_store_cache() -> None:
+    global _index_ready
+    _index_ready = False
+    get_elasticsearch_client.cache_clear()
+
+
 def _ensure_caption_mapping(client: Elasticsearch, index: str) -> None:
     mapping = client.indices.get_mapping(index=index)
     props = mapping.get(index, {}).get("mappings", {}).get("properties", {})

@@ -236,6 +236,42 @@ describe("streamChat", () => {
     vi.unstubAllGlobals();
   });
 
+  it("skips malformed SSE JSON lines", async () => {
+    const onDelta = vi.fn();
+    const onDone = vi.fn();
+    const body = "data: not-json\n" +
+      `data: ${JSON.stringify({ type: "delta", content: "Hi" })}\n` +
+      `data: ${JSON.stringify({
+        type: "done",
+        session_id: "s1",
+        citations: [],
+        embeds: [],
+        language: "en",
+      })}\n`;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        body: new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode(body));
+            controller.close();
+          },
+        }),
+      }),
+    );
+
+    await streamChat("hello", null, [], {
+      onDelta,
+      onDone,
+      onError: vi.fn(),
+    });
+
+    expect(onDelta).toHaveBeenCalledWith("Hi");
+    expect(onDone).toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
   it("throws when chat request fails", async () => {
     vi.stubGlobal(
       "fetch",
@@ -338,6 +374,33 @@ describe("reindexDocument", () => {
     );
 
     await expect(reindexDocument("doc-1")).rejects.toThrow("reindex failed");
+    vi.unstubAllGlobals();
+  });
+
+  it("returns parsed JSON on success", async () => {
+    const doc = { id: "doc-1", name: "Manual.pdf", status: "ready" };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => doc,
+      }),
+    );
+
+    await expect(reindexDocument("doc-1")).resolves.toEqual(doc);
+    vi.unstubAllGlobals();
+  });
+
+  it("throws the fallback reindex error when response body is empty", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        text: async () => "",
+      }),
+    );
+
+    await expect(reindexDocument("doc-1")).rejects.toThrow(/Reindex failed|重新索引失败/i);
     vi.unstubAllGlobals();
   });
 });

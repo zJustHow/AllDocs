@@ -17,21 +17,22 @@ def _mock_chat_db() -> AsyncMock:
     return db
 
 
+class _MockSessionContext:
+    def __init__(self, db: AsyncMock) -> None:
+        self._db = db
+
+    async def __aenter__(self) -> AsyncMock:
+        return self._db
+
+    async def __aexit__(self, *_args) -> None:
+        return None
+
+
 @pytest.fixture
 def chat_client(api_client: TestClient) -> Generator[tuple[TestClient, AsyncMock], None, None]:
-    from app.db.session import get_db
-    from app.main import app
-
     db = _mock_chat_db()
-
-    async def override_get_db():
-        yield db
-
-    app.dependency_overrides[get_db] = override_get_db
-    try:
+    with patch("app.api.chat.async_session_factory", lambda: _MockSessionContext(db)):
         yield api_client, db
-    finally:
-        app.dependency_overrides.pop(get_db, None)
 
 
 async def _clarify_stream(*_args, **_kwargs):

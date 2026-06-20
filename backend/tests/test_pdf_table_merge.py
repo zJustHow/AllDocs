@@ -1,3 +1,5 @@
+from unittest.mock import patch
+
 from app.config import Settings
 from app.services.pdf_table_merge import (
     can_merge_cross_page_tables,
@@ -119,3 +121,155 @@ class TestCrossPageMerge:
             page_heights=PAGE_HEIGHTS,
             settings=settings,
         )
+
+    def test_merge_disabled_returns_original_list(self) -> None:
+        settings = Settings(pdf_merge_cross_page_tables=False)
+        left = _table(page=1, summary=PAGE1_SUMMARY, y0=620.0, y1=760.0)
+        right = _table(page=2, summary=PAGE2_SUMMARY, y0=40.0, y1=180.0)
+
+        merged = merge_cross_page_tables(
+            [left, right],
+            page_heights=PAGE_HEIGHTS,
+            settings=settings,
+        )
+
+        assert merged == [left, right]
+
+    def test_stitch_failure_falls_back_to_first_png(self) -> None:
+        settings = Settings()
+        left = _table(page=1, summary=PAGE1_SUMMARY, y0=620.0, y1=760.0)
+        right = _table(page=2, summary=PAGE2_SUMMARY, y0=40.0, y1=180.0)
+
+        with patch(
+            "app.services.pdf_table_merge.stitch_png_bytes_vertically",
+            side_effect=RuntimeError("stitch failed"),
+        ):
+            merged = merge_cross_page_tables(
+                [left, right],
+                page_heights=PAGE_HEIGHTS,
+                settings=settings,
+            )
+
+        assert len(merged) == 1
+        assert merged[0].png_bytes == left.png_bytes
+        assert merged[0].width == left.width
+        assert merged[0].height == left.height
+
+    def test_skips_merge_for_different_sections(self) -> None:
+        settings = Settings()
+        left = _table(page=1, summary=PAGE1_SUMMARY, y0=620.0, y1=760.0, section="S1")
+        right = _table(
+            page=2,
+            summary=PAGE2_SUMMARY,
+            y0=40.0,
+            y1=180.0,
+            section="S2",
+        )
+
+        assert not can_merge_cross_page_tables(
+            left,
+            right,
+            page_heights=PAGE_HEIGHTS,
+            settings=settings,
+        )
+
+    def test_skips_merge_for_mismatched_figure_numbers(self) -> None:
+        settings = Settings()
+        left = _table(
+            page=1,
+            summary=PAGE1_SUMMARY,
+            y0=620.0,
+            y1=760.0,
+            figure_number="3-1",
+        )
+        right = _table(
+            page=2,
+            summary=PAGE2_SUMMARY,
+            y0=40.0,
+            y1=180.0,
+            figure_number="3-2",
+        )
+
+        assert not can_merge_cross_page_tables(
+            left,
+            right,
+            page_heights=PAGE_HEIGHTS,
+            settings=settings,
+        )
+
+    def test_skips_merge_when_page_height_missing(self) -> None:
+        settings = Settings()
+        left = _table(page=1, summary=PAGE1_SUMMARY, y0=620.0, y1=760.0)
+        right = _table(page=2, summary=PAGE2_SUMMARY, y0=40.0, y1=180.0)
+
+        assert not can_merge_cross_page_tables(
+            left,
+            right,
+            page_heights={1: PAGE_HEIGHT},
+            settings=settings,
+        )
+
+    def test_skips_merge_when_left_not_near_page_bottom(self) -> None:
+        settings = Settings()
+        left = _table(page=1, summary=PAGE1_SUMMARY, y0=100.0, y1=240.0)
+        right = _table(page=2, summary=PAGE2_SUMMARY, y0=40.0, y1=180.0)
+
+        assert not can_merge_cross_page_tables(
+            left,
+            right,
+            page_heights=PAGE_HEIGHTS,
+            settings=settings,
+        )
+
+    def test_skips_merge_when_right_not_near_page_top(self) -> None:
+        settings = Settings()
+        left = _table(page=1, summary=PAGE1_SUMMARY, y0=620.0, y1=760.0)
+        right = _table(page=2, summary=PAGE2_SUMMARY, y0=300.0, y1=440.0)
+
+        assert not can_merge_cross_page_tables(
+            left,
+            right,
+            page_heights=PAGE_HEIGHTS,
+            settings=settings,
+        )
+
+    def test_stitch_disabled_uses_first_page_png(self) -> None:
+        settings = Settings(pdf_stitch_cross_page_table_png=False)
+        left = _table(page=1, summary=PAGE1_SUMMARY, y0=620.0, y1=760.0)
+        right = _table(page=2, summary=PAGE2_SUMMARY, y0=40.0, y1=180.0)
+
+        merged = merge_cross_page_tables(
+            [left, right],
+            page_heights=PAGE_HEIGHTS,
+            settings=settings,
+        )
+
+        assert len(merged) == 1
+        assert merged[0].png_bytes == left.png_bytes
+
+    def test_single_table_preserves_existing_layout_regions(self) -> None:
+        settings = Settings()
+        regions = ({"page": 1, "bbox": [10.0, 100.0, 500.0, 300.0]},)
+        table = _table(page=1, summary=PAGE1_SUMMARY, y0=100.0, y1=300.0)
+        table = EmbeddedTable(
+            page=table.page,
+            section=table.section,
+            bbox=table.bbox,
+            sort_key=table.sort_key,
+            summary=table.summary,
+            png_bytes=table.png_bytes,
+            width=table.width,
+            height=table.height,
+            layout_regions=regions,
+        )
+
+        merged = merge_cross_page_tables(
+            [table],
+            page_heights=PAGE_HEIGHTS,
+            settings=settings,
+        )
+
+        assert merged[0].layout_regions == regions
+
+    def test_empty_input_returns_empty_list(self) -> None:
+        assert merge_cross_page_tables([], page_heights=PAGE_HEIGHTS, settings=Settings()) == []

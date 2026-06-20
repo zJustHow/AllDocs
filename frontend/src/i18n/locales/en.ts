@@ -146,6 +146,7 @@ const en = {
       rag: "RAG",
       retrieval: "Retrieval",
       ocr: "OCR",
+      pdf_table_header: "PDF table headers",
     },
     fields: {
       llm_api_base_url: "API Base URL",
@@ -174,6 +175,13 @@ const en = {
       ocr_enabled: "Enable OCR",
       ocr_lang: "OCR language",
       ocr_force: "Force OCR",
+      pdf_table_header_detect_enabled: "Enable header-guided detection",
+      pdf_table_header_y_tolerance: "Header row Y tolerance",
+      pdf_table_header_margin: "Column boundary margin",
+      pdf_table_header_top_padding: "Clip top padding",
+      pdf_table_header_clip_bottom_ratio: "Clip bottom ratio (no section)",
+      pdf_table_header_snap_y_tolerance: "find_tables snap Y tolerance",
+      pdf_table_header_join_y_tolerance: "find_tables join Y tolerance",
     },
   },
   errors: {
