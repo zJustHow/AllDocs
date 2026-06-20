@@ -17,11 +17,10 @@ from app.services.chunk_alignment import build_chunk_sub_index
 from app.services.chunk_index import asset_caption_kwargs, chunk_embedding_text, merge_captions
 from app.services.embedding_provider import get_embedding_service
 from app.services.fulltext_store import FulltextStore
-from app.services.ingest_caption import apply_ingest_captions
 from app.services.ingestion import IngestionService, toc_entry_to_dict
 from app.services.infra_init import ensure_external_stores
 from app.services.storage import StorageService
-from app.services.vector_store import VectorStore
+from app.services.runtime_settings import refresh_from_session
 from app.workers.celery_app import celery_app
 
 settings = get_settings()
@@ -55,6 +54,7 @@ class _PendingAssetUpload:
     text_summary: str = ""
     figure_caption: str | None = None
     figure_number: str | None = None
+    vlm_caption: str | None = None
     content_hash: str = ""
     layout_regions: list[dict] | None = None
 
@@ -78,6 +78,7 @@ def _collect_pending_asset_uploads(
         text_summary: str = "",
         figure_caption: str | None = None,
         figure_number: str | None = None,
+        vlm_caption: str | None = None,
         layout_regions: list[dict] | None = None,
     ) -> None:
         asset_id = uuid.uuid4()
@@ -97,6 +98,7 @@ def _collect_pending_asset_uploads(
                 text_summary=text_summary,
                 figure_caption=figure_caption,
                 figure_number=figure_number,
+                vlm_caption=vlm_caption,
                 content_hash=content_hash,
                 layout_regions=layout_regions,
             )
@@ -115,6 +117,7 @@ def _collect_pending_asset_uploads(
                 text_summary=attached.text_summary,
                 figure_caption=attached.figure_caption,
                 figure_number=attached.figure_number,
+                vlm_caption=attached.vlm_caption,
                 layout_regions=attached.layout_regions,
             )
     return pending
@@ -176,6 +179,7 @@ def _abort_if_deleting(db: OrmSession, document: Document) -> bool:
 def process_document(document_id: str) -> None:
     doc_uuid = uuid.UUID(document_id)
     with SyncSession() as db:
+        refresh_from_session(db)
         document = db.get(Document, doc_uuid)
         if not document or document.status == DocumentStatus.deleting:
             return
@@ -255,25 +259,12 @@ def process_document(document_id: str) -> None:
                         caption=initial_caption,
                         figure_caption=initial_figure_caption,
                         figure_number=item.figure_number,
+                        vlm_caption=item.vlm_caption,
                         content_hash=item.content_hash,
                         layout_regions=item.layout_regions,
                     )
                 )
             db.flush()
-
-            _set_progress(db, document, 62, "生成图像描述")
-            if _abort_if_deleting(db, document):
-                return
-            apply_ingest_captions(
-                db,
-                document=document,
-                settings=settings,
-                asset_image_bytes={
-                    str(item.asset_id): item.png_bytes for item in pending_assets
-                }
-                if pending_assets
-                else None,
-            )
 
             asset_rows = (
                 db.query(ChunkAsset).filter(ChunkAsset.document_id == doc_uuid).all()

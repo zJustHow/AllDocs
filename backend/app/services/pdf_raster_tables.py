@@ -13,7 +13,12 @@ from app.services.table_ocr import TableOCRService, is_table_structure_candidate
 logger = logging.getLogger(__name__)
 
 
-def figure_to_raster_table(figure: EmbeddedFigure, summary: str) -> EmbeddedTable:
+def figure_to_raster_table(
+    figure: EmbeddedFigure,
+    summary: str,
+    *,
+    vlm_caption: str | None = None,
+) -> EmbeddedTable:
     return EmbeddedTable(
         page=figure.page,
         section=figure.section,
@@ -25,6 +30,7 @@ def figure_to_raster_table(figure: EmbeddedFigure, summary: str) -> EmbeddedTabl
         height=figure.height,
         figure_number=figure.figure_number,
         caption_text=figure.caption_text,
+        vlm_caption=vlm_caption or figure.vlm_caption,
     )
 
 

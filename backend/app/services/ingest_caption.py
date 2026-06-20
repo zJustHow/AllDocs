@@ -1,4 +1,4 @@
-"""Apply VLM captions to visual assets during ingestion."""
+"""Legacy post-parse VLM captions. Primary routing runs during PDF parse via pdf_vlm_route."""
 
 from __future__ import annotations
 
@@ -27,29 +27,11 @@ class _CaptionJob:
 
 def _run_caption_job(caption_service: CaptionService, job: _CaptionJob) -> str | None:
     try:
-        return caption_service.caption_image(job.image_bytes, media_type=job.media_type)
+        result = caption_service.classify_and_describe(job.image_bytes, media_type=job.media_type)
+        return result.caption if result else None
     except Exception:
         logger.warning("Asset caption job failed", exc_info=True)
         return None
-
-
-def _build_caption_jobs(
-    asset_rows: list[ChunkAsset],
-    *,
-    max_count: int,
-) -> list[ChunkAsset]:
-    planned: list[ChunkAsset] = []
-    seen_asset_ids: set[uuid.UUID] = set()
-
-    for asset in asset_rows:
-        if len(planned) >= max_count:
-            break
-        if asset.id in seen_asset_ids:
-            continue
-        seen_asset_ids.add(asset.id)
-        planned.append(asset)
-
-    return planned
 
 
 def _resolve_asset_image(
@@ -74,6 +56,7 @@ def apply_ingest_captions(
     settings: Settings,
     asset_image_bytes: dict[str, bytes] | None = None,
 ) -> int:
+    """Backfill vlm_caption for assets missed during parse (e.g. PyMuPDF vector tables)."""
     if not settings.ingest_caption_enabled:
         return 0
 
@@ -83,10 +66,7 @@ def apply_ingest_captions(
         .order_by(ChunkAsset.page)
         .all()
     )
-    planned = _build_caption_jobs(
-        asset_rows,
-        max_count=settings.ingest_caption_max_per_doc,
-    )
+    planned = [asset for asset in asset_rows if not asset.vlm_caption]
     if not planned:
         return 0
 
@@ -94,6 +74,8 @@ def apply_ingest_captions(
     storage = StorageService(settings)
     generated = 0
     workers = min(_CAPTION_WORKERS, len(planned))
+    per_page_counts: dict[int, int] = {}
+    max_per_page = max(1, settings.ingest_caption_max_per_page)
 
     def _caption_asset(asset: ChunkAsset) -> tuple[ChunkAsset, str | None]:
         job = _resolve_asset_image(
@@ -103,8 +85,19 @@ def apply_ingest_captions(
         )
         return asset, _run_caption_job(caption_service, job)
 
+    eligible: list[ChunkAsset] = []
+    for asset in planned:
+        count = per_page_counts.get(asset.page, 0)
+        if count >= max_per_page:
+            continue
+        per_page_counts[asset.page] = count + 1
+        eligible.append(asset)
+
+    if not eligible:
+        return 0
+
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        futures = [pool.submit(_caption_asset, asset) for asset in planned]
+        futures = [pool.submit(_caption_asset, asset) for asset in eligible]
         for future in as_completed(futures):
             target, caption = future.result()
             if not caption:

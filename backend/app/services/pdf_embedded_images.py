@@ -25,6 +25,7 @@ class EmbeddedFigure:
     height: int
     figure_number: str | None = None
     caption_text: str | None = None
+    vlm_caption: str | None = None
 
 
 @dataclass(frozen=True)
@@ -38,6 +39,7 @@ class ParsedAttachedAsset:
     text_summary: str = ""
     figure_caption: str | None = None
     figure_number: str | None = None
+    vlm_caption: str | None = None
     layout_regions: list[dict] | None = None
 
 
@@ -158,6 +160,7 @@ def _figure_to_attached_asset(figure: EmbeddedFigure) -> ParsedAttachedAsset:
         text_summary=figure.text.strip(),
         figure_caption=figure.caption_text,
         figure_number=figure.figure_number,
+        vlm_caption=figure.vlm_caption,
         layout_regions=[layout_region(figure.page, figure.bbox)],
     )
 

@@ -46,9 +46,9 @@ jobs:
         working-directory: frontend
         run: npm ci
 
-      - name: Run tests
+      - name: Run tests with coverage
         working-directory: frontend
-        run: npm test
+        run: npm run test:coverage
 
   backend-test:
     runs-on: ubuntu-latest
@@ -68,11 +68,11 @@ jobs:
       - name: Install test dependencies
         run: pip install -r backend/requirements-test.txt
 
-      - name: Run tests
+      - name: Run tests with coverage
         working-directory: backend
         env:
           PYTHONPATH: .
-        run: python -m pytest tests/ -q
+        run: python -m pytest -q
 
   deploy:
     needs: [frontend-test, backend-test]

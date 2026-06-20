@@ -25,8 +25,10 @@ import {
   AllDocsIcon,
   DocIcon,
   MenuIcon,
+  SettingsIcon,
 } from "./icons";
 import MessageList from "./MessageList";
+import SettingsPanel from "./SettingsPanel";
 import Sidebar from "./Sidebar";
 import type { ChatMessage, DocumentItem } from "./types";
 import { useConfirmDialog } from "./useConfirmDialog";
@@ -56,6 +58,7 @@ export default function App() {
   const [viewerTarget, setViewerTarget] = useState<ViewerTarget | null>(null);
   const [viewerOpen, setViewerOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   const chatAreaRef = useRef<HTMLDivElement>(null);
   const messageRefs = useRef<Map<string, HTMLElement>>(new Map());
@@ -624,6 +627,14 @@ export default function App() {
               </button>
             ))}
           </div>
+          <button
+            type="button"
+            className="icon-btn settings-btn"
+            onClick={() => setSettingsOpen(true)}
+            aria-label={t("settings.open")}
+          >
+            <SettingsIcon />
+          </button>
         </header>
 
         <div className="chat-area" ref={chatAreaRef}>
@@ -694,6 +705,7 @@ export default function App() {
       )}
 
       {confirmDialog}
+      <SettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </div>
   );
 }

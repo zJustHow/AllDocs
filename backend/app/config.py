@@ -66,7 +66,7 @@ class Settings(BaseSettings):
     ocr_force: bool = False
     ocr_min_chars_per_page: int = 30
     ocr_render_scale: float = 2.0
-    ocr_table_promote_enabled: bool = True
+    ocr_table_promote_enabled: bool = False
     ocr_table_min_filled_cells: int = 2
     ocr_table_min_score: float = 0.0
     ocr_table_promote_max_per_doc: int = 30
@@ -100,7 +100,7 @@ class Settings(BaseSettings):
     ingest_caption_api_base_url: str = ""
     ingest_caption_api_key: str = ""
     ingest_caption_model: str = ""
-    ingest_caption_max_per_doc: int = 20
+    ingest_caption_max_per_page: int = 10
 
     rag_step_align_min_score: float = 0.42
 
@@ -109,5 +109,11 @@ class Settings(BaseSettings):
 
 
 @lru_cache
-def get_settings() -> Settings:
+def _env_settings() -> Settings:
     return Settings()
+
+
+def get_settings() -> Settings:
+    from app.services.runtime_settings import apply_overrides
+
+    return apply_overrides(_env_settings())

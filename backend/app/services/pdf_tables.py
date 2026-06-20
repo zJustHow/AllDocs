@@ -38,6 +38,7 @@ class EmbeddedTable:
     height: int
     figure_number: str | None = None
     caption_text: str | None = None
+    vlm_caption: str | None = None
     layout_regions: tuple[dict, ...] | None = None
 
 
@@ -201,6 +202,7 @@ def _table_to_attached_asset(table: EmbeddedTable) -> ParsedAttachedAsset:
         text_summary=table.summary,
         figure_caption=table.caption_text,
         figure_number=table.figure_number,
+        vlm_caption=table.vlm_caption,
         layout_regions=layout_regions_for_asset(
             page=table.page,
             bbox=table.bbox,

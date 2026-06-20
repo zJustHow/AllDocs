@@ -1,6 +1,7 @@
 .env
 node_modules/
 frontend/dist/
+frontend/coverage/
 __pycache__/
 *.py[cod]
 .venv/

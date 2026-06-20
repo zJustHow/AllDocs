@@ -1,0 +1,204 @@
+import { describe, expect, it } from "vitest";
+import {
+  citationToViewerTarget,
+  embedToViewerTarget,
+  formatCitationLabel,
+  formatCitationSnippetExcerpt,
+  formatCitationTooltip,
+  isOrphanInlineSuffix,
+  isTrailingPunctuationOnly,
+  proseSegmentsHaveContent,
+  segmentsDisplayText,
+  segmentsToMarkdownSource,
+  splitMessageWithCitations,
+} from "./citations";
+import { citationPlaceholder } from "./citationPlaceholders";
+import type { Citation, MessageEmbed } from "./types";
+
+function makeCitation(overrides: Partial<Citation> = {}): Citation {
+  return {
+    document_id: "doc-1",
+    document_name: "Manual",
+    page: 3,
+    section: "Setup",
+    snippet: "Press the start button.",
+    score: 0.9,
+    regions: [{ page: 3, bbox: [0.1, 0.2, 0.3, 0.4] }],
+    ...overrides,
+  };
+}
+
+describe("formatCitationLabel", () => {
+  it("uses one-based display index", () => {
+    expect(formatCitationLabel(0)).toBe("[1]");
+    expect(formatCitationLabel(2)).toBe("[3]");
+  });
+});
+
+describe("formatCitationSnippetExcerpt", () => {
+  it("adds ellipsis when snippet lacks edge punctuation", () => {
+    expect(formatCitationSnippetExcerpt("Press start")).toBe("...Press start...");
+  });
+
+  it("keeps existing punctuation at both edges", () => {
+    expect(formatCitationSnippetExcerpt("。已标定。")).toBe("。已标定。");
+  });
+
+  it("returns empty string unchanged", () => {
+    expect(formatCitationSnippetExcerpt("   ")).toBe("");
+  });
+});
+
+describe("formatCitationTooltip", () => {
+  it("includes document, page hint, section, and excerpt", () => {
+    const tooltip = formatCitationTooltip(makeCitation(), " p.3");
+
+    expect(tooltip).toContain("Manual p.3 · Setup");
+    expect(tooltip).toContain("Press the start button.");
+  });
+});
+
+describe("viewer target mappers", () => {
+  it("maps citation fields to viewer target", () => {
+    const citation = makeCitation();
+    expect(citationToViewerTarget(citation)).toEqual({
+      documentId: "doc-1",
+      documentName: "Manual",
+      page: 3,
+      section: "Setup",
+      snippet: "Press the start button.",
+      regions: [{ page: 3, bbox: [0.1, 0.2, 0.3, 0.4] }],
+    });
+  });
+
+  it("maps embed fields to viewer target", () => {
+    const embed: MessageEmbed = {
+      ref: 1,
+      document_id: "doc-2",
+      document_name: "Guide",
+      page: 5,
+      type: "figure",
+      url: "/img.png",
+      caption: "Figure 1",
+      regions: [{ page: 5, bbox: [0, 0, 1, 1] }],
+    };
+
+    expect(embedToViewerTarget(embed)).toEqual({
+      documentId: "doc-2",
+      documentName: "Guide",
+      page: 5,
+      section: "Figure 1",
+      regions: [{ page: 5, bbox: [0, 0, 1, 1] }],
+    });
+  });
+});
+
+describe("splitMessageWithCitations", () => {
+  const citations = [
+    makeCitation({ snippet: "first" }),
+    makeCitation({ page: 7, snippet: "second" }),
+  ];
+
+  it("strips inline markers when no citations or embeds are provided", () => {
+    const segments = splitMessageWithCitations("See [1] and {{embed:2}}.", [], {
+      hideUnmatched: true,
+    });
+
+    expect(segments).toEqual([{ type: "text", value: "See  and ." }]);
+  });
+
+  it("resolves numeric citation markers", () => {
+    const segments = splitMessageWithCitations("Refer to [2].", citations, {
+      hideUnmatched: true,
+    });
+
+    expect(segments.some((s) => s.type === "citation" && s.index === 1)).toBe(true);
+  });
+
+  it("hides unmatched citation tokens when configured", () => {
+    const segments = splitMessageWithCitations("Unknown [9].", citations, {
+      hideUnmatched: true,
+    });
+
+    expect(segments.every((s) => s.type !== "citation")).toBe(true);
+  });
+
+  it("keeps unmatched citation tokens as text when not hiding", () => {
+    const segments = splitMessageWithCitations("[9]", citations, {
+      hideUnmatched: false,
+    });
+
+    expect(segments).toEqual([{ type: "text", value: "[9]" }]);
+  });
+
+  it("inserts embed segments by ref marker", () => {
+    const embed: MessageEmbed = {
+      ref: 2,
+      document_id: "doc-1",
+      page: 1,
+      type: "figure",
+      url: "/x.png",
+      regions: [],
+    };
+
+    const segments = splitMessageWithCitations("See {{embed:2}}.", citations, {
+      hideUnmatched: true,
+      embeds: [embed],
+    });
+
+    expect(segments.some((s) => s.type === "embed" && s.embed.ref === 2)).toBe(true);
+  });
+
+  it("does not split text on sentence boundaries in streaming mode", () => {
+    const segments = splitMessageWithCitations("Line one. Line two [1].", citations, {
+      hideUnmatched: true,
+      streaming: true,
+    });
+
+    const textSegments = segments.filter((s) => s.type === "text");
+    expect(textSegments[0]?.value).toBe("Line one. Line two ");
+    expect(segments.some((s) => s.type === "citation")).toBe(true);
+  });
+});
+
+describe("segment helpers", () => {
+  it("detects trailing punctuation-only text", () => {
+    expect(isTrailingPunctuationOnly("。")).toBe(true);
+    expect(isTrailingPunctuationOnly("word")).toBe(false);
+  });
+
+  it("detects orphan inline suffix segments", () => {
+    expect(isOrphanInlineSuffix([{ type: "text", value: " [3]" }])).toBe(true);
+    expect(
+      isOrphanInlineSuffix([{ type: "text", value: "complete sentence." }]),
+    ).toBe(false);
+  });
+
+  it("joins display text from text and citation segments", () => {
+    const text = segmentsDisplayText([
+      { type: "text", value: "Hello " },
+      { type: "citation", value: "[1]", citation: makeCitation(), index: 0 },
+    ]);
+
+    expect(text).toBe("Hello [1]");
+  });
+
+  it("builds markdown source with citation placeholders", () => {
+    const md = segmentsToMarkdownSource([
+      { type: "text", value: "See " },
+      { type: "citation", value: "[1]", citation: makeCitation(), index: 0 },
+    ]);
+
+    expect(md).toBe(`See ${citationPlaceholder(0)}`);
+  });
+
+  it("reports whether prose segments have visible content", () => {
+    expect(proseSegmentsHaveContent([{ type: "text", value: "   " }])).toBe(false);
+    expect(
+      proseSegmentsHaveContent([
+        { type: "citation", value: "[1]", citation: makeCitation(), index: 0 },
+      ]),
+    ).toBe(true);
+    expect(proseSegmentsHaveContent([{ type: "text", value: "Hi" }])).toBe(true);
+  });
+});

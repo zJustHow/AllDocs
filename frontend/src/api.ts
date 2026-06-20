@@ -156,3 +156,46 @@ export function createVoiceSocket(): WebSocket {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
   return new WebSocket(`${protocol}//${window.location.host}/ws/voice`);
 }
+
+export type SettingFieldType = "string" | "int" | "float" | "bool" | "secret";
+
+export interface SettingField {
+  key: string;
+  type: SettingFieldType;
+  secret: boolean;
+  default: string | number | boolean;
+  overridden: boolean;
+  value: string | number | boolean | null;
+  masked?: string | null;
+  set?: boolean;
+}
+
+export interface SettingsGroup {
+  id: string;
+  fields: SettingField[];
+}
+
+export interface SettingsPayload {
+  groups: SettingsGroup[];
+}
+
+export async function fetchSettings(): Promise<SettingsPayload> {
+  const res = await fetch(`${API_BASE}/api/v1/settings`);
+  if (!res.ok) throw new Error(t("errors.loadSettingsFailed"));
+  return res.json();
+}
+
+export async function patchSettings(
+  values: Record<string, string | number | boolean | null>,
+): Promise<SettingsPayload> {
+  const res = await fetch(`${API_BASE}/api/v1/settings`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ values }),
+  });
+  if (!res.ok) {
+    const detail = await res.text();
+    throw new Error(detail || t("errors.saveSettingsFailed"));
+  }
+  return res.json();
+}

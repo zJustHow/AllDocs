@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, TimeoutError as FuturesTimeoutError
 from dataclasses import dataclass
 from threading import Lock
 
@@ -15,8 +15,41 @@ from app.services.table_html import html_table_to_markdown, parse_html_table, ta
 
 logger = logging.getLogger(__name__)
 
-_lock = Lock()
-_table_engine = None
+_pool_lock = Lock()
+_table_process_pool: ProcessPoolExecutor | None = None
+
+_child_table_engine = None
+
+
+def _run_ppstructure_table(image: np.ndarray, lang: str) -> list | None:
+    """Run PPStructure in an isolated child process (Paddle is not thread-safe)."""
+    global _child_table_engine
+    if _child_table_engine is None:
+        from paddleocr import PPStructure
+
+        _child_table_engine = PPStructure(
+            show_log=False,
+            lang=lang,
+            table=True,
+            layout=False,
+        )
+    return _child_table_engine(image)
+
+
+def _get_table_process_pool() -> ProcessPoolExecutor:
+    global _table_process_pool
+    with _pool_lock:
+        if _table_process_pool is None:
+            _table_process_pool = ProcessPoolExecutor(max_workers=1)
+        return _table_process_pool
+
+
+def _reset_table_process_pool() -> None:
+    global _table_process_pool
+    with _pool_lock:
+        if _table_process_pool is not None:
+            _table_process_pool.shutdown(wait=False, cancel_futures=True)
+            _table_process_pool = None
 
 
 @dataclass(frozen=True)
@@ -26,22 +59,6 @@ class TableOCRResult:
     col_count: int
     filled_cells: int
     score: float
-
-
-def _get_table_engine(settings: Settings):
-    global _table_engine
-    if _table_engine is None:
-        with _lock:
-            if _table_engine is None:
-                from paddleocr import PPStructure
-
-                _table_engine = PPStructure(
-                    show_log=False,
-                    lang=settings.ocr_lang,
-                    table=True,
-                    layout=False,
-                )
-    return _table_engine
 
 
 def is_table_structure_candidate(result: TableOCRResult, settings: Settings) -> bool:
@@ -73,16 +90,17 @@ class TableOCRService:
         if image is None:
             return None
 
-        def _run() -> list | None:
-            with _lock:
-                engine = _get_table_engine(self.settings)
-                return engine(image)
-
         try:
-            with ThreadPoolExecutor(max_workers=1) as pool:
-                items = pool.submit(_run).result(timeout=self.settings.ocr_table_timeout_seconds)
+            pool = _get_table_process_pool()
+            future = pool.submit(_run_ppstructure_table, image, self.settings.ocr_lang)
+            items = future.result(timeout=self.settings.ocr_table_timeout_seconds)
+        except FuturesTimeoutError:
+            logger.warning("Raster table recognition timed out after %.0fs", self.settings.ocr_table_timeout_seconds)
+            _reset_table_process_pool()
+            return None
         except Exception:
             logger.warning("Raster table recognition failed", exc_info=True)
+            _reset_table_process_pool()
             return None
 
         if not items:

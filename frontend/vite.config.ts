@@ -7,7 +7,27 @@ export default defineConfig({
   plugins: [react()],
   test: {
     environment: "node",
-    include: ["src/**/*.test.ts"],
+    setupFiles: ["src/vitest.setup.ts"],
+    include: ["src/**/*.test.ts", "src/**/*.test.tsx"],
+    coverage: {
+      provider: "v8",
+      reporter: ["text", "text-summary", "html"],
+      reportsDirectory: "coverage",
+      include: ["src/**/*.{ts,tsx}"],
+      exclude: [
+        "src/**/*.test.ts",
+        "src/**/*.d.ts",
+        "src/main.tsx",
+        "src/vite-env.d.ts",
+        "src/i18n/locales/**",
+      ],
+      thresholds: {
+        lines: 52,
+        functions: 70,
+        branches: 75,
+        statements: 52,
+      },
+    },
   },
   resolve: {
     alias: {

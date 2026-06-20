@@ -9,6 +9,7 @@ from io import BytesIO
 import fitz
 
 from app.config import Settings, get_settings
+from app.services.caption import CaptionService
 from app.services.file_types import detect_file_type
 from app.services.ocr import OCRService
 from app.services.pdf_embedded_images import (
@@ -23,7 +24,7 @@ from app.services.pdf_embedded_images import (
 from app.services.pdf_captions import apply_page_caption_matches, extract_page_captions
 from app.services.pdf_layout_regions import layout_region
 from app.services.pdf_refs import attach_by_explicit_refs
-from app.services.pdf_raster_tables import promote_figures_to_raster_tables
+from app.services.pdf_vlm_route import route_figures_via_vlm
 from app.services.pdf_table_merge import merge_cross_page_tables
 from app.services.pdf_header_footer import HeaderFooterFilter, build_header_footer_filter
 from app.services.pdf_tables import (
@@ -932,6 +933,9 @@ class IngestionService:
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
         self.ocr = OCRService(self.settings) if self.settings.ocr_enabled else None
+        self.caption_service = (
+            CaptionService(self.settings) if self.settings.ingest_caption_enabled else None
+        )
 
     def _render_page_for_ocr(self, page: fitz.Page) -> tuple[bytes, float]:
         scale = self.settings.ocr_render_scale
@@ -1074,7 +1078,6 @@ class IngestionService:
         png_cache: dict[int, tuple[bytes, int, int]] = {}
         seen_placements: set[tuple[int, int, tuple[int, int, int, int]]] = set()
         tables_available = True
-        promote_processed = 0
         max_workers = max(1, self.settings.pdf_parallel_workers)
 
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -1116,19 +1119,20 @@ class IngestionService:
                     if not figure_overlaps_bboxes(figure, table_bboxes)
                 ]
 
-                page_figures, promoted, promote_processed = promote_figures_to_raster_tables(
-                    page_figures,
-                    settings=self.settings,
-                    processed=promote_processed,
-                )
-                page_tables = [*page_tables, *promoted]
-
                 page_captions = extract_page_captions(page, page_number)
                 page_figures, page_tables = apply_page_caption_matches(
                     page_captions,
                     page_figures,
                     page_tables,
                 )
+
+                page_figures, promoted = route_figures_via_vlm(
+                    page_figures,
+                    settings=self.settings,
+                    caption_service=self.caption_service,
+                )
+                page_tables = [*page_tables, *promoted]
+
                 embedded_figures.extend(page_figures)
                 extracted_tables.extend(page_tables)
 
