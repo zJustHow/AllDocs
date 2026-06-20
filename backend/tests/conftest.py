@@ -2,12 +2,26 @@
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Generator
 from contextlib import contextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from starlette.testclient import TestClient
+
+
+def _install_import_stubs() -> None:
+    """Avoid loading speech/Celery stacks when importing the FastAPI app in CI."""
+    for module_name in ("faster_whisper", "piper", "minio"):
+        sys.modules.setdefault(module_name, MagicMock())
+
+    if "celery" not in sys.modules:
+        celery_mod = MagicMock()
+        celery_app = MagicMock()
+        celery_app.task = lambda *args, **kwargs: (lambda fn: fn)
+        celery_mod.Celery.return_value = celery_app
+        sys.modules["celery"] = celery_mod
 
 
 @contextmanager
@@ -32,6 +46,7 @@ def _patched_app_lifecycle() -> Generator[None, None, None]:
         patch("app.services.runtime_settings.refresh_from_session", AsyncMock()),
         patch("app.services.infra_init.ensure_external_stores_async", AsyncMock()),
     ):
+        _install_import_stubs()
         yield
 
 

@@ -1,5 +1,5 @@
 /** @vitest-environment jsdom */
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import DocumentViewer from "./DocumentViewer";
@@ -22,6 +22,16 @@ function renderViewer(target: ViewerTarget = textTarget, onClose = vi.fn()) {
     </I18nProvider>,
   );
 }
+
+const pdfTarget: ViewerTarget = {
+  documentId: "doc-pdf",
+  documentName: "manual.pdf",
+  contentType: "application/pdf",
+  page: 1,
+  pageCount: 3,
+  section: null,
+  regions: [{ page: 1, bbox: [0.1, 0.2, 0.3, 0.4] }],
+};
 
 describe("DocumentViewer", () => {
   it("loads and renders plain text documents", async () => {
@@ -74,5 +84,69 @@ describe("DocumentViewer", () => {
       expect(screen.getByText(/Failed to load document|无法加载文档/i)).toBeInTheDocument();
     });
     vi.unstubAllGlobals();
+  });
+
+  it("renders PDF toolbar controls", async () => {
+    const user = userEvent.setup();
+    renderViewer(pdfTarget);
+
+    const pageInput = await screen.findByRole("textbox", { name: /Page number|页码/i });
+    expect(pageInput).toHaveValue("1");
+    expect(screen.getByText("/ 3")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /Zoom in|放大/i }));
+    expect(screen.getByText("125%")).toBeInTheDocument();
+  });
+
+  it("renders bbox highlight overlays after a PDF page loads", async () => {
+    renderViewer(pdfTarget);
+
+    const image = await screen.findByRole("img", { name: /manual.pdf p\.1/i });
+    Object.defineProperty(image, "complete", { value: true, configurable: true });
+    Object.defineProperty(image, "naturalWidth", { value: 800, configurable: true });
+    Object.defineProperty(image, "naturalHeight", { value: 1200, configurable: true });
+    Object.defineProperty(image, "offsetWidth", { value: 400, configurable: true });
+    Object.defineProperty(image, "offsetHeight", { value: 600, configurable: true });
+    image.dispatchEvent(new Event("load"));
+
+    await waitFor(() => {
+      expect(document.querySelector(".doc-viewer-highlight")).toBeInTheDocument();
+    });
+  });
+
+  it("navigates PDF pages with arrow keys", async () => {
+    renderViewer(pdfTarget);
+
+    const pageInput = await screen.findByRole("textbox", { name: /Page number|页码/i });
+    expect(pageInput).toHaveValue("1");
+
+    fireEvent.keyDown(window, { key: "ArrowRight" });
+    await waitFor(() => {
+      expect(pageInput).toHaveValue("2");
+    });
+
+    fireEvent.keyDown(window, { key: "ArrowLeft" });
+    await waitFor(() => {
+      expect(pageInput).toHaveValue("1");
+    });
+  });
+
+  it("shows unsupported preview messaging for unknown file types", () => {
+    renderViewer({
+      documentId: "doc-zip",
+      documentName: "archive.zip",
+      contentType: "application/zip",
+      page: null,
+      section: null,
+      regions: [],
+    });
+
+    expect(
+      screen.getByText(/Preview is not available for this format|不支持预览/i),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Download original file|下载/i })).toHaveAttribute(
+      "href",
+      "/api/v1/documents/doc-zip/file",
+    );
   });
 });

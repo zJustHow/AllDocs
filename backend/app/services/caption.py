@@ -107,7 +107,3 @@ class CaptionService:
 
         content = response.choices[0].message.content or ""
         return _parse_vision_json(content)
-
-    def caption_image(self, image_bytes: bytes, media_type: str = "image/png") -> str:
-        result = self.classify_and_describe(image_bytes, media_type=media_type)
-        return result.caption if result else ""

@@ -140,6 +140,15 @@ describe("createAssistantStreamController", () => {
     expect(ctx.onAudio).toHaveBeenCalledWith("base64-chunk");
   });
 
+  it("accepts answer_delta payloads", () => {
+    const ctx = createController();
+
+    ctx.controller.dispatchPayload({ type: "answer_delta", content: "Delta" });
+    vi.runAllTimers();
+
+    expect(getStreamingContent("assistant-1")).toBe("Delta");
+  });
+
   it("patches citations and embeds on intermediate events", () => {
     const ctx = createController();
     const citation = {

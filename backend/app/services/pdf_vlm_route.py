@@ -8,9 +8,8 @@ from collections import defaultdict
 from dataclasses import replace
 
 from app.config import Settings
-from app.services.caption import CaptionService, AssetVisionResult
+from app.services.caption import AssetVisionResult, CaptionService
 from app.services.pdf_embedded_images import EmbeddedFigure
-from app.services.pdf_raster_tables import figure_to_raster_table
 from app.services.pdf_tables import EmbeddedTable
 from app.services.table_ocr import TableOCRService, is_table_structure_candidate
 
@@ -25,6 +24,27 @@ def _looks_like_table_caption(caption_text: str | None) -> bool:
     return bool(_TABLE_CAPTION_RE.match(caption_text.strip()))
 
 
+def _figure_to_raster_table(
+    figure: EmbeddedFigure,
+    summary: str,
+    *,
+    vlm_caption: str | None = None,
+) -> EmbeddedTable:
+    return EmbeddedTable(
+        page=figure.page,
+        section=figure.section,
+        bbox=figure.bbox,
+        sort_key=figure.sort_key,
+        summary=summary,
+        png_bytes=figure.png_bytes,
+        width=figure.width,
+        height=figure.height,
+        figure_number=figure.figure_number,
+        caption_text=figure.caption_text,
+        vlm_caption=vlm_caption or figure.vlm_caption,
+    )
+
+
 def _try_promote_figure_to_table(
     figure: EmbeddedFigure,
     *,
@@ -35,7 +55,7 @@ def _try_promote_figure_to_table(
     result = table_ocr.recognize_image_bytes(figure.png_bytes)
     if result is None or not is_table_structure_candidate(result, settings):
         return None
-    table = figure_to_raster_table(figure, result.summary, vlm_caption=vlm_caption)
+    table = _figure_to_raster_table(figure, result.summary, vlm_caption=vlm_caption)
     logger.info(
         "VLM route promoted embedded figure on page %s to raster table (%sx%s)",
         figure.page,

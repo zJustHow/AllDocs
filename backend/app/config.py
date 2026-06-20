@@ -66,10 +66,8 @@ class Settings(BaseSettings):
     ocr_force: bool = False
     ocr_min_chars_per_page: int = 30
     ocr_render_scale: float = 2.0
-    ocr_table_promote_enabled: bool = False
     ocr_table_min_filled_cells: int = 2
     ocr_table_min_score: float = 0.0
-    ocr_table_promote_max_per_doc: int = 30
     ocr_table_timeout_seconds: float = 30.0
 
     pdf_extract_embedded_images: bool = True

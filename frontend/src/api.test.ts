@@ -7,7 +7,9 @@ import {
   fetchSettings,
   listDocuments,
   patchSettings,
+  reindexDocument,
   streamChat,
+  uploadDocument,
 } from "./api";
 
 function mockSseResponse(events: Array<Record<string, unknown>>) {
@@ -133,6 +135,73 @@ describe("streamChat", () => {
     expect(onError).toHaveBeenCalled();
     vi.unstubAllGlobals();
   });
+
+  it("forwards stream error events to handlers", async () => {
+    const onError = vi.fn();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        mockSseResponse([
+          { type: "error", message: "model unavailable" },
+        ]),
+      ),
+    );
+
+    await streamChat("hello", null, [], {
+      onDelta: vi.fn(),
+      onDone: vi.fn(),
+      onError,
+    });
+
+    expect(onError).toHaveBeenCalledWith("model unavailable");
+    vi.unstubAllGlobals();
+  });
+
+  it("forwards agent and status events when handlers are provided", async () => {
+    const onStatus = vi.fn();
+    const onAgentStep = vi.fn();
+    const onAgentThoughtDelta = vi.fn();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        mockSseResponse([
+          { type: "status", stage: "thinking" },
+          {
+            type: "agent_step_start",
+            step: 1,
+            thought: "Searching",
+            action: "search_chunks",
+          },
+          {
+            type: "agent_thought_delta",
+            step: 1,
+            field: "content",
+            delta: " more",
+          },
+        ]),
+      ),
+    );
+
+    await streamChat("hello", null, [], {
+      onStatus,
+      onAgentStep,
+      onAgentThoughtDelta,
+      onDelta: vi.fn(),
+      onDone: vi.fn(),
+      onError: vi.fn(),
+    });
+
+    expect(onStatus).toHaveBeenCalledWith("thinking");
+    expect(onAgentStep).toHaveBeenCalledWith(
+      expect.objectContaining({ step: 1, status: "running" }),
+    );
+    expect(onAgentThoughtDelta).toHaveBeenCalledWith({
+      step: 1,
+      field: "content",
+      delta: " more",
+    });
+    vi.unstubAllGlobals();
+  });
 });
 
 describe("settings API", () => {
@@ -145,8 +214,53 @@ describe("settings API", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     await expect(fetchSettings()).resolves.toEqual(payload);
-    await expect(patchSettings({ LLM_MODEL: "gpt-4" })).resolves.toEqual(payload);
+    await expect(patchSettings({ llm_model: "gpt-4" })).resolves.toEqual(payload);
     expect(fetchMock).toHaveBeenCalledTimes(2);
+    vi.unstubAllGlobals();
+  });
+
+  it("throws when patch settings fails", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        text: async () => "validation failed",
+      }),
+    );
+
+    await expect(patchSettings({ llm_model: "bad" })).rejects.toThrow("validation failed");
+    vi.unstubAllGlobals();
+  });
+});
+
+describe("uploadDocument", () => {
+  it("uploads multipart form data", async () => {
+    const doc = { id: "doc-2", name: "Guide.pdf", status: "ready" };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => doc,
+      }),
+    );
+
+    const file = new File(["bytes"], "Guide.pdf", { type: "application/pdf" });
+    await expect(uploadDocument(file)).resolves.toEqual(doc);
+    vi.unstubAllGlobals();
+  });
+});
+
+describe("reindexDocument", () => {
+  it("throws when reindex fails", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        text: async () => "reindex failed",
+      }),
+    );
+
+    await expect(reindexDocument("doc-1")).rejects.toThrow("reindex failed");
     vi.unstubAllGlobals();
   });
 });

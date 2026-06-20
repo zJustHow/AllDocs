@@ -7,10 +7,10 @@
 ## 功能概览
 
 - 多格式文档上传与异步索引（PDF、Word、Markdown、图片等）
-- PDF 书签章节、矢量表格与内嵌插图解析
+- PDF 书签章节、矢量表格、跨页表合并与内嵌插图解析
 - 混合检索：Qdrant 向量 + Elasticsearch 全文（RRF 融合）+ Cross-encoder rerank
 - Retrieval Agent：`list_outline`、`lookup_toc`、`search_chunks`、`read_chunks` 等工具多步检索
-- 流式对话、引用跳转、可选入库 VLM caption 与 `{{embed:N}}` 句级插图对齐
+- 流式对话、引用跳转、解析期可选 VLM 对内嵌图分类描述（并辅助识别栅格表）与 `{{embed:N}}` 句级插图对齐
 - WebSocket 语音问答（Whisper 转写 + Piper 合成）
 
 ---
@@ -56,16 +56,17 @@ flowchart LR
     Ingest --> ES
     Agent -.-> Inference
     Ingest -.-> Inference
+    Ingest -.-> LLM
 ```
 
 | 组件 | 作用 |
 |------|------|
-| **PostgreSQL** | 文档、chunk、asset、会话与消息 |
+| **PostgreSQL** | 文档、chunk、asset、会话、消息与运行时配置覆盖 |
 | **MinIO** | 原始文件与表格/插图 PNG |
 | **Qdrant** | chunk 向量（语义检索） |
 | **Elasticsearch** | 正文与 caption 全文索引（IK 分词） |
 | **Redis** | Celery 消息队列 |
-| **Celery Worker** | 文档解析、向量化、索引写入 |
+| **Celery Worker** | 文档解析（含可选 VLM 路由）、向量化、索引写入 |
 | **Inference**（可选） | 独立 HTTP 服务承载 BGE embed / rerank，减轻 api/worker 内存 |
 
 前后端共享契约位于 `backend/shared/`（`file_formats.json`、`markers.json`），由 Python `shared_contract.py` 与前端 `@shared` 别名共同引用。
@@ -122,7 +123,7 @@ docker compose --profile inference up -d inference
 AllDocs/
 ├── backend/
 │   ├── app/
-│   │   ├── api/              # documents, chat, assets, ws_voice
+│   │   ├── api/              # documents, chat, assets, settings, ws_voice
 │   │   ├── services/         # ingestion, rag, llm, vector_store, …
 │   │   │   └── agent/        # Retrieval Agent、answer_flow、工具注册
 │   │   ├── inference/        # 可选 BGE embed/rerank HTTP 服务
@@ -145,29 +146,25 @@ AllDocs/
 
 上传后由 Celery Worker 异步执行：
 
-**解析 → 切 chunk → 上传 asset →（可选）VLM caption → 向量化 → 混合索引 → 入库**
+**解析（PDF 含矢量表/内嵌图提取与可选 VLM 路由）→ 切 chunk → 挂靠 asset + sub_index → PostgreSQL + MinIO → 向量化 → 混合索引**
 
 ```mermaid
 flowchart TD
     A[上传文档] --> B[Celery Worker]
     B --> C{文件类型}
-    C -->|PDF| D[读取书签 + 页面文本]
+    C -->|PDF| D[逐页解析]
     C -->|DOCX/MD| E[按标题切 section]
     C -->|图片| F[整图 OCR]
-    D --> G[提取矢量表格 + 内嵌位图]
-    D --> H[整页文本 + 可选 OCR]
-    G --> I[剔除 asset 区域后按 section 合并]
-    H --> I
-    E --> I
-    F --> I
-    I --> J["固定长度切分 (默认 500 字, 重叠 80 字)"]
-    J --> K[挂靠/孤儿 asset 合并 + 句级 sub_index]
-    K --> L[PostgreSQL + MinIO]
-    L --> M{INGEST_CAPTION_ENABLED?}
-    M -->|是| N[VLM 为插图/表格生成 caption]
-    M -->|否| O[跳过]
-    N --> P[Qdrant + Elasticsearch]
-    O --> P
+    D --> D1[书签 + 矢量表 + 内嵌位图]
+    D1 --> D2[图注匹配 + 可选 VLM 路由]
+    D2 --> D3[页面文本 / 可选 OCR]
+    D3 --> G[剔除 asset 区域后按 section 合并]
+    E --> G
+    F --> G
+    G --> H["固定长度切分 (默认 500 字, 重叠 80 字)"]
+    H --> I[挂靠/孤儿 asset + 句级 sub_index]
+    I --> J[PostgreSQL + MinIO]
+    J --> K[Qdrant + Elasticsearch]
 ```
 
 ### 支持格式
@@ -193,20 +190,21 @@ flowchart TD
 | `sub_index` | 句级子索引，关联句子与 asset（图号引用配对） |
 | `assets` | 关联表格/插图（`ChunkAsset`，PNG 存 MinIO） |
 
-`caption` 与 `assets[].caption` / `assets[].vlm_caption` 不写入 `chunk.text`；向量化时通过 `chunk_embedding_text` 以 `[visual] …` 拼接到索引文本。
+Asset 级字段：`figure_caption`（图注行）、`caption`（矢量表摘要）、`vlm_caption`（VLM 描述）。上述 caption 字段不写入 `chunk.text`；向量化时通过 `chunk_embedding_text` 以 `[visual] …` 拼接到索引文本。
 
 默认切分：`RAG_CHUNK_SIZE=500`、`RAG_CHUNK_OVERLAP=80`（见 `.env`）。
 
 ### PDF 处理要点
 
 - **书签**：生成 `section` 与 `toc_entries`；同页多书签时依赖页内 **Y 坐标**切分（非 OCR 页）。书签目标应指向页内具体段落，避免仅绑定页码（见 [手册编写规范 · PDF 书签](docs/manual-writing-guide.md#4-pdf-书签)）
-- **矢量表格**：`find_tables()` 整表提取为 `table` asset，摘要写入 `assets.caption`
+- **矢量表格**：`find_tables()` 整表提取为 `table` asset，摘要写入 `assets.caption`；跨页续表可合并（`pdf_table_merge.py`）
 - **内嵌位图**：提取为 `figure` asset；扫描整页图通常因面积过大被跳过
+- **VLM 路由**（`INGEST_CAPTION_ENABLED`）：解析期内嵌位图经 VLM 分类（table/figure/diagram/photo）并生成 `vlm_caption`；判为表格时尝试 PPStructure 栅格表 OCR，成功则提升为 `table` asset（`pdf_vlm_route.py`、`table_ocr.py`）。受 `INGEST_CAPTION_MAX_PER_PAGE` 限制
 - **前置页**：自动跳过「第一章」之前的封面/版权等（可调整书签规避）
 - **目录页**：带点线引导符的目录样式页自动忽略
 - **页眉页脚**：裁切上下边距区域，并剔除跨页重复的页眉页脚文本与页码（见 [手册编写规范](docs/manual-writing-guide.md)）
 
-实现参考：`backend/app/services/ingestion.py`、`pdf_header_footer.py`、`pdf_tables.py`、`pdf_embedded_images.py`、`chunk_alignment.py`、`workers/tasks.py`。
+实现参考：`backend/app/services/ingestion.py`、`caption.py`、`pdf_captions.py`、`pdf_header_footer.py`、`pdf_tables.py`、`pdf_embedded_images.py`、`pdf_vlm_route.py`、`chunk_alignment.py`、`workers/tasks.py`。
 
 ---
 
@@ -236,8 +234,9 @@ Agent 限制（`.env`）：`RAG_AGENT_MAX_STEPS=10`、`RAG_AGENT_MAX_RETRIEVALS=
 1. Agent 收集 `evidence[]`（或 `ask_user` 澄清 / 无证据 fallback）
 2. `build_context()` 格式化为 `<context>` 注入 LLM
 3. `chat_stream()` 流式生成带 `[n]` 引用的回答
-4. `finalize_answer_async()`：重排引用序号、句级对齐 `{{embed:N}}` 插图（`answer_alignment.py`）
-5. 前端渲染 Markdown、点击 `[n]` 跳转文档查看器并高亮 `layout_regions`
+4. `finalize_answer_async()`：重排引用序号、句级对齐 `{{embed:N}}` 插图（`answer_alignment.py`，阈值 `RAG_STEP_ALIGN_MIN_SCORE`）
+5. 回答已含 Markdown 表格时，可跳过邻近句的表格 PNG 展示（`EMBED_SKIP_TABLE_WHEN_ANSWER_HAS_MARKDOWN`）
+6. 前端渲染 Markdown、点击 `[n]` 跳转文档查看器并高亮 `layout_regions`
 
 ### Chat SSE 事件
 
@@ -250,6 +249,8 @@ Agent 限制（`.env`）：`RAG_AGENT_MAX_STEPS=10`、`RAG_AGENT_MAX_RETRIEVALS=
 | `citations` | 证据来源列表（合成前） |
 | `delta` | 回答文本增量 |
 | `embeds` | 句级对齐后的插图/表格元数据 |
+| `clarify` | Agent 请求用户澄清（`ask_user`） |
+| `fallback` | 无证据时的兜底回复 |
 | `done` | 完成（含 `session_id`、`content`、`citations`、`embeds`） |
 | `error` | 异常信息 |
 
@@ -272,6 +273,8 @@ Agent 限制（`.env`）：`RAG_AGENT_MAX_STEPS=10`、`RAG_AGENT_MAX_RETRIEVALS=
 | DELETE | `/documents/{id}` | 异步删除 |
 | POST | `/chat` | SSE 流式问答 |
 | GET | `/assets/{asset_id}` | 表格/插图 PNG |
+| GET | `/settings` | 可读运行时配置（含 `.env` 与数据库覆盖） |
+| PATCH | `/settings` | 更新可编辑配置（持久化至 PostgreSQL，优先于 `.env`） |
 | WS | `/ws/voice` | 语音问答 |
 | GET | `/health` | 健康检查 |
 
@@ -286,12 +289,14 @@ Agent 限制（`.env`）：`RAG_AGENT_MAX_STEPS=10`、`RAG_AGENT_MAX_RETRIEVALS=
 | 配置组 | 关键变量 |
 |--------|----------|
 | LLM | `LLM_API_BASE_URL`、`LLM_API_KEY`、`LLM_MODEL` |
-| 入库 Caption | `INGEST_CAPTION_ENABLED`、`INGEST_CAPTION_*`（入库 VLM 描述，可选） |
+| 入库 VLM | `INGEST_CAPTION_ENABLED`、`INGEST_CAPTION_*`（解析期内嵌图分类描述与栅格表识别，可选；未配置时回退 LLM 凭据） |
 | Embedding / Rerank | `EMBEDDING_MODEL`、`RERANK_MODEL`、`RERANK_ENABLED` |
 | 远程推理 | `INFERENCE_URL`（可选，见 `docker compose --profile inference`） |
-| RAG / Agent | `RAG_CHUNK_SIZE`、`RAG_RETRIEVE_K`、`RAG_TOP_K`、`RAG_AGENT_*`、`HYBRID_ENABLED` |
-| OCR / PDF | `OCR_*`、`PDF_EXTRACT_TABLES`、`PDF_EXTRACT_EMBEDDED_IMAGES`、`PDF_FILTER_HEADER_FOOTER`、`PDF_*_MARGIN_RATIO` |
+| RAG / Agent | `RAG_CHUNK_SIZE`、`RAG_RETRIEVE_K`、`RAG_TOP_K`、`RAG_AGENT_*`、`RAG_STEP_ALIGN_MIN_SCORE`、`EMBED_SKIP_TABLE_*`、`HYBRID_ENABLED` |
+| OCR / PDF | `OCR_*`、`PDF_EXTRACT_TABLES`、`PDF_EXTRACT_EMBEDDED_IMAGES`、`PDF_MERGE_CROSS_PAGE_TABLES`、`PDF_FILTER_HEADER_FOOTER`、`PDF_*_MARGIN_RATIO` |
 | 基础设施 | `POSTGRES_URL`、`QDRANT_URL`、`ELASTICSEARCH_URL`、`MINIO_*` |
+
+部分配置可通过前端设置面板或 `PATCH /api/v1/settings` 运行时覆盖（见 `settings_registry.py`），优先级高于 `.env`。
 
 完整列表见 [`.env.example`](.env.example)。
 

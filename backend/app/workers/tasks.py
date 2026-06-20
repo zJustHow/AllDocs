@@ -21,6 +21,7 @@ from app.services.ingestion import IngestionService, toc_entry_to_dict
 from app.services.infra_init import ensure_external_stores
 from app.services.storage import StorageService
 from app.services.runtime_settings import refresh_from_session
+from app.services.vector_store import VectorStore
 from app.workers.celery_app import celery_app
 
 settings = get_settings()
