@@ -10,11 +10,12 @@ RETRIEVAL_ACTIONS = frozenset(
         "search_chunks_batch",
         "lookup_toc",
         "lookup_asset",
+        "read_section",
         "read_pages",
         "read_neighbor_chunks",
     }
 )
-READ_ACTIONS = frozenset({"read_pages", "read_neighbor_chunks"})
+READ_ACTIONS = frozenset({"read_section", "read_pages", "read_neighbor_chunks"})
 
 
 def build_evidence_index(evidence: list[dict]) -> str:

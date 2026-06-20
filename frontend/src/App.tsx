@@ -31,6 +31,7 @@ import MessageList from "./MessageList";
 import SettingsPanel from "./SettingsPanel";
 import Sidebar from "./Sidebar";
 import type { ChatMessage, DocumentItem } from "./types";
+import { isMobileViewport, MOBILE_BREAKPOINT } from "./layout";
 import { useConfirmDialog } from "./useConfirmDialog";
 
 const DocumentViewer = lazy(() => import("./DocumentViewer"));
@@ -57,7 +58,7 @@ export default function App() {
   const [uploading, setUploading] = useState(false);
   const [viewerTarget, setViewerTarget] = useState<ViewerTarget | null>(null);
   const [viewerOpen, setViewerOpen] = useState(false);
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(() => !isMobileViewport());
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   const chatAreaRef = useRef<HTMLDivElement>(null);
@@ -114,6 +115,15 @@ export default function App() {
       }
       return prev.filter((id) => readyIds.includes(id));
     });
+  }, []);
+
+  useEffect(() => {
+    const mq = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT}px)`);
+    const onBreakpointChange = (event: MediaQueryListEvent) => {
+      if (event.matches) setSidebarOpen(false);
+    };
+    mq.addEventListener("change", onBreakpointChange);
+    return () => mq.removeEventListener("change", onBreakpointChange);
   }, []);
 
   useEffect(() => {
@@ -552,7 +562,7 @@ export default function App() {
   const toggleSidebar = () => setSidebarOpen((prev) => !prev);
 
   const closeSidebarOnMobile = () => {
-    if (window.innerWidth <= 900) setSidebarOpen(false);
+    if (isMobileViewport()) setSidebarOpen(false);
   };
 
   const hasMessages = messages.length > 0;

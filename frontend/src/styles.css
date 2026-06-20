@@ -128,6 +128,10 @@
   --radius-full: 999px;
   --radius-circle: 50%;
   --app-padding: 12px;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
   --layout-header: 56px;
   --chat-content-top: 32px;
   --sidebar-width: 260px;
@@ -163,6 +167,7 @@ body {
   background: var(--bg-base);
   color: var(--text);
   -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
 }
 
 #root {
@@ -189,7 +194,11 @@ button {
   overflow: hidden;
   align-items: stretch;
   gap: var(--app-padding);
-  padding: var(--app-padding);
+  padding:
+    max(var(--app-padding), var(--safe-top))
+    max(var(--app-padding), var(--safe-right))
+    max(var(--app-padding), var(--safe-bottom))
+    max(var(--app-padding), var(--safe-left));
   background: var(--bg-base);
 }
 
@@ -2402,23 +2411,39 @@ button {
 /* ── Responsive ── */
 
 @media (max-width: 900px) {
+  :root {
+    --app-padding: 0;
+    --mobile-sidebar-width: min(86vw, 300px);
+    --layout-header: 52px;
+    --chat-content-top: 20px;
+  }
+
   .app {
-    padding: 0;
+    padding:
+      var(--safe-top)
+      var(--safe-right)
+      var(--safe-bottom)
+      var(--safe-left);
     gap: 0;
   }
 
   .sidebar {
     position: fixed;
-    top: var(--app-padding);
-    left: var(--app-padding);
-    bottom: var(--app-padding);
-    width: var(--sidebar-width);
+    top: var(--safe-top);
+    left: var(--safe-left);
+    bottom: var(--safe-bottom);
+    width: var(--mobile-sidebar-width);
     margin-right: 0;
-    transform: translateX(calc(-100% - var(--app-padding)));
+    border-radius: 0 var(--radius-lg) var(--radius-lg) 0;
+    transform: translateX(calc(-100% - var(--safe-left)));
     transition:
       transform var(--panel-duration) var(--panel-ease),
       opacity var(--panel-duration) var(--panel-ease);
     box-shadow: var(--panel-shadow-elevated);
+  }
+
+  .sidebar-inner {
+    width: var(--mobile-sidebar-width);
   }
 
   .sidebar.open {
@@ -2428,8 +2453,8 @@ button {
   }
 
   .sidebar.collapsed {
-    width: var(--sidebar-width);
-    transform: translateX(calc(-100% - var(--app-padding)));
+    width: var(--mobile-sidebar-width);
+    transform: translateX(calc(-100% - var(--safe-left)));
     opacity: 0;
     margin-right: 0;
     pointer-events: none;
@@ -2458,12 +2483,78 @@ button {
     pointer-events: auto;
   }
 
+  .main {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .top-bar {
+    width: 100%;
+    max-width: none;
+    margin: 0;
+    padding: 0 max(12px, var(--safe-right)) 0 max(12px, var(--safe-left));
+    gap: 6px;
+    border-radius: 0;
+  }
+
+  .top-bar-sub {
+    min-width: 0;
+    max-width: 9rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .lang-switch {
+    margin-left: 4px;
+  }
+
+  .chat-area {
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .messages {
+    padding: 12px 16px 16px;
+  }
+
+  .composer-wrap {
+    padding: 4px 12px max(12px, var(--safe-bottom));
+  }
+
+  .input-pill {
+    padding-left: 14px;
+  }
+
+  .status-bar {
+    padding: 0 12px 6px;
+  }
+
+  .welcome {
+    padding: 24px 16px 0;
+  }
+
+  .suggestions {
+    flex-direction: column;
+    align-items: stretch;
+    max-width: none;
+    width: 100%;
+  }
+
+  .suggestion-chip {
+    width: 100%;
+    text-align: left;
+  }
+
+  .message.user .message-content {
+    max-width: 92%;
+  }
+
   .doc-viewer-slot {
     position: fixed;
-    top: var(--app-padding);
-    right: var(--app-padding);
-    bottom: var(--app-padding);
-    left: var(--app-padding);
+    top: var(--safe-top);
+    right: var(--safe-right);
+    bottom: var(--safe-bottom);
+    left: var(--safe-left);
     flex: none;
     max-width: none;
     width: auto;
@@ -2481,6 +2572,19 @@ button {
   .doc-viewer {
     transform: none;
     transition: none;
+    border-radius: 0;
+    padding: 0 8px max(8px, var(--safe-bottom));
+  }
+
+  .doc-viewer-toolbar {
+    bottom: max(12px, var(--safe-bottom));
+    max-width: calc(100% - 24px);
+    padding: 6px 10px;
+    gap: 4px;
+  }
+
+  .doc-viewer-zoom-label {
+    display: none;
   }
 
   .app.with-viewer .main {
@@ -2488,16 +2592,115 @@ button {
     max-width: none;
   }
 
-  .top-bar {
-    width: min(calc(var(--content-max) + 48px), 100%);
+  .settings-panel-root,
+  .confirm-dialog-root,
+  .image-lightbox-root {
+    padding:
+      var(--safe-top)
+      var(--safe-right)
+      var(--safe-bottom)
+      var(--safe-left);
   }
 
-  .welcome {
-    padding-top: 40px;
-  }
-
-  .suggestions {
-    flex-direction: column;
+  .settings-panel-root {
     align-items: stretch;
+  }
+
+  .settings-panel {
+    width: 100%;
+    max-height: none;
+    height: 100%;
+    border-radius: 0;
+  }
+
+  .settings-fields {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .top-bar-title {
+    display: none;
+  }
+
+  .top-bar-sub {
+    max-width: 6.5rem;
+    font-size: 0.75rem;
+  }
+
+  .lang-switch-btn {
+    padding: 4px 8px;
+    font-size: 0.7rem;
+  }
+
+  .message {
+    gap: 10px;
+    margin-bottom: 20px;
+  }
+
+  .message-avatar {
+    width: 28px;
+    height: 28px;
+    font-size: 0.68rem;
+  }
+
+  .welcome h1 {
+    font-size: 1.5rem;
+  }
+
+  .welcome-sub {
+    font-size: 0.875rem;
+    margin-bottom: 24px;
+  }
+
+  .confirm-dialog-root {
+    align-items: flex-end;
+  }
+
+  .confirm-dialog {
+    width: 100%;
+    border-bottom-left-radius: 0;
+    border-bottom-right-radius: 0;
+  }
+
+  .confirm-dialog-actions {
+    flex-direction: column-reverse;
+    gap: 8px;
+  }
+
+  .confirm-dialog-btn {
+    width: 100%;
+    min-height: 44px;
+  }
+
+  .settings-panel-footer {
+    flex-direction: column-reverse;
+    gap: 8px;
+  }
+
+  .settings-panel-footer .confirm-dialog-btn {
+    width: 100%;
+    min-height: 44px;
+  }
+
+  .image-lightbox-root {
+    padding: 12px;
+  }
+
+  .image-lightbox-content {
+    max-width: 100%;
+    max-height: calc(100dvh - 24px);
+  }
+
+  .image-lightbox-image {
+    max-height: calc(100dvh - 72px);
+  }
+
+  .agent-steps-summary {
+    font-size: 0.82rem;
+  }
+
+  .citation {
+    padding: 8px 12px;
   }
 }

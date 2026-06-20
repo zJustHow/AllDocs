@@ -21,7 +21,9 @@ from app.services.agent.tools import (
     count_retrieval_units,
     merge_chunks_into_evidence,
     parse_batch_searches,
+    parse_finish_key_evidence_ids,
     parse_tool_filters,
+    prioritize_evidence,
 )
 
 
@@ -48,6 +50,7 @@ def test_count_retrieval_units_for_batch_and_single() -> None:
     }
     assert count_retrieval_units("search_chunks_batch", batch_input, max_batch=2) == 2
     assert count_retrieval_units("search_chunks", {"query": "x"}, max_batch=2) == 1
+    assert count_retrieval_units("search_keyword", {"query": "E001"}, max_batch=2) == 1
     assert count_retrieval_units("finish", {}, max_batch=2) == 0
     assert count_retrieval_units("list_outline", {}, max_batch=2) == 0
     assert count_retrieval_units("lookup_toc", {}, max_batch=2) == 0
@@ -60,6 +63,52 @@ def test_parse_tool_filters_rejects_invalid_payload() -> None:
 
     assert filters.document_ids == [doc_id]
     assert filters.page_gte is None
+
+
+def test_parse_tool_filters_accepts_document_ids() -> None:
+    doc_a = uuid.uuid4()
+    doc_b = uuid.uuid4()
+    doc_other = uuid.uuid4()
+
+    narrowed = parse_tool_filters({"document_ids": [str(doc_a)]}, [doc_a, doc_b])
+    assert narrowed.document_ids == [doc_a]
+
+    out_of_scope = parse_tool_filters({"document_ids": [str(doc_other)]}, [doc_a, doc_b])
+    assert out_of_scope.document_ids == []
+
+
+def test_parse_finish_key_evidence_ids_limits_and_skips_empty() -> None:
+    first = str(uuid.uuid4())
+    second = str(uuid.uuid4())
+    ids = parse_finish_key_evidence_ids(
+        {
+            "key_evidence_ids": [first, "", second, "not-a-uuid"],
+        }
+    )
+
+    assert ids == [first, second, "not-a-uuid"]
+
+
+def test_prioritize_evidence_puts_key_ids_first() -> None:
+    first = str(uuid.uuid4())
+    second = str(uuid.uuid4())
+    third = str(uuid.uuid4())
+    evidence = [
+        {"chunk_id": first, "text": "a"},
+        {"chunk_id": second, "text": "b"},
+        {"chunk_id": third, "text": "c"},
+    ]
+
+    prioritized = prioritize_evidence(evidence, [third, first])
+
+    assert [item["chunk_id"] for item in prioritized] == [third, first, second]
+
+
+def test_prioritize_evidence_ignores_invalid_ids() -> None:
+    chunk_id = str(uuid.uuid4())
+    evidence = [{"chunk_id": chunk_id, "text": "only"}]
+
+    assert prioritize_evidence(evidence, ["bad-id"]) == evidence
 
 
 def test_merge_chunks_into_evidence_marks_semantic_search() -> None:
@@ -205,6 +254,8 @@ def test_agent_tool_names_match_definitions() -> None:
     assert "list_documents" in AGENT_TOOL_NAMES
     assert "lookup_asset" in AGENT_TOOL_NAMES
     assert "read_pages" in AGENT_TOOL_NAMES
+    assert "read_section" in AGENT_TOOL_NAMES
+    assert "search_keyword" in AGENT_TOOL_NAMES
     assert "read_chunks" not in AGENT_TOOL_NAMES
 
 
@@ -471,6 +522,109 @@ def test_execute_read_pages(tool_registry: AgentToolRegistry) -> None:
     assert "p.45" in observation
 
 
+def test_execute_read_section(tool_registry: AgentToolRegistry) -> None:
+    from app.services.toc_lookup import ResolvedSection
+
+    doc_id = uuid.uuid4()
+    chunk_id = str(uuid.uuid4())
+    resolved = ResolvedSection(
+        document_id=doc_id,
+        document_name="Manual.pdf",
+        section_path="第3章 报警",
+        title="报警",
+        start_page=10,
+        end_page=12,
+        score=10.0,
+    )
+    tool_registry.rag.read_section = AsyncMock(
+        return_value=(
+            [
+                {
+                    "chunk_id": chunk_id,
+                    "document_name": "Manual.pdf",
+                    "page": 10,
+                    "section": "第3章 报警",
+                    "text": "章节正文",
+                    "snippet": "章节正文",
+                    "assets": [],
+                }
+            ],
+            resolved,
+            None,
+        )
+    )
+
+    observation, chunks, units = asyncio.run(
+        tool_registry.execute(
+            AsyncMock(),
+            "read_section",
+            {"section": "报警"},
+            question="报警章节有哪些内容",
+            doc_ids=[doc_id],
+            explicit_filters=None,
+        )
+    )
+
+    assert units == 0
+    assert len(chunks) == 1
+    assert "章节正文" in observation
+    assert "第3章 报警" in observation
+    assert "p.10–12" in observation
+
+
+def test_execute_search_keyword(tool_registry: AgentToolRegistry) -> None:
+    tool_registry.rag.fulltext_store = MagicMock()
+    tool_registry.rag.search_keyword = AsyncMock(
+        return_value=[
+            {
+                "chunk_id": str(uuid.uuid4()),
+                "document_name": "Manual.pdf",
+                "page": 5,
+                "snippet": "E001 伺服异常",
+                "text": "E001 伺服异常",
+                "score": 4.2,
+                "assets": [],
+            }
+        ]
+    )
+
+    observation, chunks, units = asyncio.run(
+        tool_registry.execute(
+            AsyncMock(),
+            "search_keyword",
+            {"query": "E001"},
+            question="q",
+            doc_ids=None,
+            explicit_filters=None,
+        )
+    )
+
+    assert units == 1
+    assert len(chunks) == 1
+    assert "search_keyword" in observation
+    assert "score=4.200" in observation
+    tool_registry.rag.search_keyword.assert_awaited_once()
+
+
+def test_execute_search_keyword_requires_fulltext(tool_registry: AgentToolRegistry) -> None:
+    tool_registry.rag.fulltext_store = None
+
+    observation, chunks, units = asyncio.run(
+        tool_registry.execute(
+            AsyncMock(),
+            "search_keyword",
+            {"query": "E001"},
+            question="q",
+            doc_ids=None,
+            explicit_filters=None,
+        )
+    )
+
+    assert units == 0
+    assert chunks == []
+    assert "HYBRID_ENABLED" in observation
+
+
 def test_format_chunks_search_mode_truncates_snippet() -> None:
     long_body = "报警说明 " + "x" * 400
     observation = _format_chunks(
@@ -555,11 +709,12 @@ def test_execute_search_chunks_formats_observation(tool_registry: AgentToolRegis
 
 
 def test_execute_finish_returns_reason(tool_registry: AgentToolRegistry) -> None:
+    key_id = str(uuid.uuid4())
     observation, chunks, units = asyncio.run(
         tool_registry.execute(
             AsyncMock(),
             "finish",
-            {"reason": "证据充分"},
+            {"reason": "证据充分", "key_evidence_ids": [key_id]},
             question="q",
             doc_ids=None,
             explicit_filters=None,
@@ -569,3 +724,4 @@ def test_execute_finish_returns_reason(tool_registry: AgentToolRegistry) -> None
     assert units == 0
     assert chunks == []
     assert "证据充分" in observation
+    assert key_id in observation

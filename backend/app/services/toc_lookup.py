@@ -1,4 +1,5 @@
 import re
+from dataclasses import dataclass
 from uuid import UUID
 
 from sqlalchemy import select
@@ -124,6 +125,42 @@ def _score_entry(
     return score
 
 
+@dataclass(frozen=True)
+class ResolvedSection:
+    document_id: UUID
+    document_name: str
+    section_path: str
+    title: str
+    start_page: int
+    end_page: int
+    score: float
+
+
+def _rank_toc_entries(
+    documents: list[Document],
+    question: str,
+) -> list[tuple[float, Document, TocEntry, int]]:
+    chapter_index, terms = extract_toc_query(question)
+    ranked: list[tuple[float, Document, TocEntry, int]] = []
+
+    for document in documents:
+        entries = toc_entries_from_dicts(document.toc_entries)
+        level_one = _level_one_entries(entries)
+        for index, entry in enumerate(entries):
+            score = _score_entry(
+                entry,
+                chapter_index=chapter_index,
+                terms=terms,
+                level_one=level_one,
+            )
+            if score <= 0:
+                continue
+            ranked.append((score, document, entry, index))
+
+    ranked.sort(key=lambda item: item[0], reverse=True)
+    return ranked
+
+
 def format_document_outline(document: Document) -> str | None:
     if not document.toc_entries:
         return None
@@ -197,6 +234,44 @@ def _entry_to_chunk(document: Document, entry: TocEntry, index: int, score: floa
     }
 
 
+async def resolve_section(
+    db: AsyncSession,
+    question: str,
+    doc_ids: list[UUID] | None,
+    *,
+    section: str | None = None,
+    document_id: UUID | None = None,
+) -> ResolvedSection | None:
+    query_text = (section or question).strip()
+    if not query_text:
+        return None
+
+    stmt = select(Document).where(Document.toc_entries.is_not(None))
+    if document_id is not None:
+        stmt = stmt.where(Document.id == document_id)
+    elif doc_ids:
+        stmt = stmt.where(Document.id.in_(doc_ids))
+    result = await db.execute(stmt)
+    documents = [doc for doc in result.scalars().all() if doc.toc_entries]
+    if not documents:
+        return None
+
+    ranked = _rank_toc_entries(documents, query_text)
+    if not ranked:
+        return None
+
+    score, document, entry, _index = ranked[0]
+    return ResolvedSection(
+        document_id=document.id,
+        document_name=document.name,
+        section_path=entry.path,
+        title=entry.title,
+        start_page=entry.start_page,
+        end_page=entry.end_page,
+        score=score,
+    )
+
+
 async def lookup_toc(
     db: AsyncSession,
     question: str,
@@ -213,24 +288,7 @@ async def lookup_toc(
     if not documents:
         return []
 
-    chapter_index, terms = extract_toc_query(question)
-    ranked: list[tuple[float, Document, TocEntry, int]] = []
-
-    for document in documents:
-        entries = toc_entries_from_dicts(document.toc_entries)
-        level_one = _level_one_entries(entries)
-        for index, entry in enumerate(entries):
-            score = _score_entry(
-                entry,
-                chapter_index=chapter_index,
-                terms=terms,
-                level_one=level_one,
-            )
-            if score <= 0:
-                continue
-            ranked.append((score, document, entry, index))
-
-    ranked.sort(key=lambda item: item[0], reverse=True)
+    ranked = _rank_toc_entries(documents, question)
     chunks: list[dict] = []
     seen: set[tuple[str, str]] = set()
     for score, document, entry, index in ranked:

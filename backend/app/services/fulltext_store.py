@@ -163,6 +163,52 @@ class FulltextStore:
             hits.append((str(chunk_id), float(hit["_score"])))
         return hits
 
+    def search_keyword(
+        self,
+        query: str,
+        top_k: int,
+        chunk_filter: ChunkFilter | None = None,
+    ) -> list[tuple[str, float]]:
+        ensure_index(self.settings)
+        query = query.strip()
+        if not query:
+            return []
+
+        must: list[dict] = [
+            {
+                "bool": {
+                    "should": [
+                        {"match_phrase": {"text": {"query": query, "boost": 3}}},
+                        {"match_phrase": {"caption": {"query": query, "boost": 2}}},
+                        {
+                            "match": {
+                                "text": {
+                                    "query": query,
+                                    "operator": "and",
+                                }
+                            }
+                        },
+                    ],
+                    "minimum_should_match": 1,
+                }
+            }
+        ]
+        es_filters = build_es_filters(chunk_filter)
+        bool_query: dict = {"must": must}
+        if es_filters:
+            bool_query["filter"] = es_filters
+
+        response = self.client.search(
+            index=self.index,
+            query={"bool": bool_query},
+            size=top_k,
+        )
+        hits: list[tuple[str, float]] = []
+        for hit in response["hits"]["hits"]:
+            chunk_id = hit["_source"].get("chunk_id") or hit["_id"]
+            hits.append((str(chunk_id), float(hit["_score"])))
+        return hits
+
     def delete_by_document(self, document_id: UUID) -> None:
         ensure_index(self.settings)
         self.client.delete_by_query(

@@ -20,6 +20,8 @@ from app.services.agent.tools import (
     AgentToolRegistry,
     count_retrieval_units,
     merge_chunks_into_evidence,
+    parse_finish_key_evidence_ids,
+    prioritize_evidence,
 )
 from app.services.chunk_filter import ChunkFilter
 from app.services.llm import LLMService
@@ -29,6 +31,17 @@ from app.services.rag import RAGService, detect_language, resolve_retrieval_fall
 logger = logging.getLogger(__name__)
 
 TERMINAL_ACTIONS = frozenset({"finish", "ask_user"})
+
+
+def _evidence_for_synthesis(state: AgentState) -> list[dict]:
+    finish_step = next(
+        (step for step in reversed(state.steps) if step.action == "finish"),
+        None,
+    )
+    if finish_step is None:
+        return state.evidence
+    key_ids = parse_finish_key_evidence_ids(finish_step.action_input)
+    return prioritize_evidence(state.evidence, key_ids)
 
 
 def _normalize_actions(action_payload: dict) -> list[dict]:
@@ -145,7 +158,7 @@ class AgentRAGService:
             )
             if retrieval_budget is not None and retrieval_budget <= 0:
                 return (
-                    "检索次数已达上限，无法继续 search_chunks/search_chunks_batch。"
+                    "检索次数已达上限，无法继续 search_chunks/search_chunks_batch/search_keyword。"
                     "可读取相邻片段（read_neighbor_chunks），"
                     "证据足够时再 finish。",
                     [],
@@ -284,7 +297,7 @@ class AgentRAGService:
                                     action=item["action"],
                                     action_input=item["action_input"],
                                     observation=(
-                                        "检索次数已达上限，无法继续 search_chunks/search_chunks_batch。"
+                                        "检索次数已达上限，无法继续 search_chunks/search_chunks_batch/search_keyword。"
                                         "可读取相邻片段（read_neighbor_chunks），"
                                         "证据足够时再 finish。"
                                     ),
@@ -540,10 +553,11 @@ class AgentRAGService:
         ]
         logger.info("Agent completed: steps=%d evidence=%d trace=%s", len(state.steps), len(state.evidence), json.dumps(trace, ensure_ascii=False))
 
+        evidence = _evidence_for_synthesis(state)
         return AgentResult(
             answer="",
             citations=[],
             language=lang,
             steps=state.steps,
-            evidence=state.evidence,
+            evidence=evidence,
         )

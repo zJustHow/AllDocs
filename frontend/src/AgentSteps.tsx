@@ -36,6 +36,18 @@ function summarizeActionInput(action: string, input: Record<string, unknown>): s
     const to = typeof input.page_lte === "number" ? input.page_lte : "?";
     return [`p.${from}–${to}`];
   }
+  if (action === "read_section") {
+    if (typeof input.section === "string" && input.section.trim()) {
+      return [input.section.trim()];
+    }
+    if (typeof input.question === "string" && input.question.trim()) {
+      return [input.question.trim()];
+    }
+    return [];
+  }
+  if (action === "search_keyword" && typeof input.query === "string") {
+    return [input.query];
+  }
   if (action === "read_neighbor_chunks" && typeof input.chunk_id === "string") {
     const before = typeof input.before === "number" ? input.before : 1;
     const after = typeof input.after === "number" ? input.after : 1;

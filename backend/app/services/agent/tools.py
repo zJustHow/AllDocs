@@ -11,13 +11,71 @@ from app.services.chunk_filter import ChunkFilter, chunk_asset_types
 from app.services.rag import RAGService
 from app.services.toc_lookup import format_documents_outline, lookup_toc, outline_to_chunks
 
-RETRIEVAL_TOOLS = frozenset({"search_chunks", "search_chunks_batch"})
-SEMANTIC_SEARCH_ACTIONS = frozenset({"search_chunks", "search_chunks_batch"})
+RETRIEVAL_TOOLS = frozenset({"search_chunks", "search_chunks_batch", "search_keyword"})
+SEMANTIC_SEARCH_ACTIONS = frozenset(
+    {"search_chunks", "search_chunks_batch", "search_keyword"}
+)
 SEARCH_SNIPPET_MAX = 240
 BATCH_SNIPPET_MAX = 160
 NEIGHBOR_READ_MAX = 3
 PAGE_READ_MAX_CHUNKS = 30
 LOOKUP_ASSET_MAX = 5
+
+
+FINISH_KEY_EVIDENCE_MAX = 10
+
+
+def parse_finish_key_evidence_ids(action_input: dict) -> list[str]:
+    raw = action_input.get("key_evidence_ids")
+    if not isinstance(raw, list):
+        return []
+    ids: list[str] = []
+    for item in raw:
+        text = str(item).strip()
+        if not text:
+            continue
+        ids.append(text)
+        if len(ids) >= FINISH_KEY_EVIDENCE_MAX:
+            break
+    return ids
+
+
+def prioritize_evidence(
+    evidence: list[dict],
+    key_evidence_ids: list[str],
+) -> list[dict]:
+    """Put agent-selected chunk ids first; append remaining evidence in original order."""
+    if not evidence or not key_evidence_ids:
+        return evidence
+
+    from app.services.rag import parse_chunk_uuids
+
+    valid_ids, _invalid = parse_chunk_uuids(key_evidence_ids)
+    if not valid_ids:
+        return evidence
+
+    by_id = {
+        str(chunk.get("chunk_id")): chunk
+        for chunk in evidence
+        if chunk.get("chunk_id")
+    }
+    prioritized: list[dict] = []
+    seen: set[str] = set()
+    for chunk_id in valid_ids:
+        key = str(chunk_id)
+        chunk = by_id.get(key)
+        if chunk is None or key in seen:
+            continue
+        seen.add(key)
+        prioritized.append(chunk)
+
+    for chunk in evidence:
+        key = str(chunk.get("chunk_id") or "")
+        if key and key in seen:
+            continue
+        prioritized.append(chunk)
+
+    return prioritized or evidence
 
 
 def _evidence_key(chunk: dict) -> str:
@@ -345,7 +403,11 @@ class AgentToolRegistry:
         """
         if action == "finish":
             reason = str(action_input.get("reason") or "证据已足够")
-            return f"结束检索：{reason}", [], 0
+            key_ids = parse_finish_key_evidence_ids(action_input)
+            observation = f"结束检索：{reason}"
+            if key_ids:
+                observation += f"\n（关键证据 {len(key_ids)} 条：{', '.join(key_ids[:5])}）"
+            return observation, [], 0
 
         if action == "list_outline":
             stmt = select(Document)
@@ -373,6 +435,34 @@ class AgentToolRegistry:
             )
             return _format_chunks(chunks, source_tool="lookup_toc"), chunks, 0
 
+        if action == "read_section":
+            section = str(action_input.get("section") or "").strip() or None
+            lookup_question = str(action_input.get("question") or question)
+            if not section and not lookup_question.strip():
+                return "read_section 需要 section 或 question。", [], 0
+            document_id = _parse_optional_uuid(action_input.get("document_id"))
+            chunks, resolved, error = await self.rag.read_section(
+                db,
+                lookup_question,
+                doc_ids,
+                section=section,
+                document_id=document_id,
+                max_chunks=PAGE_READ_MAX_CHUNKS,
+            )
+            if error:
+                return error, [], 0
+            observation = _format_chunks(
+                chunks,
+                source_tool="read_section",
+                full_text=True,
+            )
+            if resolved is not None:
+                observation += (
+                    f"\n（章节 §{resolved.section_path} · "
+                    f"p.{resolved.start_page}–{resolved.end_page} · 共 {len(chunks)} 条）"
+                )
+            return observation, chunks, 0
+
         if action == "search_chunks":
             query = str(action_input.get("query") or question).strip()
             chunks = await self._search_chunks(
@@ -384,6 +474,35 @@ class AgentToolRegistry:
                 search_input=action_input,
             )
             return _format_chunks(chunks, source_tool="search_chunks"), chunks, 1
+
+        if action == "search_keyword":
+            if not self.rag.fulltext_store:
+                return (
+                    "search_keyword 需要启用全文检索（HYBRID_ENABLED=true）。",
+                    [],
+                    0,
+                )
+            query = str(action_input.get("query") or question).strip()
+            if not query:
+                return "search_keyword 需要 query。", [], 0
+            tool_filters = parse_tool_filters(action_input.get("filters"), doc_ids)
+            chunk_filter = ChunkFilter.merge_sources(
+                doc_ids,
+                explicit_filters,
+                tool_filters if tool_filters.has_constraints() else None,
+            )
+            top_k = action_input.get("top_k")
+            try:
+                top_k = int(top_k) if top_k is not None else self.rag.settings.rag_top_k
+            except (TypeError, ValueError):
+                top_k = self.rag.settings.rag_top_k
+            chunks = await self.rag.search_keyword(
+                db,
+                query,
+                chunk_filter,
+                top_k=top_k,
+            )
+            return _format_chunks(chunks, source_tool="search_keyword"), chunks, 1
 
         if action == "search_chunks_batch":
             max_batch = self.rag.settings.rag_batch_search_max

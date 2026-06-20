@@ -57,3 +57,24 @@ def test_fulltext_upsert_chunks_batches_documents() -> None:
     assert len(actions) == 3
     assert bulk_mock.call_args.kwargs["chunk_size"] == 2
     assert actions[0]["caption"] == "cap-a"
+
+
+def test_fulltext_search_keyword_prefers_phrase_query() -> None:
+    client = MagicMock()
+    client.search.return_value = {
+        "hits": {
+            "hits": [
+                {"_id": "chunk-1", "_score": 5.0, "_source": {"chunk_id": "chunk-1"}},
+            ]
+        }
+    }
+
+    with patch.object(fulltext_module, "get_elasticsearch_client", return_value=client):
+        fulltext_module._index_ready = True
+        store = FulltextStore(Settings(elasticsearch_index="chunks"))
+        hits = store.search_keyword("E001", top_k=3)
+
+    assert hits == [("chunk-1", 5.0)]
+    query = client.search.call_args.kwargs["query"]
+    should = query["bool"]["must"][0]["bool"]["should"]
+    assert any("match_phrase" in clause for clause in should)

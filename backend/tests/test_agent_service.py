@@ -78,6 +78,86 @@ def test_agent_run_finish_after_search() -> None:
     assert result.evidence[0]["from_semantic_search"] is True
 
 
+def test_agent_run_finish_prioritizes_key_evidence_ids() -> None:
+    service = _make_service()
+    first_id = str(uuid.uuid4())
+    second_id = str(uuid.uuid4())
+    third_id = str(uuid.uuid4())
+
+    async def fake_search(*_args, **_kwargs) -> list[dict]:
+        return [
+            {
+                "chunk_id": first_id,
+                "document_id": "doc-1",
+                "document_name": "Manual",
+                "page": 1,
+                "text": "first",
+                "snippet": "first",
+                "score": 0.9,
+                "assets": [],
+            },
+            {
+                "chunk_id": second_id,
+                "document_id": "doc-1",
+                "document_name": "Manual",
+                "page": 2,
+                "text": "second",
+                "snippet": "second",
+                "score": 0.8,
+                "assets": [],
+            },
+            {
+                "chunk_id": third_id,
+                "document_id": "doc-1",
+                "document_name": "Manual",
+                "page": 3,
+                "text": "third",
+                "snippet": "third",
+                "score": 0.7,
+                "assets": [],
+            },
+        ]
+
+    service.rag.search_chunks = AsyncMock(side_effect=fake_search)
+
+    async def fake_decide_stream(_question: str, steps: list, **_kwargs) -> AsyncMock:
+        if not steps:
+            yield {
+                "type": "result",
+                "payload": {
+                    "thought": "检索",
+                    "reasoning_content": "",
+                    "action": "search_chunks",
+                    "action_input": {"query": "E001"},
+                },
+            }
+        else:
+            yield {
+                "type": "result",
+                "payload": {
+                    "thought": "完成",
+                    "reasoning_content": "",
+                    "action": "finish",
+                    "action_input": {
+                        "reason": "ok",
+                        "key_evidence_ids": [third_id, first_id],
+                    },
+                },
+            }
+
+    service.llm.decide_agent_action_stream = fake_decide_stream
+
+    result = asyncio.run(
+        service.run(AsyncMock(), "E001 怎么处理", doc_ids=None, filters=None)
+    )
+
+    assert [item["chunk_id"] for item in result.evidence] == [
+        third_id,
+        first_id,
+        second_id,
+    ]
+
+
 def test_agent_run_ask_user_returns_clarification() -> None:
     service = _make_service()
 

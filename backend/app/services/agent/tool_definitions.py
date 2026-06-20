@@ -11,6 +11,14 @@ logger = logging.getLogger(__name__)
 _CHUNK_FILTER_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
+        "document_ids": {
+            "type": "array",
+            "items": {"type": "string", "format": "uuid"},
+            "description": (
+                "限定检索文档（UUID 列表）；多文档会话中缩小到指定手册。"
+                "须为 list_documents 返回的 id；未指定时使用会话已选全部文档。"
+            ),
+        },
         "asset_types": {
             "type": "array",
             "items": {"type": "string", "enum": ["table", "figure"]},
@@ -48,8 +56,9 @@ AGENT_TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "function": {
             "name": "list_documents",
             "description": (
-                "列出当前会话可用文档（名称、页数、id）。"
-                "多文档时用于消歧或在其他工具中指定 document_id。"
+                "列出当前会话可用文档（名称、页数、id、status）。"
+                "适用于多文档消歧、选择 document_id。"
+                "勿用于查章节或检索正文。"
             ),
             "parameters": {"type": "object", "properties": {}},
         },
@@ -58,7 +67,11 @@ AGENT_TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "list_outline",
-            "description": "列出文档章节树（目录大纲）。适用于「有哪些章节」「目录结构」类问题。",
+            "description": (
+                "列出文档章节树（目录大纲）。"
+                "适用于「有哪些章节」「目录结构」；只需看结构、不需页码时用。"
+                "若需章节起止页码用 lookup_toc；若需读章节正文用 read_section。"
+            ),
             "parameters": {"type": "object", "properties": {}},
         },
     },
@@ -66,7 +79,11 @@ AGENT_TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "lookup_toc",
-            "description": "查询章节起始/结束页码。适用于「第几章在哪一页」「某节从哪页开始」类问题。",
+            "description": (
+                "查询章节起始/结束页码，不返回正文。"
+                "适用于「第几章在哪一页」「某节从哪页开始」。"
+                "已知页码要读内容 → read_pages；要读整章正文 → read_section。"
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -83,8 +100,9 @@ AGENT_TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "function": {
             "name": "read_pages",
             "description": (
-                "按页码读取页面内全部 chunk（按 chunk_index 排序）。"
-                "适用于「第 N 页写了什么」；可指定单页 page 或 page_gte/page_lte 范围。"
+                "按已知页码读取页面内全部 chunk（按 chunk_index 排序），返回完整正文。"
+                "适用于「第 N 页写了什么」；需已知具体页码。"
+                "不知页码只知章节名 → lookup_toc 或 read_section；勿用语义检索代替按页阅读。"
             ),
             "parameters": {
                 "type": "object",
@@ -116,12 +134,83 @@ AGENT_TOOL_DEFINITIONS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
-            "name": "search_chunks",
-            "description": "单次语义 + 全文混合检索。适用于单点事实、参数规格等。",
+            "name": "read_section",
+            "description": (
+                "按章节名匹配目录，读取该节页码范围内全部 chunk，返回完整正文。"
+                "适用于整章操作流程、本章所有报警码、整节参数表等。"
+                "只需页码不需正文 → lookup_toc；已知单页 → read_pages；"
+                "单点事实/跨节检索 → search_chunks。"
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string", "description": "检索语句"},
+                    "section": {
+                        "type": "string",
+                        "description": "章节名或路径（可选；与 question 二选一）",
+                    },
+                    "question": {
+                        "type": "string",
+                        "description": "可选；默认使用用户原问题",
+                    },
+                    "document_id": {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "可选；限定文档",
+                    },
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_chunks",
+            "description": (
+                "单次语义 + 全文混合检索（向量+BM25+rerank）。"
+                "适用于概念、操作步骤、故障现象、原理说明等开放语义问题。"
+                "报警码/型号等精确字符串优先 search_keyword；已知图号 → lookup_asset；"
+                "多角度故障排查优先 search_chunks_batch。勿重复相同 query+filters。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "检索语句；用具体关键词、型号、现象，避免过宽",
+                    },
+                    "filters": {
+                        **_CHUNK_FILTER_SCHEMA,
+                        "nullable": True,
+                        "description": "可选过滤条件；null 表示不限",
+                    },
+                    "top_k": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 20,
+                        "description": "返回条数，默认 5",
+                    },
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_keyword",
+            "description": (
+                "短语/关键词 BM25 全文检索，偏精确匹配。"
+                "适用于报警码（E001）、型号、零件号等原文关键词。"
+                "概念解释、操作步骤、故障原因等开放问题用 search_chunks；"
+                "需 HYBRID_ENABLED。语义检索无果时可补充，勿与相同 query 重复调用。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "原文关键词或短语，如报警码、型号",
+                    },
                     "filters": {
                         **_CHUNK_FILTER_SCHEMA,
                         "nullable": True,
@@ -143,8 +232,9 @@ AGENT_TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "function": {
             "name": "search_chunks_batch",
             "description": (
-                "并行多路检索（最多 3 路）。推荐用于故障/报警/异常等多角度问题，"
-                "一次同时查原因、原理、排查步骤等。"
+                "并行多路语义检索（最多 3 路），每路独立 query 与 filters。"
+                "推荐用于故障/报警/异常：同时查原因、现象、排查步骤、相关参数。"
+                "单点简单问题用 search_chunks 即可；多路 query 应互不重复。"
             ),
             "parameters": {
                 "type": "object",
@@ -166,8 +256,9 @@ AGENT_TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "function": {
             "name": "lookup_asset",
             "description": (
-                "按图号/表号精确查找插图或表格及其关联 chunk。"
-                "适用于「图4-7是什么」「表2-1额定参数」；号格式如 4-7。"
+                "按图号/表号精确查找插图、表格及其关联 chunk。"
+                "适用于「图4-7是什么」「表2-1额定参数」；号格式如 4-7、表2-1。"
+                "无图号的概念问题用 search_chunks；整节内容用 read_section。"
             ),
             "parameters": {
                 "type": "object",
@@ -196,9 +287,11 @@ AGENT_TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "function": {
             "name": "read_neighbor_chunks",
             "description": (
-                "按 chunk_index 读取锚点 chunk 及其前后相邻片段。"
-                "适用于 snippet 被截断、操作步骤/表格可能延续到相邻块的情况。"
-                "chunk_id 必须来自上一步检索结果中的 id= 字段（UUID）。"
+                "读取锚点 chunk 及其前后相邻块（按 chunk_index），返回完整正文。"
+                "适用于单条 snippet 被截断、步骤/表格可能延续到相邻块。"
+                "chunk_id 必须来自检索结果 observation 的 id=（UUID），勿用 [1][2] 序号。"
+                "整章内容用 read_section；已知页码用 read_pages。检索命中 chunk 的合成正文已在证据池，"
+                "仅当相邻块未在检索结果中时才需调用。"
             ),
             "parameters": {
                 "type": "object",
@@ -231,8 +324,9 @@ AGENT_TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "name": "ask_user",
             "description": (
                 "向用户提出一个澄清问题并结束检索。"
-                "仅在问题缺少关键信息（型号、报警码、功能模块等），"
-                "且已尝试换 query 检索仍无法消歧时使用；只问一点，不要猜测或编造。"
+                "仅在缺少关键信息（型号、报警码、功能模块、目标文档等），"
+                "且已换 query 检索仍无法消歧时使用。只问一点，勿猜测或编造。"
+                "尚有检索配额且可换关键词时，优先继续检索而非 ask_user。"
             ),
             "parameters": {
                 "type": "object",
@@ -254,13 +348,26 @@ AGENT_TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "finish",
-            "description": "证据已足够，结束检索并进入回答阶段。",
+            "description": (
+                "证据已足够，结束检索并进入回答阶段。"
+                "可选 key_evidence_ids：列出最关键 chunk 的 id=（UUID），合成时优先排序。"
+                "证据不足、仅看过目录/页码、或尚未检索到相关正文时勿 finish。"
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "reason": {
                         "type": "string",
                         "description": "结束检索的简要原因",
+                    },
+                    "key_evidence_ids": {
+                        "type": "array",
+                        "items": {"type": "string", "format": "uuid"},
+                        "maxItems": 10,
+                        "description": (
+                            "可选；最关键证据的 chunk UUID（来自检索结果 id=），"
+                            "按重要性排序，最多 10 条"
+                        ),
                     },
                 },
                 "required": ["reason"],

@@ -22,6 +22,7 @@ from app.services.embedding_provider import get_embedding_service
 from app.services.fulltext_store import FulltextStore
 from app.services.hybrid import reciprocal_rank_fusion
 from app.services.reranker_provider import get_reranker_service
+from app.services.toc_lookup import ResolvedSection, resolve_section
 from app.services.vector_store import VectorStore
 
 DetectorFactory.seed = 0
@@ -445,6 +446,75 @@ class RAGService:
         ordered_ids = [str(row[0]) for row in rows]
         score_map = {chunk_id: 1.0 for chunk_id in ordered_ids}
         return await self._load_chunks(db, ordered_ids, score_map), None
+
+    async def search_keyword(
+        self,
+        db: AsyncSession,
+        query: str,
+        chunk_filter: ChunkFilter,
+        *,
+        top_k: int | None = None,
+    ) -> list[dict]:
+        if not self.fulltext_store:
+            return []
+
+        final_k = top_k or self.settings.rag_top_k
+        hits = await asyncio.to_thread(
+            self.fulltext_store.search_keyword,
+            query,
+            final_k,
+            chunk_filter,
+        )
+        if not hits:
+            return []
+
+        ranked_ids = [chunk_id for chunk_id, _ in hits]
+        score_map = {chunk_id: score for chunk_id, score in hits}
+        return await self._load_chunks(db, ranked_ids, score_map)
+
+    async def read_section(
+        self,
+        db: AsyncSession,
+        question: str,
+        doc_ids: list[UUID] | None,
+        *,
+        section: str | None = None,
+        document_id: UUID | None = None,
+        max_chunks: int = 30,
+    ) -> tuple[list[dict], ResolvedSection | None, str | None]:
+        resolved = await resolve_section(
+            db,
+            question,
+            doc_ids,
+            section=section,
+            document_id=document_id,
+        )
+        if resolved is None:
+            return [], None, "未找到匹配章节。"
+
+        chunks, error = await self.read_pages(
+            db,
+            page_gte=resolved.start_page,
+            page_lte=resolved.end_page,
+            document_id=resolved.document_id,
+            doc_ids=doc_ids,
+            max_chunks=max_chunks,
+        )
+        if error:
+            return [], resolved, error
+
+        section_path = resolved.section_path.casefold()
+        if section_path:
+            filtered = [
+                chunk
+                for chunk in chunks
+                if not chunk.get("section")
+                or section_path in str(chunk.get("section")).casefold()
+            ]
+            if filtered:
+                chunks = filtered
+
+        return chunks, resolved, None
 
     def build_context(self, chunks: list[dict]) -> str:
         parts: list[str] = []

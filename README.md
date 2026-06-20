@@ -9,7 +9,7 @@
 - 多格式文档上传与异步索引（PDF、Word、Markdown、图片等）
 - PDF 书签章节、矢量表格、跨页表合并与内嵌插图解析
 - 混合检索：Qdrant 向量 + Elasticsearch 全文（RRF 融合）+ Cross-encoder rerank
-- Retrieval Agent：`list_documents`、`list_outline`、`lookup_toc`、`lookup_asset`、`read_pages`、`search_chunks` 等工具多步检索
+- Retrieval Agent：`list_documents`、`list_outline`、`lookup_toc`、`read_pages`、`read_section`、`lookup_asset`、`search_chunks` / `search_chunks_batch`、`search_keyword` 等工具多步检索
 - 流式对话、引用跳转、解析期可选 VLM 对内嵌图分类描述（并辅助识别栅格表）与句级插图对齐
 - WebSocket 语音问答（Whisper 转写 + Piper 合成）
 
@@ -216,7 +216,7 @@ Asset 级字段：`figure_number`（归一化图号，如 `4-7`）、`figure_cap
 - **目录页**：带点线引导符的目录样式页自动忽略
 - **页眉页脚**：裁切上下边距区域，并剔除跨页重复的页眉页脚文本与页码（见 [手册编写规范](docs/manual-writing-guide.md)）
 
-实现参考：`backend/app/services/ingestion.py`、`caption.py`、`pdf_captions.py`、`pdf_refs.py`、`pdf_attach_reading_order.py`、`asset_lookup.py`、`pdf_header_footer.py`、`pdf_tables.py`、`pdf_embedded_images.py`、`pdf_vlm_route.py`、`chunk_alignment.py`、`workers/tasks.py`。
+实现参考：`backend/app/services/ingestion.py`、`caption.py`、`pdf_captions.py`、`pdf_refs.py`、`pdf_attach_reading_order.py`、`asset_lookup.py`、`pdf_header_footer.py`、`pdf_tables.py`、`pdf_embedded_images.py`、`pdf_vlm_route.py`、`chunk_alignment.py`、`toc_lookup.py`、`fulltext_store.py`、`agent/`、`workers/tasks.py`。
 
 ---
 
@@ -228,38 +228,57 @@ Asset 级字段：`figure_number`（归一化图号，如 `4-7`）、`figure_cap
 
 | 工具 | 用途 |
 |------|------|
-| `list_documents` | 列出会话内文档（名称、页数、id） |
+| `list_documents` | 列出会话内文档（名称、页数、id、status） |
 | `list_outline` | 列出文档章节树 |
 | `lookup_toc` | 查询章节起止页码 |
 | `read_pages` | 按页码读取页面内全部 chunk |
+| `read_section` | 读取指定章节页码范围内的全部 chunk |
 | `search_chunks` / `search_chunks_batch` | 混合检索；支持 `asset_types`、`section_prefix`、`section_contains`、`page_gte` / `page_lte` 等过滤 |
+| `search_keyword` | 短语/关键词 BM25 全文检索（报警码、型号等） |
 | `lookup_asset` | 按图号/表号精确查找插图或表格 |
 | `read_neighbor_chunks` | 读取锚点 chunk 及相邻上下文（`chunk_id` 用检索结果中的 `id=` UUID，勿用 `[1][2]`） |
 | `ask_user` | 信息不足时向用户澄清（仅问一点） |
-| `finish` | 结束检索进入合成 |
+| `finish` | 结束检索进入合成；可选 `key_evidence_ids` 标注最关键证据 |
 
 常见意图 → 工具（详见 `llm.py` Agent 提示词）：
 
-| 意图 | 推荐工具 |
-|------|----------|
-| 多文档消歧 | `list_documents` |
-| 目录 / 章节 / 页码 | `list_outline`、`lookup_toc`、`read_pages` |
-| 图号 / 表号（如「图 4-7 是什么」） | `lookup_asset` |
-| 故障 / 报警 / 异常 | `search_chunks_batch`（多路并行）+ `search_chunks` |
-| 参数规格 | `search_chunks`（`filters.asset_types` 含 `table`） |
-| 片段截断或可能延续 | `read_neighbor_chunks` |
+| 意图 | 推荐工具 | 勿用 |
+|------|----------|------|
+| 多文档消歧 | `list_documents` | `search_chunks` 猜文档 |
+| 目录结构 | `list_outline` | `lookup_toc`（只需结构时） |
+| 章节起止页码 | `lookup_toc` | `read_section`（只需页码时） |
+| 已知页码读正文 | `read_pages` | `search_chunks` |
+| 整章正文 | `read_section` | 逐条 `read_neighbor_chunks` |
+| 图号/表号 | `lookup_asset` | 仅用 `search_chunks` |
+| 报警码/型号 | `search_keyword` | `search_chunks`（精确词时） |
+| 概念/步骤/原理 | `search_chunks` | 重复相同 query |
+| 故障/报警/异常 | `search_chunks_batch` | 单路泛泛检索 |
+| 参数规格表 | `search_chunks` + `asset_types=table` | — |
+| snippet 截断/邻块延续 | `read_neighbor_chunks`（`id=` UUID） | `[1][2]` 序号 |
 
-检索链路：**Qdrant + Elasticsearch（RRF）→ rerank → Agent 选取证据 → LLM 合成**。
+检索 observation 字段：`id=` chunk UUID；`score=` 相关度；`fig=` 图号；`idx=` 块序号；`search_chunks_batch` 跨路去重时重复项标 `dup@检索N`。
 
-同一步可并行调用多个互不依赖的工具（如 `search_chunks` + `read_neighbor_chunks`）；`finish` / `ask_user` 不得与其他工具同批。历史步 tool observation 会压缩摘要（`observation_compress.py`），仅最近一步保留完整结果。
+检索链路（按工具）：
 
-Agent 限制（`.env`）：`RAG_AGENT_MAX_STEPS=10`、`RAG_AGENT_MAX_RETRIEVALS=6`、`RAG_BATCH_SEARCH_MAX=3`、`RAG_AGENT_MAX_PARALLEL_TOOLS=4`（默认，见 `config.py`）。
+| 工具 | 链路 |
+|------|------|
+| `search_chunks` / `search_chunks_batch` | Qdrant 向量 + Elasticsearch 全文（RRF）→ Cross-encoder rerank |
+| `search_keyword` | Elasticsearch BM25 短语/精确词匹配（需 `HYBRID_ENABLED`；不走向量与 rerank） |
+| `lookup_toc` / `read_section` | 书签目录匹配（`toc_lookup.py`）；`read_section` 再按起止页码 `read_pages` |
+| `lookup_asset` | PostgreSQL 按 `figure_number` 精确查找 |
+| `read_pages` / `read_neighbor_chunks` | PostgreSQL 按页码或 `chunk_index` 顺序读取 |
+
+Agent 选取证据后进入 LLM 合成；`finish` 可选 `key_evidence_ids` 将关键 chunk 优先排序进 `<context>`。
+
+同一步可并行调用多个互不依赖的工具（如 `search_chunks` + `read_neighbor_chunks`）；`finish` / `ask_user` 不得与其他工具同批。`search_chunks`、`search_chunks_batch`、`search_keyword` 均计入检索配额。历史步 tool observation 会压缩摘要（`observation_compress.py`），仅最近 `RAG_AGENT_KEEP_FULL_OBSERVATION_STEPS` 步保留完整结果；多步后会注入证据池索引供 Agent 复用已收集 chunk。
+
+Agent 限制（`.env`）：`RAG_AGENT_MAX_STEPS=10`、`RAG_AGENT_MAX_RETRIEVALS=6`、`RAG_BATCH_SEARCH_MAX=3`、`RAG_AGENT_MAX_PARALLEL_TOOLS=4`、`RAG_AGENT_KEEP_FULL_OBSERVATION_STEPS=1`（默认，见 `config.py`）。
 
 ### 回答合成
 
 `answer_flow.py` 统一 chat SSE 与语音 WebSocket 的流水线：
 
-1. Agent 收集 `evidence[]`（或 `ask_user` 澄清 / 无证据 fallback）
+1. Agent 收集 `evidence[]`（或 `ask_user` 澄清 / 无证据 fallback）；`finish.key_evidence_ids` 指定的 chunk 优先进入上下文
 2. `build_context()` 格式化为 `<context>` 注入 LLM
 3. `chat_stream()` 流式生成带 `[n]` 引用的回答
 4. `finalize_answer_async()`（`citations_util.py` → `answer_alignment.py`）：

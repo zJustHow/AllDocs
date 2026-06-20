@@ -563,12 +563,24 @@ describe("App", () => {
     }
   });
 
+  it("starts with the sidebar closed on mobile", async () => {
+    Object.defineProperty(window, "innerWidth", { value: 800, configurable: true });
+    renderApp();
+
+    await screen.findByText("Manual.pdf");
+    expect(document.querySelector(".sidebar.open")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Open sidebar|打开侧边栏/i }),
+    ).toBeInTheDocument();
+  });
+
   it("closes the sidebar when the overlay is clicked on mobile", async () => {
     Object.defineProperty(window, "innerWidth", { value: 800, configurable: true });
     const user = userEvent.setup();
     renderApp();
 
     await screen.findByText("Manual.pdf");
+    await user.click(screen.getByRole("button", { name: /Open sidebar|打开侧边栏/i }));
     expect(document.querySelector(".sidebar.open")).toBeInTheDocument();
 
     await user.click(document.querySelector(".sidebar-overlay") as HTMLElement);
@@ -582,6 +594,9 @@ describe("App", () => {
     renderApp();
 
     await screen.findByText("Manual.pdf");
+    await user.click(screen.getByRole("button", { name: /Open sidebar|打开侧边栏/i }));
+    expect(document.querySelector(".sidebar.open")).toBeInTheDocument();
+
     await user.click(
       screen.getByRole("button", { name: /How do I handle alarm E-204|如何处理 E-204/i }),
     );

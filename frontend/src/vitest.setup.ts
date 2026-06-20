@@ -32,4 +32,17 @@ if (typeof window !== "undefined") {
   globalThis.IntersectionObserver =
     globalThis.IntersectionObserver ??
     (IntersectionObserverMock as typeof IntersectionObserver);
+
+  if (typeof window.matchMedia !== "function") {
+    window.matchMedia = (query: string): MediaQueryList => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    });
+  }
 }
