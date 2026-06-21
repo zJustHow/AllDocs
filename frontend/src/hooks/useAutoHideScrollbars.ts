@@ -9,6 +9,7 @@ interface FloatingBars {
 }
 
 function isScrollable(element: HTMLElement): boolean {
+  if (element.classList.contains("chat-area-empty")) return false;
   return (
     element.scrollHeight > element.clientHeight + 1 ||
     element.scrollWidth > element.clientWidth + 1
@@ -16,6 +17,7 @@ function isScrollable(element: HTMLElement): boolean {
 }
 
 function canScrollOnAxis(element: HTMLElement, axis: "horizontal" | "vertical"): boolean {
+  if (element.classList.contains("chat-area-empty")) return false;
   return axis === "vertical"
     ? element.scrollHeight > element.clientHeight + 1
     : element.scrollWidth > element.clientWidth + 1;
@@ -27,36 +29,6 @@ function createBar(axis: "horizontal" | "vertical", viewer: boolean): HTMLDivEle
   bar.setAttribute("aria-hidden", "true");
   document.body.appendChild(bar);
   return bar;
-}
-
-function visibleRect(element: HTMLElement) {
-  const source = element.getBoundingClientRect();
-  let top = Math.max(0, source.top);
-  let right = Math.min(window.innerWidth, source.right);
-  let bottom = Math.min(window.innerHeight, source.bottom);
-  let left = Math.max(0, source.left);
-
-  for (let parent = element.parentElement; parent; parent = parent.parentElement) {
-    const style = getComputedStyle(parent);
-    const rect = parent.getBoundingClientRect();
-    if (/auto|scroll|hidden|clip|overlay/.test(style.overflowY)) {
-      top = Math.max(top, rect.top);
-      bottom = Math.min(bottom, rect.bottom);
-    }
-    if (/auto|scroll|hidden|clip|overlay/.test(style.overflowX)) {
-      left = Math.max(left, rect.left);
-      right = Math.min(right, rect.right);
-    }
-  }
-
-  return {
-    top,
-    right,
-    bottom,
-    left,
-    width: Math.max(0, right - left),
-    height: Math.max(0, bottom - top),
-  };
 }
 
 export function useAutoHideScrollbars() {
@@ -76,11 +48,22 @@ export function useAutoHideScrollbars() {
       return bars;
     };
 
+    const hideDescendantBars = (container: HTMLElement) => {
+      for (const [element, bars] of barsByElement) {
+        if (element === container || !container.contains(element)) continue;
+        bars.horizontal.classList.remove("is-visible");
+        bars.vertical.classList.remove("is-visible");
+        const timer = hideTimers.get(element);
+        if (timer !== undefined) window.clearTimeout(timer);
+        hideTimers.delete(element);
+      }
+    };
+
     const updateBars = (element: HTMLElement, bars: FloatingBars) => {
       const isRoot = element === document.scrollingElement;
       const rect = isRoot
         ? { top: 0, right: window.innerWidth, bottom: window.innerHeight, left: 0, width: window.innerWidth, height: window.innerHeight }
-        : visibleRect(element);
+        : element.getBoundingClientRect();
 
       const verticalRange = element.scrollHeight - element.clientHeight;
       if (verticalRange > 1 && rect.height > 0) {
@@ -131,24 +114,40 @@ export function useAutoHideScrollbars() {
 
     const handleScroll = (event: Event) => {
       const target = event.target;
-      showScrollbar(
+      const scrollElement =
         target instanceof HTMLElement
           ? target
-          : (document.scrollingElement as HTMLElement | null),
-      );
+          : (document.scrollingElement as HTMLElement | null);
+      if (scrollElement) hideDescendantBars(scrollElement);
+      showScrollbar(scrollElement);
       for (const [element, bars] of barsByElement) {
         if (hideTimers.has(element)) updateBars(element, bars);
       }
     };
 
     const handleWheel = (event: WheelEvent) => {
+      const eventPath = event.composedPath();
+      const emptyChatArea = eventPath.find(
+        (target): target is HTMLElement =>
+          target instanceof HTMLElement && target.classList.contains("chat-area-empty"),
+      );
+      if (emptyChatArea) {
+        const bars = barsByElement.get(emptyChatArea);
+        bars?.horizontal.classList.remove("is-visible");
+        bars?.vertical.classList.remove("is-visible");
+        const timer = hideTimers.get(emptyChatArea);
+        if (timer !== undefined) window.clearTimeout(timer);
+        hideTimers.delete(emptyChatArea);
+        return;
+      }
+
       const axis = Math.abs(event.deltaY) >= Math.abs(event.deltaX) ? "vertical" : "horizontal";
-      const scrollable = event
-        .composedPath()
+      const scrollable = eventPath
         .find(
           (target): target is HTMLElement =>
             target instanceof HTMLElement && canScrollOnAxis(target, axis),
         );
+      if (scrollable) hideDescendantBars(scrollable);
       showScrollbar(scrollable ?? null);
     };
 

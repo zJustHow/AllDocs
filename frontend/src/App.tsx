@@ -191,12 +191,12 @@ export default function App() {
               <WarningTriangleIcon />
               {t("topBar.selectDocs")}
             </span>
-          ) : hasMessages ? (
+          ) : (
             <span className="top-bar-sub top-bar-hint">
               <WarningTriangleIcon />
               {t("topBar.uploadFirst")}
             </span>
-          ) : null}
+          )}
           <div className="top-bar-spacer" aria-hidden="true" />
           <div
             className="lang-switch"
@@ -228,18 +228,17 @@ export default function App() {
         </header>
 
         <div className="chat-shell">
-          <div className="chat-area" ref={chatAreaRef}>
+          <div
+            className={`chat-area${hasMessages ? "" : " chat-area-empty"}`}
+            ref={chatAreaRef}
+          >
             {!hasMessages ? (
               <div className="welcome">
                 <div className="welcome-logo">
                   <AllDocsIcon size={48} />
                 </div>
                 <h1>{t("welcome.title")}</h1>
-                <p className="welcome-sub">
-                  {readyDocs.length === 0
-                    ? t("topBar.uploadFirst")
-                    : t("welcome.subtitle")}
-                </p>
+                <p className="welcome-sub">{t("welcome.subtitle")}</p>
               </div>
             ) : (
               <MessageList

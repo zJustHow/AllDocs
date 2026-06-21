@@ -227,6 +227,22 @@ describe("App", () => {
     expect(loadSupportedFormats).toHaveBeenCalled();
   });
 
+  it("keeps the upload prompt in the top bar when an empty chat has no documents", async () => {
+    listDocuments.mockResolvedValue([]);
+    renderApp();
+
+    await screen.findByRole("heading", { name: /How can I help\?|有什么可以帮你的？/i });
+
+    const topBar = document.querySelector(".top-bar");
+    const welcome = document.querySelector(".welcome");
+    expect(topBar).not.toBeNull();
+    expect(welcome).not.toBeNull();
+    expect(document.querySelector(".chat-area")).toHaveClass("chat-area-empty");
+    expect(within(topBar as HTMLElement).getByText(/Upload a document first|请先上传文档/i)).toBeInTheDocument();
+    expect(within(welcome as HTMLElement).queryByText(/Upload a document first|请先上传文档/i)).not.toBeInTheDocument();
+    expect(within(welcome as HTMLElement).getByText(/Operation Guide Q&A|基于操作指南智能问答/i)).toBeInTheDocument();
+  });
+
   it("opens the settings panel from the header action", async () => {
     const user = userEvent.setup();
     renderApp();

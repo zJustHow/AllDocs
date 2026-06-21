@@ -17,6 +17,17 @@ function NestedHarness() {
   );
 }
 
+function EmptyChatHarness() {
+  useAutoHideScrollbars();
+  return (
+    <div data-testid="scrollable-parent">
+      <div className="chat-area-empty" data-testid="empty-chat">
+        <div data-testid="welcome" />
+      </div>
+    </div>
+  );
+}
+
 describe("useAutoHideScrollbars", () => {
   afterEach(() => vi.useRealTimers());
 
@@ -66,10 +77,41 @@ describe("useAutoHideScrollbars", () => {
       scrollWidth: { value: 300, configurable: true },
     });
     vi.spyOn(vertical, "getBoundingClientRect").mockReturnValue(rect);
+    vi.spyOn(horizontal, "getBoundingClientRect").mockReturnValue(rect);
+
+    fireEvent.wheel(horizontal, { deltaX: 20 });
+    expect(
+      Array.from(document.querySelectorAll<HTMLElement>(".floating-scrollbar--horizontal")).some(
+        (bar) => bar.style.display === "block" && bar.classList.contains("is-visible"),
+      ),
+    ).toBe(true);
 
     fireEvent.wheel(horizontal, { deltaY: 20 });
 
-    expect(document.querySelector<HTMLElement>(".floating-scrollbar--vertical")?.style.display).toBe("block");
-    expect(document.querySelector<HTMLElement>(".floating-scrollbar--horizontal")?.style.display).toBe("none");
+    expect(
+      Array.from(document.querySelectorAll<HTMLElement>(".floating-scrollbar--vertical")).some(
+        (bar) => bar.style.display === "block" && bar.classList.contains("is-visible"),
+      ),
+    ).toBe(true);
+    expect(
+      Array.from(document.querySelectorAll<HTMLElement>(".floating-scrollbar--horizontal")).some(
+        (bar) => bar.style.display === "block" && bar.classList.contains("is-visible"),
+      ),
+    ).toBe(false);
+  });
+
+  it("does not activate an ancestor scrollbar for wheel input in an empty chat", () => {
+    const { getByTestId } = render(<EmptyChatHarness />);
+    const parent = getByTestId("scrollable-parent");
+    const welcome = getByTestId("welcome");
+
+    Object.defineProperties(parent, {
+      clientHeight: { value: 100, configurable: true },
+      scrollHeight: { value: 300, configurable: true },
+    });
+
+    fireEvent.wheel(welcome, { deltaY: 20 });
+
+    expect(document.querySelector(".floating-scrollbar.is-visible")).not.toBeInTheDocument();
   });
 });

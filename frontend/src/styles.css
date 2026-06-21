@@ -729,6 +729,10 @@ button {
   scroll-padding-bottom: var(--composer-stack-height);
 }
 
+.chat-area-empty {
+  overflow-y: hidden;
+}
+
 /* ── Welcome / empty state ── */
 
 .welcome {
