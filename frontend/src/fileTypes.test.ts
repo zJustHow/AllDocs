@@ -15,6 +15,8 @@ describe("fileTypes", () => {
     expect(getPreviewMode("manual.pdf")).toBe("pdf");
     expect(getPreviewMode("photo.png", "image/png")).toBe("image");
     expect(getPreviewMode("notes.txt", "text/plain")).toBe("text");
+    expect(getPreviewMode("guide.docx")).toBe("docx");
+    expect(getPreviewMode("guide.html", "text/html")).toBe("html");
     expect(getPreviewMode("archive.zip")).toBe("unsupported");
     expect(getPreviewMode("noextension", "image/png")).toBe("image");
   });

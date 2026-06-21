@@ -23,8 +23,10 @@ from app.services.file_types import (
     supported_formats_label,
 )
 from app.services.page_render import render_page_png
+from app.services.document_parsers import decode_text_bytes, render_docx_preview_html
 from app.services.storage import StorageService
 from app.workers.tasks import delete_document as delete_document_task, process_document
+from app.workers.enqueue import enqueue
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 
@@ -68,7 +70,7 @@ async def upload_document(
         reset_document_for_reindex(existing)
         await db.commit()
         await db.refresh(existing)
-        process_document.delay(str(existing.id))
+        enqueue(process_document, str(existing.id))
         return DocumentResponse.model_validate(existing)
 
     document_id = uuid.uuid4()
@@ -86,7 +88,7 @@ async def upload_document(
     await db.commit()
     await db.refresh(document)
 
-    process_document.delay(str(document.id))
+    enqueue(process_document, str(document.id))
     return DocumentResponse.model_validate(document)
 
 
@@ -116,6 +118,33 @@ async def get_document_file(
         content=data,
         media_type=_document_media_type(document),
         headers={"Content-Disposition": _inline_content_disposition(document.name)},
+    )
+
+
+@router.get("/{document_id}/preview")
+async def get_document_preview(
+    document_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    document = await db.get(Document, document_id)
+    if not document or document.status == DocumentStatus.deleting:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    ext = get_extension(document.name)
+    if ext not in {".docx", ".html", ".htm"}:
+        raise HTTPException(status_code=400, detail="Preview is not supported")
+
+    data = await asyncio.to_thread(StorageService().download, document.object_key)
+    if ext == ".docx":
+        data = await asyncio.to_thread(render_docx_preview_html, data)
+        data = data.encode("utf-8")
+    else:
+        data = decode_text_bytes(data).encode("utf-8")
+
+    return Response(
+        content=data,
+        media_type="text/html; charset=utf-8",
+        headers={"Content-Security-Policy": "default-src 'none'; img-src data:; style-src 'unsafe-inline'"},
     )
 
 
@@ -175,7 +204,7 @@ async def delete_document(
     if not document:
         raise HTTPException(status_code=404, detail="Document not found")
     if document.status == DocumentStatus.deleting:
-        delete_document_task.delay(str(document_id))
+        enqueue(delete_document_task, str(document_id))
         return {"status": "deleting"}
 
     document.progress_message = document.status.value
@@ -184,5 +213,5 @@ async def delete_document(
     document.error_message = None
     await db.commit()
 
-    delete_document_task.delay(str(document_id))
+    enqueue(delete_document_task, str(document_id))
     return {"status": "deleting"}

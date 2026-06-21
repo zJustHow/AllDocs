@@ -126,7 +126,6 @@ const en = {
   },
   settings: {
     title: "Settings",
-    subtitle: "These values override .env defaults and apply to chat and new indexing jobs after save.",
     open: "Open settings",
     save: "Save",
     saving: "Saving...",

@@ -140,11 +140,15 @@ services:
       - --port
       - "8100"
 
-  worker:
+  worker-ingestion:
     image: alldocs-backend
     pull_policy: never
     restart: unless-stopped
     env_file: .env
+    environment:
+      PROMETHEUS_MULTIPROC_DIR: /tmp/alldocs-prometheus
+    expose:
+      - "${METRICS_WORKER_PORT:-9100}"
     volumes:
       - model_cache:/root/.cache
       - ./models:/app/models
@@ -167,7 +171,42 @@ services:
       - app.workers.celery_app
       - worker
       - --loglevel=info
-      - --concurrency=1
+      - --queues=ingestion
+      - --concurrency=${CELERY_INGESTION_CONCURRENCY:-1}
+
+  worker-maintenance:
+    image: alldocs-backend
+    pull_policy: never
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      PROMETHEUS_MULTIPROC_DIR: /tmp/alldocs-prometheus
+    expose:
+      - "${METRICS_WORKER_PORT:-9100}"
+    volumes:
+      - model_cache:/root/.cache
+      - ./models:/app/models
+    depends_on:
+      api:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+      elasticsearch:
+        condition: service_healthy
+      minio:
+        condition: service_started
+    command:
+      - celery
+      - -A
+      - app.workers.celery_app
+      - worker
+      - --loglevel=info
+      - --queues=maintenance
+      - --concurrency=${CELERY_MAINTENANCE_CONCURRENCY:-2}
 
   frontend:
     build:

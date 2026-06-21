@@ -27,9 +27,11 @@ flowchart LR
         Agent[Retrieval Agent]
         LLM[LLM API]
     end
-    subgraph worker [Worker]
-        Celery[Celery]
+    subgraph worker [Celery Workers]
+        IngestionWorker[Ingestion Worker]
+        MaintenanceWorker[Maintenance Worker]
         Ingest[IngestionService]
+        Delete[Delete / Cleanup]
     end
     subgraph stores [Storage]
         PG[(PostgreSQL)]
@@ -48,8 +50,10 @@ flowchart LR
     Agent --> ES
     Agent --> LLM
     FastAPI --> Redis
-    Redis --> Celery
-    Celery --> Ingest
+    Redis -->|ingestion queue| IngestionWorker
+    Redis -->|maintenance queue| MaintenanceWorker
+    IngestionWorker --> Ingest
+    MaintenanceWorker --> Delete
     Ingest --> PG
     Ingest --> MinIO
     Ingest --> Qdrant
@@ -66,7 +70,8 @@ flowchart LR
 | **Qdrant** | chunk 向量（语义检索） |
 | **Elasticsearch** | 正文与 caption 全文索引（IK 分词） |
 | **Redis** | Celery 消息队列 |
-| **Celery Worker** | 文档解析（含可选 VLM 路由）、向量化、索引写入 |
+| **Ingestion Worker** | 消费 `ingestion` 队列，执行文档解析（含可选 VLM 路由）、向量化与索引写入 |
+| **Maintenance Worker** | 消费 `maintenance` 队列，执行删除与外部存储清理，避免被长时入库任务阻塞 |
 | **Inference**（可选） | 独立 HTTP 服务承载 BGE embed / rerank，减轻 api/worker 内存 |
 
 前后端共享契约位于 `backend/shared/`（`file_formats.json`、`markers.json`），由 Python `shared_contract.py` 与前端 `@shared` 别名共同引用。
@@ -101,7 +106,7 @@ cp .env.example .env   # 编辑 LLM_API_KEY 等
 ./dev.sh --build       # 重新构建镜像
 ./dev.sh --docker      # 生产 Compose（Nginx 前端，端口 3000）
 ./dev.sh --stop        # 停止所有 Docker 服务
-docker compose logs -f api worker
+docker compose logs -f api worker-ingestion worker-maintenance
 ```
 
 可选：启用独立推理服务 offload embedding/rerank：
@@ -127,7 +132,8 @@ AllDocs/
 │   │   ├── services/         # ingestion, rag, llm, vector_store, …
 │   │   │   └── agent/        # Retrieval Agent、answer_flow、工具注册
 │   │   ├── inference/        # 可选 BGE embed/rerank HTTP 服务
-│   │   └── workers/          # Celery 任务
+│   │   ├── workers/          # Celery 队列路由、入库/维护任务与请求上下文传递
+│   │   └── observability.py  # JSON 日志、request/task 关联与 Prometheus 指标
 │   ├── shared/               # 前后端共享契约（格式、标记正则）
 │   └── tests/
 ├── frontend/src/             # Vite + React（citations、chatStream、MessageContent、SettingsPanel 等）
@@ -144,14 +150,15 @@ AllDocs/
 
 ## 文档入库流程
 
-上传后由 Celery Worker 异步执行：
+上传后由 `worker-ingestion` 异步执行；删除任务由独立的 `worker-maintenance` 处理：
 
 **解析（PDF 含矢量表/内嵌图提取与可选 VLM 路由）→ 切 chunk → 挂靠 asset → PostgreSQL + MinIO → 构建 sub_index → 向量化 → 混合索引**
 
 ```mermaid
 flowchart TD
-    A[上传文档] --> B[Celery Worker]
-    B --> C{文件类型}
+    A[上传文档] --> B[Redis ingestion queue]
+    B --> W[worker-ingestion]
+    W --> C{文件类型}
     C -->|PDF| D[逐页解析]
     C -->|DOCX/MD| E[按标题切 section]
     C -->|图片| F[整图 OCR]
@@ -184,10 +191,12 @@ flowchart TD
 | 格式 | section 来源 |
 |------|--------------|
 | **PDF** | 书签（Bookmark / 大纲） |
-| **DOCX** | Heading 1–6 段落样式 |
+| **DOCX** | Heading 1–6 段落样式；当前直接入库以标题和段落文本为主 |
 | **Markdown** | `#` 标题行 |
 | **TXT / HTML** | 无 section |
 | **PNG / JPG / WEBP** | 无 section；整图 OCR |
+
+PDF、图片和纯文本可在前端直接预览；DOCX 会在服务端转换为安全的自包含 HTML，HTML 文件则经过受限 iframe 展示。预览能力与入库能力不同：DOCX 预览可显示表格，但当前 DOCX 解析器不会把表格单元格或内嵌图片写入检索索引；含关键表格/插图的正式手册仍应导出为 PDF。详见 [手册编写规范 · 推荐格式](docs/manual-writing-guide.md#1-推荐格式)。
 
 ### Chunk 字段
 
@@ -309,7 +318,7 @@ Agent 限制（`.env`）：`RAG_AGENT_MAX_STEPS=10`、`RAG_AGENT_MAX_RETRIEVALS=
 
 ## API 概览
 
-前缀 `/api/v1`（WebSocket 除外）：
+业务 HTTP API 使用前缀 `/api/v1`；WebSocket、健康检查与指标端点位于根路径：
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
@@ -317,6 +326,7 @@ Agent 限制（`.env`）：`RAG_AGENT_MAX_STEPS=10`、`RAG_AGENT_MAX_RETRIEVALS=
 | GET | `/documents` | 文档列表 |
 | GET | `/documents/formats` | 支持格式 |
 | GET | `/documents/{id}/file` | 下载原文件 |
+| GET | `/documents/{id}/preview` | DOCX / HTML 安全预览 HTML |
 | GET | `/documents/{id}/pages/{page}/render` | 页面 PNG |
 | POST | `/documents/{id}/reindex` | 重新入库 |
 | DELETE | `/documents/{id}` | 异步删除 |
@@ -326,6 +336,7 @@ Agent 限制（`.env`）：`RAG_AGENT_MAX_STEPS=10`、`RAG_AGENT_MAX_RETRIEVALS=
 | PATCH | `/settings` | 更新可编辑配置（持久化至 PostgreSQL，优先于 `.env`） |
 | WS | `/ws/voice` | 语音问答 |
 | GET | `/health` | 健康检查 |
+| GET | `/metrics` | Prometheus 指标（`METRICS_ENABLED=true` 时） |
 
 文档状态：`pending` → `processing` → `ready` | `failed` | `deleting`。
 
@@ -344,10 +355,14 @@ Agent 限制（`.env`）：`RAG_AGENT_MAX_STEPS=10`、`RAG_AGENT_MAX_RETRIEVALS=
 | RAG / Agent | `RAG_CHUNK_SIZE`、`RAG_RETRIEVE_K`、`RAG_TOP_K`、`RAG_AGENT_*`、`RAG_STEP_ALIGN_MIN_SCORE`、`EMBED_SKIP_TABLE_*`、`HYBRID_ENABLED` |
 | OCR / PDF | `OCR_*`、`PDF_EXTRACT_TABLES`、`PDF_EXTRACT_EMBEDDED_IMAGES`、`PDF_MERGE_CROSS_PAGE_TABLES`、`PDF_FILTER_HEADER_FOOTER`、`PDF_*_MARGIN_RATIO` |
 | 基础设施 | `POSTGRES_URL`、`QDRANT_URL`、`ELASTICSEARCH_URL`、`MINIO_*` |
+| Worker | `CELERY_INGESTION_CONCURRENCY`、`CELERY_MAINTENANCE_CONCURRENCY` |
+| 可观测性 | `LOG_LEVEL`、`METRICS_ENABLED`、`METRICS_WORKER_PORT` |
 
 部分配置可通过前端设置面板或 `PATCH /api/v1/settings` 运行时覆盖（见 `settings_registry.py`），优先级高于 `.env`。
 
 完整列表见 [`.env.example`](.env.example)。
+
+API、Inference 与两个 Worker 均输出单行 JSON 日志。HTTP `request_id` 会通过 Celery header 传到任务日志，并与 `task_id` 一起用于排查跨服务请求；Prometheus 抓取地址及指标列表见 [可观测性说明](docs/observability.md)。
 
 ---
 

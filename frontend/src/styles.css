@@ -276,6 +276,7 @@ button {
   display: flex;
   align-items: center;
   gap: 4px;
+  margin-bottom: -8px;
   flex-shrink: 0;
   min-height: var(--layout-header);
   height: var(--layout-header);
@@ -592,7 +593,7 @@ button {
     )
   );
   max-width: 100%;
-  margin: 2px auto 0;
+  margin: 0 auto;
   padding: 0 16px;
   min-height: var(--layout-header);
   height: var(--layout-header);
@@ -955,11 +956,12 @@ button {
 
 .agent-steps-summary {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
   padding: 10px 14px;
   cursor: pointer;
   font-size: 0.82rem;
+  line-height: 1.5;
   color: var(--text-secondary);
   user-select: none;
   list-style: none;
@@ -972,6 +974,7 @@ button {
 .agent-steps-dot {
   width: 7px;
   height: 7px;
+  margin-top: calc((1.5em - 7px) / 2);
   border-radius: var(--radius-circle);
   background: var(--muted);
   flex-shrink: 0;
@@ -1457,6 +1460,8 @@ button {
 
 .answer-embed--figure figcaption {
   grid-row: 2;
+  width: 0;
+  min-width: 100%;
   margin-top: 6px;
 }
 
@@ -1512,9 +1517,11 @@ button {
 .composer-bottom-mask {
   position: relative;
   z-index: 0;
-  width: 100%;
+  width: calc(100% - 2 * var(--chat-inline-padding));
+  margin: calc(var(--composer-mask-overlap, 28px) * -1) auto 0;
   background: var(--bg-base);
-  padding: 6px var(--chat-inline-padding) max(10px, var(--safe-bottom));
+  padding: calc(6px + var(--composer-mask-overlap, 28px)) 0
+    var(--safe-bottom);
   box-sizing: border-box;
 }
 
@@ -1873,6 +1880,7 @@ button {
 
 .settings-panel {
   width: var(--active-settings-width);
+  container-type: inline-size;
   flex: none;
   align-self: stretch;
   height: 100%;
@@ -1923,46 +1931,53 @@ button {
 }
 
 .settings-panel-header {
+  --settings-header-top-offset: 2px;
+  --settings-header-gap: 8px;
+  position: relative;
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  margin-top: 2px;
-  padding: 0 22px 12px;
+  gap: var(--settings-header-gap);
+  margin-top: var(--settings-header-top-offset);
+  padding: 0 22px 10px;
   border-bottom: 1px solid var(--line);
 }
 
 .settings-panel-header-top {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
   min-width: 0;
+  padding-right: 32px;
 }
 
-.settings-panel-header-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-shrink: 0;
+.settings-panel-close {
+  position: absolute;
+  top: calc(
+    (var(--layout-header) - 40px) / 2 - var(--settings-header-top-offset)
+  );
+  right: 14px;
 }
 
 .settings-panel-header h2 {
   display: flex;
   align-items: center;
   margin: 0;
-  min-height: var(--layout-header);
-  height: var(--layout-header);
+  min-height: calc(
+    var(--layout-header) - var(--settings-header-gap) -
+      var(--settings-header-top-offset)
+  );
+  height: calc(
+    var(--layout-header) - var(--settings-header-gap) -
+      var(--settings-header-top-offset)
+  );
   box-sizing: border-box;
   font-size: 1.1rem;
   font-weight: 500;
   line-height: 1.2;
-}
-
-.settings-panel-subtitle {
-  margin: 0;
-  font-size: 0.82rem;
-  line-height: 1.5;
-  color: var(--muted);
+  flex: 0 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .settings-panel-status {
@@ -1977,7 +1992,8 @@ button {
 }
 
 .settings-search {
-  width: min(160px, 24vw);
+  width: 100%;
+  max-width: none;
   min-width: 0;
   padding: 9px 12px;
   border: 1px solid var(--line);
@@ -2023,6 +2039,7 @@ button {
 }
 
 .settings-group {
+  min-width: 0;
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
   background: var(--surface-muted);
@@ -2062,6 +2079,8 @@ button {
 
 .settings-group-title {
   flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
   font-size: 0.84rem;
   font-weight: 600;
 }
@@ -2077,13 +2096,14 @@ button {
 
 .settings-fields {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr));
   gap: 12px;
   padding: 0 12px 12px;
 }
 
 .settings-field {
   display: flex;
+  min-width: 0;
   flex-direction: column;
   gap: 6px;
   padding: 12px;
@@ -2097,9 +2117,12 @@ button {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  min-width: 0;
 }
 
 .settings-field-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
   font-size: 0.84rem;
   font-weight: 500;
   color: var(--text);
@@ -2132,6 +2155,7 @@ button {
 
 .settings-secret-wrap {
   display: flex;
+  min-width: 0;
   flex-direction: column;
   gap: 4px;
 }
@@ -2139,6 +2163,47 @@ button {
 .settings-secret-hint {
   font-size: 0.72rem;
   color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+@container (max-width: 300px) {
+  .settings-panel-header {
+    padding-inline: 14px;
+  }
+
+  .settings-panel-status {
+    padding-inline: 14px;
+  }
+
+  .settings-panel-banner {
+    margin-inline: 14px;
+  }
+
+  .settings-panel-body {
+    padding-inline: 14px;
+  }
+
+  .settings-group-toggle {
+    padding-inline: 10px;
+  }
+
+  .settings-fields {
+    gap: 8px;
+    padding-inline: 8px;
+  }
+
+  .settings-field {
+    padding: 10px;
+  }
+
+  .settings-panel-footer {
+    padding-inline: 14px;
+  }
+
+  .settings-panel-footer .confirm-dialog-btn {
+    flex: 1 1 0;
+    min-width: 0;
+  }
 }
 
 .settings-field-actions {
@@ -2362,6 +2427,60 @@ button {
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
   touch-action: pan-x pan-y;
+}
+
+.doc-viewer-resize-mask {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  opacity: 0;
+  background: var(--viewer-bg);
+  transition: opacity 0.18s ease-in-out;
+}
+
+.doc-viewer-resize-mask.is-visible {
+  opacity: 1;
+}
+
+.doc-viewer-resize-file-icon {
+  position: relative;
+  display: inline-flex;
+  color: var(--viewer-text);
+}
+
+.doc-viewer-resize-file-icon > span {
+  position: absolute;
+  left: 50%;
+  bottom: 12px;
+  transform: translateX(-50%);
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: #d92d20;
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1.25;
+  letter-spacing: 0.04em;
+}
+
+.doc-viewer-resize-file-icon.type-docx > span {
+  background: #2563eb;
+}
+
+.doc-viewer-resize-file-icon.type-html > span {
+  background: #e85d04;
+}
+
+.doc-viewer-resize-file-icon.type-image > span {
+  background: #16835d;
+}
+
+.doc-viewer-resize-file-icon.type-text > span {
+  background: #667085;
 }
 
 .doc-viewer-canvas {
@@ -2689,7 +2808,7 @@ button {
   }
 
   .settings-panel-header {
-    margin-top: 0;
+    --settings-header-top-offset: 0px;
   }
 
   .settings-search {

@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Document, DocumentStatus
 from app.workers.tasks import process_document
+from app.workers.enqueue import enqueue
 
 REINDEXABLE_STATUSES = {DocumentStatus.ready, DocumentStatus.failed}
 
@@ -31,7 +32,7 @@ async def schedule_document_reindex(db: AsyncSession, document: Document) -> Doc
     if document.status == DocumentStatus.deleting:
         raise ValueError("Document is being deleted")
     if document.status == DocumentStatus.pending:
-        process_document.delay(str(document.id))
+        enqueue(process_document, str(document.id))
         return document
     if document.status == DocumentStatus.processing:
         # Worker may have crashed mid-parse; allow reindex to recover stuck jobs.
@@ -40,5 +41,5 @@ async def schedule_document_reindex(db: AsyncSession, document: Document) -> Doc
     reset_document_for_reindex(document)
     await db.commit()
     await db.refresh(document)
-    process_document.delay(str(document.id))
+    enqueue(process_document, str(document.id))
     return document

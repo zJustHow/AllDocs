@@ -126,7 +126,6 @@ const zh = {
   },
   settings: {
     title: "系统设置",
-    subtitle: "以下配置会覆盖 .env 默认值，保存后立即对问答与新建索引任务生效。",
     open: "打开设置",
     save: "保存",
     saving: "保存中...",

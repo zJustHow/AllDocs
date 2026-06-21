@@ -2,6 +2,21 @@ def test_health_endpoint(api_client) -> None:
     response = api_client.get("/health")
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
+    assert response.headers["x-request-id"]
+
+
+def test_request_id_is_preserved(api_client) -> None:
+    response = api_client.get("/health", headers={"X-Request-ID": "test-request-123"})
+    assert response.headers["x-request-id"] == "test-request-123"
+
+
+def test_metrics_endpoint_exposes_http_metrics(api_client) -> None:
+    api_client.get("/health")
+    response = api_client.get("/metrics")
+
+    assert response.status_code == 200
+    assert "alldocs_http_requests_total" in response.text
+    assert "alldocs_http_request_duration_seconds" in response.text
 
 
 def test_read_settings_endpoint(api_client) -> None:

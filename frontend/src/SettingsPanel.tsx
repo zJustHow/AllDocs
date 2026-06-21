@@ -301,26 +301,23 @@ export default function SettingsPanel({ open, onClose }: SettingsPanelProps) {
         <header className="settings-panel-header">
           <div className="settings-panel-header-top">
             <h2 id="settings-panel-title">{t("settings.title")}</h2>
-            <div className="settings-panel-header-actions">
-              <input
-                type="search"
-                className="settings-search"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder={t("settings.searchPlaceholder")}
-                aria-label={t("settings.searchPlaceholder")}
-              />
-              <button
-                type="button"
-                className="icon-btn"
-                onClick={onClose}
-                aria-label={t("dialog.close")}
-              >
-                <CloseIcon />
-              </button>
-            </div>
+            <button
+              type="button"
+              className="icon-btn settings-panel-close"
+              onClick={onClose}
+              aria-label={t("dialog.close")}
+            >
+              <CloseIcon />
+            </button>
           </div>
-          <p className="settings-panel-subtitle">{t("settings.subtitle")}</p>
+          <input
+            type="search"
+            className="settings-search"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder={t("settings.searchPlaceholder")}
+            aria-label={t("settings.searchPlaceholder")}
+          />
         </header>
 
         {loading ? (

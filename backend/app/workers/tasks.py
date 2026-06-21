@@ -1,4 +1,5 @@
 import hashlib
+import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -23,6 +24,7 @@ from app.services.infra_init import ensure_external_stores
 from app.services.storage import StorageService
 from app.services.runtime_settings import refresh_from_session
 from app.services.vector_store import VectorStore
+from app.observability import record_stage_duration, timed_stage
 from app.workers.celery_app import celery_app
 
 settings = get_settings()
@@ -189,19 +191,27 @@ def process_document(document_id: str) -> None:
         document.status = DocumentStatus.processing
         document.error_message = None
         _set_progress(db, document, 5, "开始处理")
-        ensure_external_stores()
 
         try:
+            with timed_stage("ingestion", "external_stores", document_id=str(doc_uuid)):
+                ensure_external_stores()
             _set_progress(db, document, 10, "读取文件")
             if _abort_if_deleting(db, document):
                 return
-            file_bytes = StorageService().download(document.object_key)
+            with timed_stage("ingestion", "download", document_id=str(doc_uuid)):
+                file_bytes = StorageService().download(document.object_key)
 
-            parse_result = IngestionService().parse_document(
-                file_bytes,
-                document.name,
-                on_page_progress=_throttled_page_progress(db, document),
-            )
+            with timed_stage(
+                "ingestion",
+                "parse_document",
+                document_id=str(doc_uuid),
+                file_size_bytes=len(file_bytes),
+            ):
+                parse_result = IngestionService().parse_document(
+                    file_bytes,
+                    document.name,
+                    on_page_progress=_throttled_page_progress(db, document),
+                )
             parsed_chunks = parse_result.chunks
             page_count = parse_result.page_count
             if not parsed_chunks:
@@ -211,18 +221,18 @@ def process_document(document_id: str) -> None:
                 return
 
             storage = StorageService()
-            storage.delete_prefix(f"{doc_uuid}/assets/")
-
             settings = get_settings()
             vector_store = VectorStore()
-            vector_store.delete_by_document(doc_uuid)
-            if settings.hybrid_enabled:
-                FulltextStore().delete_by_document(doc_uuid)
-
-            db.query(Chunk).filter(Chunk.document_id == doc_uuid).delete()
-            db.commit()
+            with timed_stage("ingestion", "clear_previous_index", document_id=str(doc_uuid)):
+                storage.delete_prefix(f"{doc_uuid}/assets/")
+                vector_store.delete_by_document(doc_uuid)
+                if settings.hybrid_enabled:
+                    FulltextStore().delete_by_document(doc_uuid)
+                db.query(Chunk).filter(Chunk.document_id == doc_uuid).delete()
+                db.commit()
 
             _set_progress(db, document, 58, "保存文本块")
+            persist_started = time.perf_counter()
             chunk_rows: list[Chunk] = []
             for parsed in parsed_chunks:
                 chunk = Chunk(
@@ -239,7 +249,13 @@ def process_document(document_id: str) -> None:
             db.flush()
 
             pending_assets = _collect_pending_asset_uploads(doc_uuid, parsed_chunks, chunk_rows)
-            _upload_assets_parallel(storage, pending_assets)
+            with timed_stage(
+                "ingestion",
+                "upload_assets",
+                document_id=str(doc_uuid),
+                asset_count=len(pending_assets),
+            ):
+                _upload_assets_parallel(storage, pending_assets)
             for item in pending_assets:
                 initial_caption = item.text_summary.strip() if item.text_summary.strip() else None
                 initial_figure_caption = (
@@ -280,6 +296,14 @@ def process_document(document_id: str) -> None:
                     chunk.text,
                     assets_by_chunk.get(str(chunk.id), []),
                 )
+            record_stage_duration(
+                "ingestion",
+                "persist_chunks",
+                persist_started,
+                document_id=str(doc_uuid),
+                chunk_count=len(chunk_rows),
+                asset_count=len(pending_assets),
+            )
 
             _set_progress(db, document, 65, "生成向量")
             if _abort_if_deleting(db, document):
@@ -300,6 +324,7 @@ def process_document(document_id: str) -> None:
             embed_batch_size = settings.embedding_batch_size
             vectors: list[list[float]] = []
             total_batches = (len(embedding_texts) + embed_batch_size - 1) // embed_batch_size
+            embedding_started = time.perf_counter()
             for batch_index, start in enumerate(
                 range(0, len(embedding_texts), embed_batch_size), start=1
             ):
@@ -316,6 +341,14 @@ def process_document(document_id: str) -> None:
                 if _abort_if_deleting(db, document):
                     db.rollback()
                     return
+            record_stage_duration(
+                "ingestion",
+                "embedding",
+                embedding_started,
+                document_id=str(doc_uuid),
+                chunk_count=len(embedding_texts),
+                batch_count=total_batches,
+            )
             payloads = [
                 {
                     "document_id": str(doc_uuid),
@@ -333,29 +366,33 @@ def process_document(document_id: str) -> None:
             ]
 
             _set_progress(db, document, 80, "写入向量库")
-            vector_store.upsert_chunks(
-                chunk_ids=[chunk.id for chunk in chunk_rows],
-                vectors=vectors,
-                payloads=payloads,
-            )
+            with timed_stage("ingestion", "qdrant_upsert", document_id=str(doc_uuid)):
+                vector_store.upsert_chunks(
+                    chunk_ids=[chunk.id for chunk in chunk_rows],
+                    vectors=vectors,
+                    payloads=payloads,
+                )
 
             if settings.hybrid_enabled:
                 _set_progress(db, document, 90, "写入全文索引")
                 fulltext_store = FulltextStore()
-                fulltext_store.upsert_chunks(
-                    chunk_ids=[chunk.id for chunk in chunk_rows],
-                    texts=[chunk.text for chunk in chunk_rows],
-                    captions=[
-                        merge_captions(
-                            **asset_caption_kwargs(
-                                chunk.caption,
-                                assets_by_chunk.get(str(chunk.id), []),
+                with timed_stage(
+                    "ingestion", "elasticsearch_upsert", document_id=str(doc_uuid)
+                ):
+                    fulltext_store.upsert_chunks(
+                        chunk_ids=[chunk.id for chunk in chunk_rows],
+                        texts=[chunk.text for chunk in chunk_rows],
+                        captions=[
+                            merge_captions(
+                                **asset_caption_kwargs(
+                                    chunk.caption,
+                                    assets_by_chunk.get(str(chunk.id), []),
+                                )
                             )
-                        )
-                        for chunk in chunk_rows
-                    ],
-                    payloads=payloads,
-                )
+                            for chunk in chunk_rows
+                        ],
+                        payloads=payloads,
+                    )
 
             if _abort_if_deleting(db, document):
                 vector_store.delete_by_document(doc_uuid)
@@ -394,7 +431,8 @@ def delete_document(document_id: str) -> None:
 
         object_key = document.object_key
         try:
-            delete_external_stores(doc_uuid, object_key)
+            with timed_stage("maintenance", "delete_external_stores", document_id=str(doc_uuid)):
+                delete_external_stores(doc_uuid, object_key)
         except Exception as exc:
             db.rollback()
             document = db.get(Document, doc_uuid)
@@ -403,7 +441,8 @@ def delete_document(document_id: str) -> None:
             raise
 
         try:
-            finalize_document_deletion(db, document)
+            with timed_stage("maintenance", "finalize_deletion", document_id=str(doc_uuid)):
+                finalize_document_deletion(db, document)
         except Exception as exc:
             db.rollback()
             document = db.get(Document, doc_uuid)

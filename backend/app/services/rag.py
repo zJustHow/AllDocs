@@ -18,6 +18,7 @@ from app.services.hybrid import reciprocal_rank_fusion
 from app.services.reranker_provider import get_reranker_service
 from app.services.toc_lookup import ResolvedSection, resolve_section
 from app.services.vector_store import VectorStore
+from app.observability import timed_stage
 
 DetectorFactory.seed = 0
 logger = logging.getLogger(__name__)
@@ -171,13 +172,16 @@ class RAGService:
         return vector_ids, vector_score_map
 
     async def _embed_query(self, question: str) -> list[float]:
-        return await self.embedding.embed_query_async(question)
+        with timed_stage("rag", "embed_query"):
+            return await self.embedding.embed_query_async(question)
 
     async def embed_queries(self, texts: list[str]) -> list[list[float]]:
-        return await self.embedding.embed_queries_async(texts)
+        with timed_stage("rag", "embed_queries", text_count=len(texts)):
+            return await self.embedding.embed_queries_async(texts)
 
     async def _rerank(self, question: str, chunks: list[dict]) -> list[dict]:
-        return await self.reranker.rerank_async(question, chunks)
+        with timed_stage("rag", "rerank", chunk_count=len(chunks)):
+            return await self.reranker.rerank_async(question, chunks)
 
     async def _retrieve_once(
         self,
@@ -195,14 +199,16 @@ class RAGService:
         if query_vector is None:
             query_vector = await self._embed_query(question)
 
-        ranked_chunk_ids, score_map = await self._search_hybrid(
-            question,
-            query_vector,
-            retrieve_k,
-            chunk_filter,
-        )
+        with timed_stage("rag", "hybrid_search", retrieve_k=retrieve_k):
+            ranked_chunk_ids, score_map = await self._search_hybrid(
+                question,
+                query_vector,
+                retrieve_k,
+                chunk_filter,
+            )
 
-        chunks = await self.load_chunks(db, ranked_chunk_ids, score_map)
+        with timed_stage("rag", "load_chunks", chunk_count=len(ranked_chunk_ids)):
+            chunks = await self.load_chunks(db, ranked_chunk_ids, score_map)
         chunks = filter_chunks(chunks, chunk_filter)
         if not chunks:
             return []

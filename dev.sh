@@ -173,7 +173,7 @@ print_urls() {
   echo "  文档:  http://localhost:8000/docs"
   echo "  MinIO: http://localhost:9001  (minioadmin / minioadmin)"
   echo
-  echo "  查看日志: ${COMPOSE[*]} logs -f api worker"
+  echo "  查看日志: ${COMPOSE[*]} logs -f api worker-ingestion worker-maintenance"
   echo "  停止服务: ./dev.sh --stop"
   echo
 }
@@ -189,9 +189,9 @@ start_backend() {
   fi
 
   info "启动 Docker 服务..."
-  "${COMPOSE[@]}" up -d "${build_flag[@]}" postgres redis qdrant minio api worker
+  "${COMPOSE[@]}" up -d "${build_flag[@]}" postgres redis qdrant minio api worker-ingestion worker-maintenance
   # Celery worker 不热重载代码，每次开发启动时重启以加载最新任务定义
-  "${COMPOSE[@]}" restart worker
+  "${COMPOSE[@]}" restart worker-ingestion worker-maintenance
   wait_for_api
 }
 

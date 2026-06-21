@@ -1,4 +1,4 @@
-import { memo, type RefObject } from "react";
+import { memo, useLayoutEffect, useRef, type RefObject } from "react";
 import { useI18n } from "./i18n";
 import { MicIcon, SendIcon } from "./icons";
 
@@ -26,11 +26,34 @@ function Composer({
   onStopRecording,
 }: ComposerProps) {
   const { t } = useI18n();
+  const inputPillRef = useRef<HTMLDivElement>(null);
+  const bottomMaskRef = useRef<HTMLDivElement>(null);
+
+  useLayoutEffect(() => {
+    const inputPill = inputPillRef.current;
+    const bottomMask = bottomMaskRef.current;
+    if (!inputPill || !bottomMask) return;
+
+    const syncMaskOverlap = () => {
+      const inputHeight = inputPill.getBoundingClientRect().height;
+      if (inputHeight > 0) {
+        bottomMask.style.setProperty(
+          "--composer-mask-overlap",
+          `${inputHeight / 2}px`,
+        );
+      }
+    };
+
+    syncMaskOverlap();
+    const observer = new ResizeObserver(syncMaskOverlap);
+    observer.observe(inputPill);
+    return () => observer.disconnect();
+  }, []);
 
   return (
     <footer className="main-footer">
       <div className="composer-wrap">
-        <div className="input-pill">
+        <div ref={inputPillRef} className="input-pill">
           <textarea
             ref={textareaRef}
             value={input}
@@ -68,7 +91,7 @@ function Composer({
           </div>
         </div>
       </div>
-      <div className="composer-bottom-mask">
+      <div ref={bottomMaskRef} className="composer-bottom-mask">
         <p className={`composer-disclaimer${voiceStatus ? " voice-status" : ""}`}>
           {voiceStatus ?? t("app.disclaimer")}
         </p>

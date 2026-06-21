@@ -2,7 +2,7 @@ import markersContract from "@shared/markers.json";
 import fileFormatsContract from "@shared/file_formats.json";
 import type { MessageEmbed } from "../types";
 
-type PreviewMode = "pdf" | "image" | "text" | "unsupported";
+type PreviewMode = "pdf" | "image" | "text" | "docx" | "html" | "unsupported";
 
 interface FileFormatEntry {
   extension: string;

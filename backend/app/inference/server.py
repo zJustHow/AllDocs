@@ -2,8 +2,15 @@ import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import Response
 
 from app.config import get_settings
+from app.observability import (
+    RequestObservabilityMiddleware,
+    configure_logging,
+    metrics_payload,
+    timed_stage,
+)
 from app.inference.batcher import EmbedBatcher
 from app.inference.engine import InferenceEngine
 from app.inference.schemas import (
@@ -31,12 +38,16 @@ async def lifespan(app: FastAPI):
     await batcher.stop()
 
 
+settings = get_settings()
+configure_logging(settings.log_level)
+
 app = FastAPI(
     title="AllDocs Inference",
     description="Dedicated BGE-M3 embedding and rerank service",
     version="0.1.0",
     lifespan=lifespan,
 )
+app.add_middleware(RequestObservabilityMiddleware)
 
 
 @app.get("/health")
@@ -49,6 +60,14 @@ async def ready() -> dict[str, str]:
     if not hasattr(app.state, "engine"):
         raise HTTPException(status_code=503, detail="Engine not initialized")
     return {"status": "ready"}
+
+
+@app.get("/metrics", include_in_schema=False)
+async def metrics() -> Response:
+    if not settings.metrics_enabled:
+        return Response(status_code=404)
+    payload, content_type = metrics_payload()
+    return Response(content=payload, headers={"Content-Type": content_type})
 
 
 async def _embed_batched(batcher: EmbedBatcher, texts: list[str], *, chunk_size: int) -> list[list[float]]:
@@ -68,7 +87,8 @@ async def _embed_batched(batcher: EmbedBatcher, texts: list[str], *, chunk_size:
 async def embed_queries(payload: EmbedRequest) -> EmbedResponse:
     settings = get_settings()
     chunk_size = min(settings.embedding_batch_size, settings.inference_batch_max_texts)
-    vectors = await _embed_batched(app.state.batcher, payload.texts, chunk_size=chunk_size)
+    with timed_stage("inference", "embed_queries", text_count=len(payload.texts)):
+        vectors = await _embed_batched(app.state.batcher, payload.texts, chunk_size=chunk_size)
     return EmbedResponse(vectors=vectors)
 
 
@@ -76,7 +96,8 @@ async def embed_queries(payload: EmbedRequest) -> EmbedResponse:
 async def embed_documents(payload: EmbedRequest) -> EmbedResponse:
     settings = get_settings()
     chunk_size = min(settings.embedding_batch_size, settings.inference_batch_max_texts)
-    vectors = await _embed_batched(app.state.batcher, payload.texts, chunk_size=chunk_size)
+    with timed_stage("inference", "embed_documents", text_count=len(payload.texts)):
+        vectors = await _embed_batched(app.state.batcher, payload.texts, chunk_size=chunk_size)
     return EmbedResponse(vectors=vectors)
 
 
@@ -91,9 +112,10 @@ async def rerank(payload: RerankRequest) -> RerankResponse:
         }
         for idx, passage in enumerate(payload.passages)
     ]
-    ranked = await asyncio.to_thread(
-        engine.rerank, payload.query, items, top_k=payload.top_k
-    )
+    with timed_stage("inference", "rerank", passage_count=len(items)):
+        ranked = await asyncio.to_thread(
+            engine.rerank, payload.query, items, top_k=payload.top_k
+        )
     response_items = [
         RerankItem(index=int(item["_index"]), score=float(item["score"]))
         for item in ranked

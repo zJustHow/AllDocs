@@ -99,3 +99,38 @@ def parse_docx_pages(file_bytes: bytes) -> list[tuple[str | None, str, int]]:
         if text:
             pages.append((section, text, 1))
     return pages
+
+
+def render_docx_preview_html(file_bytes: bytes) -> str:
+    """Render DOCX text and tables as safe, self-contained preview HTML."""
+    from docx import Document as DocxDocument
+
+    doc = DocxDocument(BytesIO(file_bytes))
+    content: list[str] = []
+    for para in doc.paragraphs:
+        text = para.text.strip()
+        if not text:
+            continue
+        style = (para.style.name or "").lower()
+        escaped = html.escape(text)
+        if style.startswith("heading"):
+            match = re.search(r"(\d+)", style)
+            level = min(6, max(1, int(match.group(1)))) if match else 2
+            content.append(f"<h{level}>{escaped}</h{level}>")
+        else:
+            content.append(f"<p>{escaped}</p>")
+
+    for table in doc.tables:
+        rows: list[str] = []
+        for row in table.rows:
+            cells = "".join(f"<td>{html.escape(cell.text.strip())}</td>" for cell in row.cells)
+            rows.append(f"<tr>{cells}</tr>")
+        if rows:
+            content.append(f"<table>{''.join(rows)}</table>")
+
+    body = "".join(content) or "<p></p>"
+    return f"""<!doctype html><html><head><meta charset="utf-8"><style>
+body{{margin:0;padding:32px;font:16px/1.65 system-ui,sans-serif;color:#222;background:#fff}}
+h1,h2,h3,h4,h5,h6{{line-height:1.3;margin:1.2em 0 .55em}}p{{margin:.65em 0}}
+table{{width:100%;border-collapse:collapse;margin:1em 0}}td{{border:1px solid #ccc;padding:8px;vertical-align:top}}
+</style></head><body>{body}</body></html>"""

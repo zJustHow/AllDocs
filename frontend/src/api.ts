@@ -14,6 +14,10 @@ export function documentFileUrl(documentId: string): string {
   return `${API_BASE}/api/v1/documents/${documentId}/file`;
 }
 
+export function documentPreviewUrl(documentId: string): string {
+  return `${API_BASE}/api/v1/documents/${documentId}/preview`;
+}
+
 export function documentPageRenderUrl(
   documentId: string,
   page: number,

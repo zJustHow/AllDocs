@@ -165,6 +165,40 @@ describe("DocumentViewer", () => {
     });
   });
 
+  it("keeps bbox highlights visible without showing the resize mask when changing citations", async () => {
+    const view = renderViewer(pdfTarget);
+    const image = await screen.findByRole("img", { name: /manual.pdf p\.1/i });
+    Object.defineProperty(image, "complete", { value: true, configurable: true });
+    Object.defineProperty(image, "naturalWidth", { value: 800, configurable: true });
+    Object.defineProperty(image, "naturalHeight", { value: 1200, configurable: true });
+    Object.defineProperty(image, "offsetWidth", { value: 400, configurable: true });
+    Object.defineProperty(image, "offsetHeight", { value: 600, configurable: true });
+    image.dispatchEvent(new Event("load"));
+
+    await waitFor(() => {
+      expect(document.querySelector(".doc-viewer-highlight")).toBeInTheDocument();
+    });
+
+    view.rerender(
+      <I18nProvider>
+        <DocumentViewer
+          target={{
+            ...pdfTarget,
+            regions: [{ page: 1, bbox: [0.2, 0.3, 0.4, 0.5] }],
+          }}
+          onClose={vi.fn()}
+        />
+      </I18nProvider>,
+    );
+
+    await waitFor(() => {
+      expect(document.querySelector(".doc-viewer-highlight")).toBeInTheDocument();
+    });
+    expect(document.querySelector(".doc-viewer-resize-mask")).not.toHaveClass(
+      "is-visible",
+    );
+  });
+
   it("navigates PDF pages with arrow keys", async () => {
     renderViewer(pdfTarget);
 
@@ -234,6 +268,26 @@ describe("DocumentViewer", () => {
       "src",
       "/api/v1/documents/doc-img/file",
     );
+  });
+
+  it.each([
+    ["guide.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"],
+    ["guide.html", "text/html"],
+  ])("renders %s in a sandboxed document preview", (documentName, contentType) => {
+    renderViewer({
+      documentId: "doc-preview",
+      documentName,
+      contentType,
+      page: null,
+      section: null,
+      regions: [],
+    });
+
+    expect(screen.getByTitle(documentName)).toHaveAttribute(
+      "src",
+      "/api/v1/documents/doc-preview/preview",
+    );
+    expect(screen.getByTitle(documentName)).toHaveAttribute("sandbox", "");
   });
 
   it("shows unsupported preview messaging for unknown file types", () => {

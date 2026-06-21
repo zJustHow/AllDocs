@@ -41,6 +41,9 @@ class Settings(BaseSettings):
     postgres_url: str = "postgresql+asyncpg://alldocs:alldocs@localhost:5432/alldocs"
     postgres_url_sync: str = "postgresql://alldocs:alldocs@localhost:5432/alldocs"
     redis_url: str = "redis://localhost:6379/0"
+    log_level: str = "INFO"
+    metrics_enabled: bool = True
+    metrics_worker_port: int = 9100
     qdrant_url: str = "http://localhost:6333"
     qdrant_collection: str = "manual_chunks"
 

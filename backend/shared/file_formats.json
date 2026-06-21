@@ -5,12 +5,12 @@
       "extension": ".docx",
       "contentType": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
       "label": "Word",
-      "previewMode": "unsupported"
+      "previewMode": "docx"
     },
     { "extension": ".txt", "contentType": "text/plain", "label": "Text", "previewMode": "text" },
     { "extension": ".md", "contentType": "text/markdown", "label": "Text", "previewMode": "text" },
-    { "extension": ".html", "contentType": "text/html", "label": "HTML", "previewMode": "unsupported" },
-    { "extension": ".htm", "contentType": "text/html", "label": "HTML", "previewMode": "unsupported" },
+    { "extension": ".html", "contentType": "text/html", "label": "HTML", "previewMode": "html" },
+    { "extension": ".htm", "contentType": "text/html", "label": "HTML", "previewMode": "html" },
     { "extension": ".png", "contentType": "image/png", "label": "Image", "previewMode": "image" },
     { "extension": ".jpg", "contentType": "image/jpeg", "label": "Image", "previewMode": "image" },
     { "extension": ".jpeg", "contentType": "image/jpeg", "label": "Image", "previewMode": "image" },

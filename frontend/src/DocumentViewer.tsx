@@ -8,7 +8,7 @@ import {
   type CSSProperties,
 } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { documentFileUrl, documentPageRenderUrl } from "./api";
+import { documentFileUrl, documentPageRenderUrl, documentPreviewUrl } from "./api";
 import { formatCitationSnippetExcerpt, type ViewerTarget } from "./citations";
 import { getPreviewMode } from "./fileTypes";
 import { useI18n } from "./i18n";
@@ -16,6 +16,7 @@ import {
   ChevronLeftIcon,
   ChevronRightIcon,
   CloseIcon,
+  DocIcon,
   ZoomInIcon,
   ZoomOutIcon,
 } from "./icons";
@@ -45,6 +46,7 @@ const PAGE_GAP = 12;
 const DEFAULT_PAGE_ASPECT = 1.414;
 const SCROLL_TO_TARGET_MAX_RETRIES = 48;
 const DEFAULT_SCROLL_WIDTH_ESTIMATE = 360;
+const RESIZE_SETTLE_MS = 80;
 
 function pagesNear(center: number, pageCount: number): number[] {
   const pages: number[] = [];
@@ -120,14 +122,19 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
   );
   const [readyPageImages, setReadyPageImages] = useState<Set<number>>(() => new Set());
   const [scrollWidth, setScrollWidth] = useState(0);
+  const [resizeMaskVisible, setResizeMaskVisible] = useState(false);
   const [highlightStylesByPage, setHighlightStylesByPage] = useState<
     Map<number, CSSProperties[]>
   >(() => new Map());
 
   const scrollRef = useRef<HTMLDivElement>(null);
+  const stageRef = useRef<HTMLDivElement>(null);
   const scrollWidthRef = useRef(0);
   const pageRefs = useRef(new Map<number, HTMLDivElement>());
   const scrollSyncLockRef = useRef(false);
+  const resizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const resizeFrameRef = useRef<number | null>(null);
+  const resizingRef = useRef(false);
   const currentPageRef = useRef(currentPage);
   const highlightRegions = useMemo(() => resolveHighlightRegions(target), [target]);
   const primaryRegion = highlightRegions[0] ?? null;
@@ -151,6 +158,16 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
 
   const showPageToolbar = previewMode === "pdf" && pageCount !== null;
   const fileUrl = documentFileUrl(target.documentId);
+  const previewUrl = documentPreviewUrl(target.documentId);
+  const fileExtension = target.documentName.split(".").pop()?.toUpperCase() ?? "DOC";
+  const resizeMaskLabel =
+    previewMode === "image"
+      ? fileExtension
+      : previewMode === "text"
+        ? fileExtension
+        : previewMode === "unsupported"
+          ? "DOC"
+          : previewMode.toUpperCase();
 
   currentPageRef.current = currentPage;
 
@@ -330,8 +347,6 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
     setLoadedPages(
       buildInitialLoadedPages(target, resolveHighlightRegions(target), pageCount),
     );
-    scrollWidthRef.current = 0;
-    setScrollWidth(0);
   }, [pageCount, previewMode, target.documentId]);
 
   useEffect(() => {
@@ -445,20 +460,57 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
   ]);
 
   useLayoutEffect(() => {
+    const stageEl = stageRef.current;
     const scrollEl = scrollRef.current;
-    if (!scrollEl || previewMode !== "pdf") return;
+    if (!stageEl) return;
 
-    const updateWidth = () => {
+    const commitWidth = () => {
+      if (previewMode !== "pdf" || !scrollEl) return;
       const width = scrollEl.clientWidth;
       if (width <= 0) return;
       scrollWidthRef.current = width;
       setScrollWidth(width);
     };
 
-    updateWidth();
-    const observer = new ResizeObserver(updateWidth);
-    observer.observe(scrollEl);
-    return () => observer.disconnect();
+    commitWidth();
+    let observedOuterWidth = stageEl.getBoundingClientRect().width;
+    const observer = new ResizeObserver(() => {
+      const nextOuterWidth = stageEl.getBoundingClientRect().width;
+      if (
+        nextOuterWidth <= 0 ||
+        Math.abs(nextOuterWidth - observedOuterWidth) < 0.5
+      ) {
+        return;
+      }
+      observedOuterWidth = nextOuterWidth;
+      resizingRef.current = previewMode === "pdf";
+      setResizeMaskVisible(true);
+      if (resizeTimerRef.current !== null) {
+        clearTimeout(resizeTimerRef.current);
+      }
+      resizeTimerRef.current = setTimeout(() => {
+        resizeTimerRef.current = null;
+        commitWidth();
+        resizeFrameRef.current = requestAnimationFrame(() => {
+          resizeFrameRef.current = null;
+          resizingRef.current = false;
+          setResizeMaskVisible(false);
+        });
+      }, RESIZE_SETTLE_MS);
+    });
+    observer.observe(stageEl);
+    return () => {
+      observer.disconnect();
+      if (resizeTimerRef.current !== null) {
+        clearTimeout(resizeTimerRef.current);
+        resizeTimerRef.current = null;
+      }
+      if (resizeFrameRef.current !== null) {
+        cancelAnimationFrame(resizeFrameRef.current);
+        resizeFrameRef.current = null;
+      }
+      resizingRef.current = false;
+    };
   }, [previewMode]);
 
   useEffect(() => {
@@ -518,7 +570,7 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
   };
 
   const handleScroll = useCallback(() => {
-    if (scrollSyncLockRef.current || pageCount === null) return;
+    if (scrollSyncLockRef.current || resizingRef.current || pageCount === null) return;
 
     const scrollEl = scrollRef.current;
     if (!scrollEl || estimatedPageRowHeight <= 0) return;
@@ -608,6 +660,7 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
 
       <div className="doc-viewer-shell">
         <div
+          ref={stageRef}
           className={`doc-viewer-stage${previewMode === "pdf" ? " doc-viewer-stage--pdf" : ""}`}
         >
           {previewMode === "pdf" ? (
@@ -719,6 +772,14 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
               {previewMode === "text" && textContent && !error && (
                 <pre className="doc-viewer-text">{textContent}</pre>
               )}
+              {(previewMode === "docx" || previewMode === "html") && !error && (
+                <iframe
+                  src={previewUrl}
+                  title={target.documentName}
+                  className="doc-viewer-frame"
+                  sandbox=""
+                />
+              )}
               {previewMode === "unsupported" && !error && (
                 <div className="doc-viewer-status">
                   <p>{t("viewer.unsupported")}</p>
@@ -729,6 +790,16 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
               )}
             </div>
           )}
+
+          <div
+            className={`doc-viewer-resize-mask${resizeMaskVisible ? " is-visible" : ""}`}
+            aria-hidden="true"
+          >
+            <span className={`doc-viewer-resize-file-icon type-${previewMode}`}>
+              <DocIcon size={64} />
+              <span>{resizeMaskLabel}</span>
+            </span>
+          </div>
 
           {showPageToolbar && showToolbar && (
             <div className="doc-viewer-toolbar">

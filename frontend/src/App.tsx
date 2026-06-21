@@ -17,7 +17,13 @@ import { useRightPanels } from "./hooks/useRightPanels";
 import { useSidebarLayout } from "./hooks/useSidebarLayout";
 import { useVoice } from "./hooks/useVoice";
 import { useI18n, type Locale } from "./i18n";
-import { AllDocsIcon, DocIcon, MenuIcon, SettingsIcon } from "./icons";
+import {
+  AllDocsIcon,
+  DocIcon,
+  MenuIcon,
+  SettingsIcon,
+  WarningTriangleIcon,
+} from "./icons";
 import MessageList from "./MessageList";
 import Sidebar from "./Sidebar";
 import { useConfirmDialog } from "./useConfirmDialog";
@@ -175,15 +181,17 @@ export default function App() {
           <span className="top-bar-title">{t("app.brand")}</span>
           {selectedDocIds.length > 0 ? (
             <span className="top-bar-sub">
-              <DocIcon />{" "}
+              <DocIcon />
               {t("topBar.docsSelected", { count: selectedDocIds.length })}
             </span>
           ) : readyDocs.length > 0 ? (
             <span className="top-bar-sub top-bar-hint">
+              <WarningTriangleIcon />
               {t("topBar.selectDocs")}
             </span>
           ) : hasMessages ? (
             <span className="top-bar-sub top-bar-hint">
+              <WarningTriangleIcon />
               {t("topBar.uploadFirst")}
             </span>
           ) : null}
