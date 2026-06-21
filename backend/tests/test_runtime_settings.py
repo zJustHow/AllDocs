@@ -44,17 +44,22 @@ def test_invalidate_service_caches_clears_infra_clients() -> None:
     from app.services.storage import get_minio_client
     from app.services.vector_store import get_qdrant_client
 
-    agent_before = get_agent_service()
-    minio_before = get_minio_client()
-    qdrant_before = get_qdrant_client()
-    es_before = get_elasticsearch_client()
+    get_agent_service()
+    get_minio_client()
+    get_qdrant_client()
+    get_elasticsearch_client()
+
+    assert get_agent_service.cache_info().currsize == 1
+    assert get_minio_client.cache_info().currsize == 1
+    assert get_qdrant_client.cache_info().currsize == 1
+    assert get_elasticsearch_client.cache_info().currsize == 1
 
     invalidate_service_caches()
 
-    assert get_agent_service() is not agent_before
-    assert get_minio_client() is not minio_before
-    assert get_qdrant_client() is not qdrant_before
-    assert get_elasticsearch_client() is not es_before
+    assert get_agent_service.cache_info().currsize == 0
+    assert get_minio_client.cache_info().currsize == 0
+    assert get_qdrant_client.cache_info().currsize == 0
+    assert get_elasticsearch_client.cache_info().currsize == 0
 
 
 def test_coerce_setting_value() -> None:

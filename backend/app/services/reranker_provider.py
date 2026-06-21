@@ -4,13 +4,18 @@ from app.services.inference_client import InferenceClient
 
 class LocalRerankerService:
     def __init__(self, settings: Settings | None = None) -> None:
-        from app.services.reranker import RerankerService
-
-        self._local = RerankerService(settings)
         self.settings = settings or get_settings()
+        self._local = None
+
+    def _service(self):
+        if self._local is None:
+            from app.services.reranker import RerankerService
+
+            self._local = RerankerService(self.settings)
+        return self._local
 
     def rerank(self, question: str, items: list[dict]) -> list[dict]:
-        return self._local.rerank(question, items)
+        return self._service().rerank(question, items)
 
     async def rerank_async(self, question: str, items: list[dict]) -> list[dict]:
         import asyncio

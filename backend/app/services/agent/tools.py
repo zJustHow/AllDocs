@@ -561,6 +561,14 @@ class AgentToolRegistry:
             observation += f"\n（锚点 id={anchor_id}，前 {before} / 后 {after} 块，共 {len(chunks)} 条）"
             return observation, chunks, 0
 
+        if action == "finish":
+            reason = str(action_input.get("reason") or "进入回答阶段").strip()
+            key_evidence_ids = parse_finish_key_evidence_ids(action_input)
+            observation = reason
+            if key_evidence_ids:
+                observation += f"\n关键证据：{', '.join(key_evidence_ids)}"
+            return observation, [], 0
+
         return f"未知工具：{action}", [], 0
 
     @staticmethod

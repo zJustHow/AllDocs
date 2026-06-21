@@ -4,18 +4,24 @@ from app.services.inference_client import InferenceClient
 
 class LocalEmbeddingService:
     def __init__(self, settings: Settings | None = None) -> None:
-        from app.services.embedding import EmbeddingService
+        self.settings = settings or get_settings()
+        self._local = None
 
-        self._local = EmbeddingService(settings)
+    def _service(self):
+        if self._local is None:
+            from app.services.embedding import EmbeddingService
+
+            self._local = EmbeddingService(self.settings)
+        return self._local
 
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
-        return self._local.embed_documents(texts)
+        return self._service().embed_documents(texts)
 
     def embed_query(self, text: str) -> list[float]:
-        return self._local.embed_query(text)
+        return self._service().embed_query(text)
 
     def embed_queries(self, texts: list[str]) -> list[list[float]]:
-        return self._local.embed_queries(texts)
+        return self._service().embed_queries(texts)
 
     async def embed_queries_async(self, texts: list[str]) -> list[list[float]]:
         import asyncio
