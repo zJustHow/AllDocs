@@ -166,8 +166,11 @@ export function useVoice({
 
         const opened = new Promise<void>((resolve, reject) => {
           ws!.onopen = () => resolve();
-          ws!.onerror = () =>
-            reject(new Error(t("voice.connectionFailed")));
+          ws!.onerror = () => {
+            const error = new Error(t("voice.connectionFailed"));
+            cleanup(error.message);
+            reject(error);
+          };
         });
 
         ws.onmessage = (event) => {

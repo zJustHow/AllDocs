@@ -456,8 +456,10 @@ describe("App", () => {
 
     await user.click(screen.getByRole("button", { name: /New chat|新对话/i }));
 
-    expect(document.querySelector(".doc-viewer-slot")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Close document preview|关闭/i })).not.toBeInTheDocument();
+    expect(document.querySelector(".doc-viewer-slot.is-closing")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(document.querySelector(".doc-viewer-slot")).not.toBeInTheDocument();
+    });
   });
 
   it("unmounts the viewer slot when closed", async () => {
@@ -469,7 +471,10 @@ describe("App", () => {
     expect(document.querySelector(".doc-viewer-slot.is-open")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: /Close document preview|关闭/i }));
-    expect(document.querySelector(".doc-viewer-slot")).not.toBeInTheDocument();
+    expect(document.querySelector(".doc-viewer-slot.is-closing")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(document.querySelector(".doc-viewer-slot")).not.toBeInTheDocument();
+    });
   });
 
   it("keeps the settings panel open when the viewer is closed", async () => {

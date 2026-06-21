@@ -1,0 +1,133 @@
+{"kind":"deck","id":"pr/u4h5qa","name":"Deck"}
+{"kind":"layout","layoutId":"/ppt/slideMasters/slideMaster1.xml","name":"","type":"master","placeholders":[{"name":"title","type":"title","textPreview":"Click to edit Master title style"},{"name":"body","type":"body","textPreview":"Click to edit Master text styles | Second level | Third level | Fourth level | Fifth level"},{"name":"footer","type":"footer"},{"name":"slideNumber","type":"slideNumber","textPreview":"‹#›"}]}
+{"kind":"layout","layoutId":"/ppt/slideLayouts/slideLayout1.xml","name":"Title Slide","placeholders":[{"name":"title","type":"title","textPreview":"Click to edit Master title style"},{"name":"subtitle","type":"subtitle","textPreview":"Click to edit Master subtitle style"}]}
+{"kind":"layout","layoutId":"/ppt/slideLayouts/slideLayout2.xml","name":"Title and Content","placeholders":[{"name":"text placeholder 2","textPreview":"Click to edit Master text styles | Second level | Third level | Fourth level | Fifth level"},{"name":"footer","type":"footer"},{"name":"slideNumber","type":"slideNumber","textPreview":"‹#›"},{"name":"title","type":"title","textPreview":"Click to edit Master title style"}]}
+{"kind":"layout","layoutId":"/ppt/slideLayouts/slideLayout3.xml","name":"Two Content","placeholders":[{"name":"text placeholder 2","textPreview":"Click to edit Master text styles | Second level | Third level | Fourth level | Fifth level"},{"name":"footer","type":"footer"},{"name":"slideNumber","type":"slideNumber","textPreview":"‹#›"},{"name":"text placeholder 2","textPreview":"Click to edit Master text styles | Second level | Third level | Fourth level | Fifth level"},{"name":"title","type":"title","textPreview":"Click to edit Master title style"}]}
+{"kind":"layout","layoutId":"/ppt/slideLayouts/slideLayout4.xml","name":"Three Content","placeholders":[{"name":"text placeholder 2","textPreview":"Click to edit Master text styles | Second level | Third level | Fourth level | Fifth level"},{"name":"footer","type":"footer"},{"name":"slideNumber","type":"slideNumber","textPreview":"‹#›"},{"name":"text placeholder 2","textPreview":"Click to edit Master text styles | Second level | Third level | Fourth level | Fifth level"},{"name":"text placeholder 2","textPreview":"Click to edit Master text styles | Second level | Third level | Fourth level | Fifth level"},{"name":"title","type":"title","textPreview":"Click to edit Master title style"}]}
+{"kind":"layout","layoutId":"/ppt/slideLayouts/slideLayout5.xml","name":"Four Content","placeholders":[{"name":"text placeholder 2","textPreview":"Click to edit Master"},{"name":"footer","type":"footer"},{"name":"slideNumber","type":"slideNumber","textPreview":"‹#›"},{"name":"title","type":"title","textPreview":"Click to edit Master title style"},{"name":"body","type":"body","textPreview":"Click to edit Master"},{"name":"text placeholder 2","textPreview":"Click to edit Master"},{"name":"body","type":"body","textPreview":"Click to edit Master"}]}
+{"kind":"layout","layoutId":"/ppt/slideLayouts/slideLayout6.xml","name":"Title Only","placeholders":[{"name":"footer","type":"footer"},{"name":"slideNumber","type":"slideNumber","textPreview":"‹#›"},{"name":"title","type":"title","textPreview":"Click to edit Master title style"}]}
+{"kind":"layout","layoutId":"/ppt/slideLayouts/slideLayout7.xml","name":"Footer Only","placeholders":[{"name":"footer","type":"footer"},{"name":"slideNumber","type":"slideNumber","textPreview":"‹#›"}]}
+{"kind":"layout","layoutId":"/ppt/slideLayouts/slideLayout8.xml","name":"Blank"}
+{"kind":"layout","layoutId":"/ppt/slideLayouts/slideLayout9.xml","name":"36 Field Grid"}
+{"kind":"layout","layoutId":"/ppt/slideLayouts/slideLayout10.xml","name":"48 Field Grid"}
+{"kind":"slide","id":"sl/2x4nap4r","slide":1,"title":"AllDocs","textShapes":4}
+{"kind":"textbox","id":"sh/udg7adsj","slide":1,"name":"Title 3","placeholder":"title","text":"AllDocs\n技术路线与实现","textPreview":"AllDocs | 技术路线与实现","textChars":15,"textLines":2,"bbox":[41.33,182.55,992,261.57]}
+{"kind":"textbox","id":"sh/nyd0z610","slide":1,"name":"Subtitle 4","placeholder":"subtitle","text":"面向操作指南与维修手册\nAgentic RAG · 多模态 PDF · 可追溯引用","textPreview":"面向操作指南与维修手册 | Agentic RAG · 多模态 PDF · 可追溯引用","textChars":41,"textLines":2,"bbox":[41.33,502.83,374.67,127.92]}
+{"kind":"textbox","id":"sh/cj6tovah","slide":1,"name":"Subtitle 4","text":"TECHNICAL REVIEW","textPreview":"TECHNICAL REVIEW","textChars":16,"textLines":1,"bbox":[41.33,41.18,375.69,68.15]}
+{"kind":"textbox","id":"sh/u9knih4b","slide":1,"name":"Subtitle 4","text":"2026.06","textPreview":"2026.06","textChars":7,"textLines":1,"bbox":[828,41.18,410.67,68.15]}
+{"kind":"notes","id":"nt/2x4nap4r","slide":1,"text":""}
+{"kind":"slide","id":"sl/pg3ex0nu","slide":2,"title":"2","textShapes":11}
+{"kind":"textbox","id":"sh/r65wjudg","slide":2,"name":"Slide Number Placeholder 3","placeholder":"slideNumber","text":"2","textPreview":"2","textChars":1,"textLines":1,"bbox":[0,0,0,0]}
+{"kind":"textbox","id":"sh/lwval87e","slide":2,"name":"Title 10","placeholder":"title","text":"一页看懂：从文档到可验证答案","textPreview":"一页看懂：从文档到可验证答案","textChars":14,"textLines":1,"bbox":[41.33,36.12,581.02,109.97]}
+{"kind":"shape","id":"sh/g3ex0nux","slide":2,"name":"Rounded Rectangle 2","bbox":[41.33,213.33,271.07,278.9]}
+{"kind":"shape","id":"sh/5o7qpg3e","slide":2,"name":"Rounded Rectangle 1","bbox":[0,565.45,1280,156]}
+{"kind":"textbox","id":"sh/e9cvixcz","slide":2,"name":"Content Placeholder 9","text":"多格式","textPreview":"多格式","textChars":3,"textLines":1,"bbox":[66.25,236.42,223.97,94.88]}
+{"kind":"textbox","id":"sh/ex0nuxc3","slide":2,"name":"Content Placeholder 15","text":"PDF / DOCX / MD\n图片与语音","textPreview":"PDF / DOCX / MD | 图片与语音","textChars":21,"textLines":2,"bbox":[73.25,392.67,216.98,64.67]}
+{"kind":"shape","id":"sh/6xkf6dcb","slide":2,"name":"Rounded Rectangle 33","bbox":[351.28,213.33,271.07,278.9]}
+{"kind":"textbox","id":"sh/zed8v6ps","slide":2,"name":"Content Placeholder 9","text":"混合检索","textPreview":"混合检索","textChars":4,"textLines":1,"bbox":[376.19,236.42,223.97,94.88]}
+{"kind":"textbox","id":"sh/oza1gvy9","slide":2,"name":"Content Placeholder 15","text":"Qdrant + ES\nRRF + rerank","textPreview":"Qdrant + ES | RRF + rerank","textChars":24,"textLines":2,"bbox":[383.19,392.67,216.98,64.67]}
+{"kind":"shape","id":"sh/hk3q5o7q","slide":2,"name":"Rounded Rectangle 36","bbox":[658.48,213.33,271.07,278.9]}
+{"kind":"textbox","id":"sh/al87ed8b","slide":2,"name":"Content Placeholder 9","text":"多步取证","textPreview":"多步取证","textChars":4,"textLines":1,"bbox":[683.4,236.42,223.97,94.88]}
+{"kind":"textbox","id":"sh/z61032ls","slide":2,"name":"Content Placeholder 15","text":"10 类 Agent 工具\n并行检索","textPreview":"10 类 Agent 工具 | 并行检索","textChars":18,"textLines":2,"bbox":[690.39,392.67,216.98,64.67]}
+{"kind":"shape","id":"sh/fa9w3m94","slide":2,"name":"Rounded Rectangle 39","bbox":[968.42,213.33,271.07,278.9]}
+{"kind":"textbox","id":"sh/qpg3ex0n","slide":2,"name":"Content Placeholder 9","text":"可追溯","textPreview":"可追溯","textChars":3,"textLines":1,"bbox":[993.34,236.42,223.97,94.88]}
+{"kind":"textbox","id":"sh/xczed8v6","slide":2,"name":"Content Placeholder 15","text":"页码 / 区域 / 图表\n句级对齐","textPreview":"页码 / 区域 / 图表 | 句级对齐","textChars":17,"textLines":2,"bbox":[1000.33,392.67,216.98,64.67]}
+{"kind":"textbox","id":"sh/8v6psfil","slide":2,"name":"Content Placeholder 2","text":"核心路线：结构化解析 → 双路召回 → Agent 规划取证 → 流式合成与证据回链","textPreview":"核心路线：结构化解析 → 双路召回 → Agent 规划取证 → 流式合成与证据回链","textChars":42,"textLines":1,"bbox":[657.33,42.09,581.61,104]}
+{"kind":"notes","id":"nt/pg3ex0nu","slide":2,"text":""}
+{"kind":"slide","id":"sl/s72x4nap","slide":3,"title":"前端与 API","textShapes":5}
+{"kind":"textbox","id":"sh/itgfmlkj","slide":3,"name":"Google Shape;534;p58","text":"前端与 API\nReact + Vite 提供上传、流式对话、文档预览、引用跳转与语音交互。FastAPI 负责会话、设置、SSE / WebSocket 与 Retrieval Agent 编排。\n\n数据与任务\nPostgreSQL 保存元数据；MinIO 保存原文与图表；Qdrant 承载语义向量；Elasticsearch 提供 BM25；Redis + Celery 隔离入库与维护任务。","textPreview":"前端与 API | React + Vite 提供上传、流式对话、文档预览、引用跳转与语音交互。FastAPI 负责会话、设置、SSE / WebSocket 与 Retrieval Agent 编排。 |  | 数据与任务 | PostgreSQL 保存元数据；MinIO...","textChars":199,"textLines":5,"bbox":[41.33,207.57,581.33,416]}
+{"kind":"textbox","id":"sh/0nuxc3yl","slide":3,"name":"Google Shape;532;p58","placeholder":"slideNumber","text":"3","textPreview":"3","textChars":1,"textLines":1,"bbox":[0,0,0,0]}
+{"kind":"textbox","id":"sh/p8nqxs72","slide":3,"name":"Google Shape;533;p58","placeholder":"title","text":"总体技术架构","textPreview":"总体技术架构","textChars":6,"textLines":1,"bbox":[0,0,0,0]}
+{"kind":"shape","id":"sh/o7qpg3ex","slide":3,"name":"Rounded Rectangle 1","bbox":[657.33,213.33,271.07,416]}
+{"kind":"shape","id":"sh/dsji5sne","slide":3,"name":"Rounded Rectangle 2","bbox":[965.98,213.33,272.69,416]}
+{"kind":"textbox","id":"sh/6dcbulwv","slide":3,"name":"Content Placeholder 17","text":"检索平面\n向量 + 全文 RRF 融合\nCross-encoder 重排\n章节 / 页码 / 图号过滤","textPreview":"检索平面 | 向量 + 全文 RRF 融合 | Cross-encoder 重排 | 章节 / 页码 / 图号过滤","textChars":51,"textLines":4,"bbox":[685.17,441.39,225.24,167.88]}
+{"kind":"textbox","id":"sh/vy90je9c","slide":3,"name":"Text Placeholder 18","text":"推理平面\nLLM 规划与答案合成\n可选 BGE 独立推理服务\nWhisper + Piper 语音链路","textPreview":"推理平面 | LLM 规划与答案合成 | 可选 BGE 独立推理服务 | Whisper + Piper 语音链路","textChars":51,"textLines":4,"bbox":[993.51,441.39,225.65,167.88]}
+{"kind":"notes","id":"nt/s72x4nap","slide":3,"text":""}
+{"kind":"slide","id":"sl/val87ed8","slide":4,"title":"4","textShapes":14}
+{"kind":"textbox","id":"sh/at47y1kr","slide":4,"name":"Google Shape;532;p58","placeholder":"slideNumber","text":"4","textPreview":"4","textChars":1,"textLines":1,"bbox":[0,0,0,0]}
+{"kind":"textbox","id":"sh/3ex0nuxc","slide":4,"name":"Google Shape;533;p58","placeholder":"title","text":"文档入库：先恢复结构，再建立索引","textPreview":"文档入库：先恢复结构，再建立索引","textChars":16,"textLines":1,"bbox":[41.33,36.12,374.67,109.97]}
+{"kind":"textbox","id":"sh/1w7mp0bi","slide":4,"name":"Content Placeholder 10","text":"按格式路由；PDF 逐页解析，图片 OCR，DOCX / MD 按标题切 section","textPreview":"按格式路由；PDF 逐页解析，图片 OCR，DOCX / MD 按标题切 section","textChars":44,"textLines":1,"bbox":[660.62,41.33,578.04,68]}
+{"kind":"textbox","id":"sh/qtcj6tov","slide":4,"name":"Content Placeholder 10","text":"01 解析","textPreview":"01 解析","textChars":5,"textLines":1,"bbox":[452.62,41.33,187.38,68]}
+{"kind":"textbox","id":"sh/fmlkjm1c","slide":4,"name":"Content Placeholder 10","text":"利用书签与页内 Y 坐标恢复章节；过滤目录页、页眉页脚与前置页","textPreview":"利用书签与页内 Y 坐标恢复章节；过滤目录页、页眉页脚与前置页","textChars":31,"textLines":1,"bbox":[660.62,146.67,578.04,68]}
+{"kind":"textbox","id":"sh/x4nap4r6","slide":4,"name":"Content Placeholder 10","text":"02 结构","textPreview":"02 结构","textChars":5,"textLines":1,"bbox":[452.62,146.67,187.38,68]}
+{"kind":"textbox","id":"sh/jqh0fepk","slide":4,"name":"Content Placeholder 10","text":"提取矢量表、跨页表与内嵌图；VLM 分类，栅格表可转 OCR 表格","textPreview":"提取矢量表、跨页表与内嵌图；VLM 分类，栅格表可转 OCR 表格","textChars":33,"textLines":1,"bbox":[660.62,249.33,578.04,68]}
+{"kind":"textbox","id":"sh/8nqxs72x","slide":4,"name":"Content Placeholder 10","text":"03 视觉","textPreview":"03 视觉","textChars":5,"textLines":1,"bbox":[452.62,249.33,187.38,68]}
+{"kind":"textbox","id":"sh/j2t83itg","slide":4,"name":"Content Placeholder 10","text":"默认 500 字、重叠 80；生成句级 sub_index 与布局区域","textPreview":"默认 500 字、重叠 80；生成句级 sub_index 与布局区域","textChars":35,"textLines":1,"bbox":[660.62,353.33,578.04,68]}
+{"kind":"textbox","id":"sh/qh0fepkz","slide":4,"name":"Content Placeholder 10","text":"04 切分","textPreview":"04 切分","textChars":5,"textLines":1,"bbox":[452.62,353.33,187.38,68]}
+{"kind":"textbox","id":"sh/1cfa9w3m","slide":4,"name":"Content Placeholder 10","text":"图号前向引用 → 图注匹配 → 阅读顺序回溯 → 孤儿 asset chunk","textPreview":"图号前向引用 → 图注匹配 → 阅读顺序回溯 → 孤儿 asset chunk","textChars":39,"textLines":1,"bbox":[660.62,457.33,578.04,68]}
+{"kind":"textbox","id":"sh/crmhk3q5","slide":4,"name":"Content Placeholder 10","text":"05 挂靠","textPreview":"05 挂靠","textChars":5,"textLines":1,"bbox":[452.62,457.33,187.38,68]}
+{"kind":"textbox","id":"sh/sfil0rqd","slide":4,"name":"Content Placeholder 10","text":"PG + MinIO 持久化；并行写入 Qdrant / Elasticsearch 混合索引","textPreview":"PG + MinIO 持久化；并行写入 Qdrant / Elasticsearch 混合索引","textChars":47,"textLines":1,"bbox":[660.62,562.67,578.04,68]}
+{"kind":"textbox","id":"sh/h0fepkzu","slide":4,"name":"Content Placeholder 10","text":"06 入库","textPreview":"06 入库","textChars":5,"textLines":1,"bbox":[452.62,562.67,187.38,68]}
+{"kind":"notes","id":"nt/val87ed8","slide":4,"text":""}
+{"kind":"slide","id":"sl/mlkjm1cf","slide":5,"title":"5","textShapes":5}
+{"kind":"shape","id":"sh/6hcrmhk3","slide":5,"name":"Rounded Rectangle 3","bbox":[622.67,41.33,616,172]}
+{"kind":"shape","id":"sh/z25kb6xk","slide":5,"name":"Rounded Rectangle 4","bbox":[622.67,248.8,616,172]}
+{"kind":"shape","id":"sh/onyd0z61","slide":5,"name":"Rounded Rectangle 5","bbox":[622.67,457.33,616,172]}
+{"kind":"textbox","id":"sh/ovahoza1","slide":5,"name":"Slide Number Placeholder 1","placeholder":"slideNumber","text":"5","textPreview":"5","textChars":1,"textLines":1,"bbox":[0,0,0,0]}
+{"kind":"textbox","id":"sh/dg7adsji","slide":5,"name":"Title 2","placeholder":"title","text":"问答链路：Agent 以工具取证，而非一次检索","textPreview":"问答链路：Agent 以工具取证，而非一次检索","textChars":23,"textLines":1,"bbox":[41.33,36.12,517.39,109.97]}
+{"kind":"textbox","id":"sh/y90je9cv","slide":5,"name":"Content Placeholder 10","text":"1｜识别意图与范围\n文档消歧、章节、页码、图号、报警码分别路由到专用工具；信息不足时 ask_user。","textPreview":"1｜识别意图与范围 | 文档消歧、章节、页码、图号、报警码分别路由到专用工具；信息不足时 ask_user。","textChars":52,"textLines":2,"bbox":[657.33,70.65,555.11,113.36]}
+{"kind":"textbox","id":"sh/6dcbulwv","slide":5,"name":"Content Placeholder 10","text":"2｜并行检索与补证\n语义问题走 hybrid + rerank；精确型号走 BM25；再读取整页、整章或邻块补全上下文。","textPreview":"2｜并行检索与补证 | 语义问题走 hybrid + rerank；精确型号走 BM25；再读取整页、整章或邻块补全上下文。","textChars":60,"textLines":2,"bbox":[657.33,279.77,555.11,110.07]}
+{"kind":"textbox","id":"sh/vy90je9c","slide":5,"name":"Content Placeholder 10","text":"3｜关键证据优先合成\nfinish 标注 key_evidence_ids；答案流式输出，并合并引用、图表与页面区域。","textPreview":"3｜关键证据优先合成 | finish 标注 key_evidence_ids；答案流式输出，并合并引用、图表与页面区域。","textChars":59,"textLines":2,"bbox":[657.33,488.85,555.11,108.97]}
+{"kind":"notes","id":"nt/mlkjm1cf","slide":5,"text":""}
+{"kind":"slide","id":"sl/58z25kb6","slide":6,"title":"6","textShapes":8}
+{"kind":"textbox","id":"sh/il0rqd4v","slide":6,"name":"Google Shape;532;p58","placeholder":"slideNumber","text":"6","textPreview":"6","textChars":1,"textLines":1,"bbox":[0,0,0,0]}
+{"kind":"textbox","id":"sh/b6xkf6dc","slide":6,"name":"Google Shape;533;p58","placeholder":"title","text":"从“检索命中”到“用户看得懂证据”","textPreview":"从“检索命中”到“用户看得懂证据”","textChars":17,"textLines":1,"bbox":[41.33,36.12,822.67,61.06]}
+{"kind":"shape","id":"sh/ylc7u54z","slide":6,"name":"Rounded Rectangle 1","bbox":[41.68,317.62,580.99,138.67]}
+{"kind":"textbox","id":"sh/r65wjudg","slide":6,"name":"Content Placeholder 10","text":"文本证据\nchunk 保存 page、section、layout_regions；引用点击后打开文档并高亮一个或多个区域。","textPreview":"文本证据 | chunk 保存 page、section、layout_regions；引用点击后打开文档并高亮一个或多个区域。","textChars":62,"textLines":2,"bbox":[72.89,343.75,523.56,92.16]}
+{"kind":"textbox","id":"sh/g3ex0nux","slide":6,"name":"Content Placeholder 15","text":"• remark 解析引用占位符\n• bbox-aware 多区域高亮\n• 邻块 / 整页补全上下文","textPreview":"• remark 解析引用占位符 | • bbox-aware 多区域高亮 | • 邻块 / 整页补全上下文","textChars":50,"textLines":3,"bbox":[72.89,474,549.78,102.67]}
+{"kind":"shape","id":"sh/g7adsji5","slide":6,"name":"Rounded Rectangle 7","bbox":[657.3,317.62,580.99,138.67]}
+{"kind":"textbox","id":"sh/onyd0z61","slide":6,"name":"Content Placeholder 10","text":"视觉证据\n图号、图注、阅读顺序建立 asset 关联；再以句级 embedding 把图表插入对应答案段落。","textPreview":"视觉证据 | 图号、图注、阅读顺序建立 asset 关联；再以句级 embedding 把图表插入对应答案段落。","textChars":54,"textLines":2,"bbox":[688.51,343.75,523.56,92.16]}
+{"kind":"textbox","id":"sh/6hcrmhk3","slide":6,"name":"Content Placeholder 15","text":"• 图表去重与折叠引用\n• caption / VLM 描述入索引\n• 文档预览与图片灯箱","textPreview":"• 图表去重与折叠引用 | • caption / VLM 描述入索引 | • 文档预览与图片灯箱","textChars":45,"textLines":3,"bbox":[688.51,474,549.78,102.67]}
+{"kind":"textbox","id":"sh/dg7adsji","slide":6,"name":"Content Placeholder 15","text":"设计目标\n回答不仅要正确，还要让用户能快速复核：引用定位到页码与版面区域，相关插图贴近对应答案句，流式过程中保持阅读位置稳定。","textPreview":"设计目标 | 回答不仅要正确，还要让用户能快速复核：引用定位到页码与版面区域，相关插图贴近对应答案句，流式过程中保持阅读位置稳定。","textChars":63,"textLines":2,"bbox":[42.09,121.52,1197.33,171.05]}
+{"kind":"textbox","id":"sh/2p8nqxs7","slide":6,"name":"Content Placeholder 15","text":"结果：用户可在“答案—引用—原文—图表”之间连续跳转，减少人工翻页核对成本。","textPreview":"结果：用户可在“答案—引用—原文—图表”之间连续跳转，减少人工翻页核对成本。","textChars":38,"textLines":1,"bbox":[42.09,589.81,1197.33,55.62]}
+{"kind":"notes","id":"nt/58z25kb6","slide":6,"text":""}
+{"kind":"slide","id":"sl/0z61032l","slide":7,"title":"多模态文档","textShapes":8}
+{"kind":"shape","id":"sh/lszqtcj6","slide":7,"name":"Rounded Rectangle 18","bbox":[864.39,317.33,271.07,312]}
+{"kind":"textbox","id":"sh/7mp0bi9s","slide":7,"name":"Content Placeholder 15","text":"多模态文档\n提取插图 / 表格、视觉描述、自动嵌入与 PDF 注释感知解析。","textPreview":"多模态文档 | 提取插图 / 表格、视觉描述、自动嵌入与 PDF 注释感知解析。","textChars":38,"textLines":2,"bbox":[888.04,349.17,225.24,176.17]}
+{"kind":"textbox","id":"sh/e1w7mp0b","slide":7,"name":"Text Placeholder 16","text":"06-16 → 06-17","textPreview":"06-16 → 06-17","textChars":13,"textLines":1,"bbox":[891.06,582.12,177.1,21.73]}
+{"kind":"shape","id":"sh/l0rqd4vm","slide":7,"name":"Google Shape;2261;p159","bbox":[888.26,555.18,11.24,11.24]}
+{"kind":"shape","id":"sh/ap4r65wj","slide":7,"name":"Rounded Rectangle 11","bbox":[450.75,317.33,271.07,312]}
+{"kind":"textbox","id":"sh/za1gvy90","slide":7,"name":"Content Placeholder 15","text":"Agent 取证\n引入故障排查 planner、工具步骤 UI、多格式异步入库与文档生命周期。","textPreview":"Agent 取证 | 引入故障排查 planner、工具步骤 UI、多格式异步入库与文档生命周期。","textChars":47,"textLines":2,"bbox":[474.4,349.17,225.24,176.17]}
+{"kind":"shape","id":"sh/8v6psfil","slide":7,"name":"Rounded Rectangle 6","bbox":[41.33,317.33,271.07,312]}
+{"kind":"textbox","id":"sh/a1gvy90j","slide":7,"name":"Content Placeholder 15","text":"06-11 → 06-15","textPreview":"06-11 → 06-15","textChars":13,"textLines":1,"bbox":[64.98,582.65,181.68,20.25]}
+{"kind":"textbox","id":"sh/fa9w3m94","slide":7,"name":"Slide Number Placeholder 3","placeholder":"slideNumber","text":"7","textPreview":"7","textChars":1,"textLines":1,"bbox":[0,0,0,0]}
+{"kind":"textbox","id":"sh/hgn29gr2","slide":7,"name":"Title 10","placeholder":"title","text":"Git 演化 I｜从基础 RAG 到 Agentic RAG","textPreview":"Git 演化 I｜从基础 RAG 到 Agentic RAG","textChars":30,"textLines":1,"bbox":[0,0,0,0]}
+{"kind":"textbox","id":"sh/zidonyd0","slide":7,"name":"Text Placeholder 16","placeholder":"body","text":"06-16","textPreview":"06-16","textChars":5,"textLines":1,"bbox":[477.41,582.12,177.1,21.73]}
+{"kind":"shape","id":"sh/jqh0fepk","slide":7,"name":"Google Shape;2259;p159","bbox":[64.98,560.8,1285.61,0.03]}
+{"kind":"shape","id":"sh/8jqh0fep","slide":7,"name":"Google Shape;2260;p159","bbox":[64.98,555.18,11.24,11.24]}
+{"kind":"shape","id":"sh/qpg3ex0n","slide":7,"name":"Google Shape;2261;p159","bbox":[474.61,555.18,11.24,11.24]}
+{"kind":"textbox","id":"sh/je9cvixc","slide":7,"name":"Content Placeholder 15","text":"基础闭环\n初始上传、检索、问答；随后补齐生产部署、内联引用与 PDF 目录章节。","textPreview":"基础闭环 | 初始上传、检索、问答；随后补齐生产部署、内联引用与 PDF 目录章节。","textChars":40,"textLines":2,"bbox":[64.98,349.17,225.24,176.17]}
+{"kind":"notes","id":"nt/0z61032l","slide":7,"text":""}
+{"kind":"slide","id":"sl/fu18jqh0","slide":8,"title":"工程成熟","textShapes":8}
+{"kind":"shape","id":"sh/c3ylc7u5","slide":8,"name":"Rounded Rectangle 18","bbox":[864.39,317.33,271.07,312]}
+{"kind":"textbox","id":"sh/a9w3m94f","slide":8,"name":"Content Placeholder 15","text":"工程成熟\n入库模块化、前端 hooks、DB 会话隔离、Worker 分队列、预览与 Prometheus。","textPreview":"工程成熟 | 入库模块化、前端 hooks、DB 会话隔离、Worker 分队列、预览与 Prometheus。","textChars":54,"textLines":2,"bbox":[888.04,349.17,225.24,176.17]}
+{"kind":"textbox","id":"sh/zupwb2hw","slide":8,"name":"Text Placeholder 16","text":"06-20 → 06-21","textPreview":"06-20 → 06-21","textChars":13,"textLines":1,"bbox":[891.06,582.12,177.1,21.73]}
+{"kind":"shape","id":"sh/obm58z25","slide":8,"name":"Google Shape;2261;p159","bbox":[888.26,555.18,11.24,11.24]}
+{"kind":"shape","id":"sh/j2t83itg","slide":8,"name":"Rounded Rectangle 11","bbox":[450.75,317.33,271.07,312]}
+{"kind":"textbox","id":"sh/qh0fepkz","slide":8,"name":"Content Placeholder 15","text":"召回与吞吐\n并行 PDF 入库、跨页表、VLM 路由、并行 Agent 工具、关键词与整章读取。","textPreview":"召回与吞吐 | 并行 PDF 入库、跨页表、VLM 路由、并行 Agent 工具、关键词与整章读取。","textChars":48,"textLines":2,"bbox":[474.4,349.17,225.24,176.17]}
+{"kind":"shape","id":"sh/jm1cfa9w","slide":8,"name":"Rounded Rectangle 6","bbox":[41.33,317.33,271.07,312]}
+{"kind":"textbox","id":"sh/jqh0fepk","slide":8,"name":"Content Placeholder 15","text":"06-17 → 06-18","textPreview":"06-17 → 06-18","textChars":13,"textLines":1,"bbox":[64.98,582.65,181.68,20.25]}
+{"kind":"textbox","id":"sh/c7u54zid","slide":8,"name":"Slide Number Placeholder 3","placeholder":"slideNumber","text":"8","textPreview":"8","textChars":1,"textLines":1,"bbox":[0,0,0,0]}
+{"kind":"textbox","id":"sh/8nqxs72x","slide":8,"name":"Title 10","placeholder":"title","text":"Git 演化 II｜从“能回答”到“可验证、可运维”","textPreview":"Git 演化 II｜从“能回答”到“可验证、可运维”","textChars":26,"textLines":1,"bbox":[0,0,0,0]}
+{"kind":"textbox","id":"sh/q5o7qpg3","slide":8,"name":"Text Placeholder 16","placeholder":"body","text":"06-19 → 06-20","textPreview":"06-19 → 06-20","textChars":13,"textLines":1,"bbox":[477.41,582.12,177.1,21.73]}
+{"kind":"shape","id":"sh/ex0nuxc3","slide":8,"name":"Google Shape;2259;p159","bbox":[64.98,560.8,1285.61,0.03]}
+{"kind":"shape","id":"sh/judg7ads","slide":8,"name":"Google Shape;2260;p159","bbox":[64.98,555.18,11.24,11.24]}
+{"kind":"shape","id":"sh/1orytsvu","slide":8,"name":"Google Shape;2261;p159","bbox":[474.61,555.18,11.24,11.24]}
+{"kind":"textbox","id":"sh/cvixczed","slide":8,"name":"Content Placeholder 15","text":"证据精度\nbbox 引用、邻块读取、共享引用契约、句级插图对齐与页眉页脚过滤。","textPreview":"证据精度 | bbox 引用、邻块读取、共享引用契约、句级插图对齐与页眉页脚过滤。","textChars":39,"textLines":2,"bbox":[64.98,349.17,225.24,176.17]}
+{"kind":"notes","id":"nt/fu18jqh0","slide":8,"text":""}
+{"kind":"slide","id":"sl/qh0fepkz","slide":9,"title":"9","textShapes":3}
+{"kind":"textbox","id":"sh/sji5snel","slide":9,"name":"Google Shape;532;p58","placeholder":"slideNumber","text":"9","textPreview":"9","textChars":1,"textLines":1,"bbox":[0,0,0,0]}
+{"kind":"textbox","id":"sh/h4byhgn2","slide":9,"name":"Google Shape;533;p58","placeholder":"title","text":"演示效果：一条问题贯穿完整证据链","textPreview":"演示效果：一条问题贯穿完整证据链","textChars":16,"textLines":1,"bbox":[41.33,36.12,822.67,61.06]}
+{"kind":"textbox","id":"sh/n29gr2p8","slide":9,"name":"Content Placeholder 15","text":"建议演示问题：“设备出现 E-17 报警，如何处理？请给出对应步骤和相关示意图。”\n以下能力均可由当前代码路径支撑；本页为演示脚本，不是伪造截图。","textPreview":"建议演示问题：“设备出现 E-17 报警，如何处理？请给出对应步骤和相关示意图。” | 以下能力均可由当前代码路径支撑；本页为演示脚本，不是伪造截图。","textChars":73,"textLines":2,"bbox":[42.09,121.52,1197.33,106.27]}
+{"kind":"table","id":"tb/zed8v6ps","slide":9,"name":"Table 4","rows":8,"cols":10,"preview":"阶段 | 用户看到 | 系统动作 | 关键实现 | 验证点 | 阶段 | 用户看到 | 系统动作 | 关键实现 | 验证点","bbox":[42.09,249.33,1197.33,380]}
+{"kind":"notes","id":"nt/qh0fepkz","slide":9,"text":""}
+{"kind":"slide","id":"sl/29gr2p8n","slide":10,"title":"10","textShapes":4}
+{"kind":"textbox","id":"sh/tsvu9kni","slide":10,"name":"Google Shape;532;p58","placeholder":"slideNumber","text":"10","textPreview":"10","textChars":2,"textLines":1,"bbox":[0,0,0,0]}
+{"kind":"textbox","id":"sh/47y1kre1","slide":10,"name":"Google Shape;533;p58","placeholder":"title","text":"AllDocs 的核心不是“切块”，\n而是构建可检索、可定位、\n可验证的文档证据系统。","textPreview":"AllDocs 的核心不是“切块”， | 而是构建可检索、可定位、 | 可验证的文档证据系统。","textChars":43,"textLines":3,"bbox":[41.33,36.12,992,385.22]}
+{"kind":"shape","id":"sh/4fu18jqh","slide":10,"name":"Rounded Rectangle 9","bbox":[452.38,353.33,374.67,276]}
+{"kind":"shape","id":"sh/x0nuxc3y","slide":10,"name":"Rounded Rectangle 10","bbox":[864,353.33,374.67,276]}
+{"kind":"textbox","id":"sh/m94fu18j","slide":10,"name":"Content Placeholder 9","text":"当前优势\n结构化 PDF + 混合检索 + Agent 工具链 + 句级视觉对齐，形成端到端技术闭环。","textPreview":"当前优势 | 结构化 PDF + 混合检索 + Agent 工具链 + 句级视觉对齐，形成端到端技术闭环。","textChars":51,"textLines":2,"bbox":[485.23,435.29,309.64,150.43]}
+{"kind":"textbox","id":"sh/fu18jqh0","slide":10,"name":"Content Placeholder 10","text":"下一阶段\n建立固定评测集与延迟基线；补充真实演示录屏；以指标驱动召回、解析和并发优化。","textPreview":"下一阶段 | 建立固定评测集与延迟基线；补充真实演示录屏；以指标驱动召回、解析和并发优化。","textChars":43,"textLines":2,"bbox":[896.18,435.29,309.64,150.43]}
+{"kind":"shape","id":"sh/83itgfml","slide":10,"name":"Google Shape;340;p61","bbox":[485.84,387.83,24.55,24.54]}
+{"kind":"shape","id":"sh/xobm58z2","slide":10,"name":"Google Shape;340;p61","bbox":[895.88,387.83,24.55,24.54]}
+{"kind":"notes","id":"nt/29gr2p8n","slide":10,"text":""}
