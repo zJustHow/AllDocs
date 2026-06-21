@@ -16,6 +16,7 @@ from app.services.agent.tools import (
     SEARCH_SNIPPET_MAX,
     _format_batch_observation,
     _format_chunks,
+    _limit_full_text_chunks,
     _merge_batch_chunks,
     count_retrieval_units,
     merge_chunks_into_evidence,
@@ -58,10 +59,8 @@ def test_count_retrieval_units_for_batch_and_single() -> None:
 
 def test_parse_tool_filters_rejects_invalid_payload() -> None:
     doc_id = uuid.uuid4()
-    filters = parse_tool_filters({"page_gte": "bad"}, [doc_id])
-
-    assert filters.document_ids == [doc_id]
-    assert filters.page_gte is None
+    with pytest.raises(ValueError, match="filters 参数无效"):
+        parse_tool_filters({"page_gte": "bad"}, [doc_id])
 
 
 def test_parse_tool_filters_accepts_document_ids() -> None:
@@ -72,8 +71,8 @@ def test_parse_tool_filters_accepts_document_ids() -> None:
     narrowed = parse_tool_filters({"document_ids": [str(doc_a)]}, [doc_a, doc_b])
     assert narrowed.document_ids == [doc_a]
 
-    out_of_scope = parse_tool_filters({"document_ids": [str(doc_other)]}, [doc_a, doc_b])
-    assert out_of_scope.document_ids == []
+    with pytest.raises(ValueError, match="不在当前会话文档范围"):
+        parse_tool_filters({"document_ids": [str(doc_other)]}, [doc_a, doc_b])
 
 
 def test_parse_finish_key_evidence_ids_limits_and_skips_empty() -> None:
@@ -525,7 +524,63 @@ def test_execute_read_pages(tool_registry: AgentToolRegistry) -> None:
     assert "p.45" in observation
 
 
+def test_execute_read_pages_rejects_invalid_inputs(tool_registry: AgentToolRegistry) -> None:
+    tool_registry.rag.read_pages = AsyncMock()
+
+    observation, chunks, units = asyncio.run(
+        tool_registry.execute(
+            AsyncMock(),
+            "read_pages",
+            {"page": "bad", "document_id": "not-a-uuid"},
+            question="q",
+            doc_ids=None,
+            explicit_filters=None,
+        )
+    )
+
+    assert units == 0
+    assert chunks == []
+    assert "page 必须是正整数" in observation
+    tool_registry.rag.read_pages.assert_not_awaited()
+
+
+def test_execute_read_pages_rejects_document_outside_session(
+    tool_registry: AgentToolRegistry,
+) -> None:
+    tool_registry.rag.read_pages = AsyncMock()
+    allowed_id = uuid.uuid4()
+
+    observation, chunks, units = asyncio.run(
+        tool_registry.execute(
+            AsyncMock(),
+            "read_pages",
+            {"page": 1, "document_id": str(uuid.uuid4())},
+            question="q",
+            doc_ids=[allowed_id],
+            explicit_filters=None,
+        )
+    )
+
+    assert units == 0
+    assert chunks == []
+    assert "不在当前会话文档范围" in observation
+    tool_registry.rag.read_pages.assert_not_awaited()
+
+
+def test_limit_full_text_chunks_preserves_complete_chunks() -> None:
+    chunks = [
+        {"text": "中" * 80, "chunk_id": "a"},
+        {"text": "中" * 80, "chunk_id": "b"},
+    ]
+
+    limited, has_more = _limit_full_text_chunks(chunks, token_budget=200)
+
+    assert [chunk["chunk_id"] for chunk in limited] == ["a"]
+    assert has_more is True
+
+
 def test_execute_read_section(tool_registry: AgentToolRegistry) -> None:
+    from app.services.rag import SectionReadPage
     from app.services.toc_lookup import ResolvedSection
 
     doc_id = uuid.uuid4()
@@ -553,6 +608,7 @@ def test_execute_read_section(tool_registry: AgentToolRegistry) -> None:
                 }
             ],
             resolved,
+            SectionReadPage(offset=0, limit=30, has_more=False, next_offset=None),
             None,
         )
     )
@@ -573,6 +629,66 @@ def test_execute_read_section(tool_registry: AgentToolRegistry) -> None:
     assert "章节正文" in observation
     assert "第3章 报警" in observation
     assert "p.10–12" in observation
+
+
+def test_execute_read_section_prompts_for_next_page(tool_registry: AgentToolRegistry) -> None:
+    from app.services.rag import SectionReadPage
+    from app.services.toc_lookup import ResolvedSection
+
+    doc_id = uuid.uuid4()
+    resolved = ResolvedSection(
+        document_id=doc_id,
+        document_name="Manual.pdf",
+        section_path="第3章 报警",
+        title="报警",
+        start_page=10,
+        end_page=40,
+        score=10.0,
+    )
+    tool_registry.rag.read_section = AsyncMock(
+        return_value=(
+            [],
+            resolved,
+            SectionReadPage(offset=30, limit=30, has_more=True, next_offset=60),
+            None,
+        )
+    )
+
+    observation, _chunks, _units = asyncio.run(
+        tool_registry.execute(
+            AsyncMock(),
+            "read_section",
+            {"section": "报警", "offset": 30},
+            question="报警章节有哪些内容",
+            doc_ids=[doc_id],
+            explicit_filters=None,
+        )
+    )
+
+    assert "已截断" in observation
+    assert "offset=60" in observation
+    tool_registry.rag.read_section.assert_awaited_once()
+    assert tool_registry.rag.read_section.await_args.kwargs["offset"] == 30
+
+
+def test_execute_read_section_rejects_invalid_offset(tool_registry: AgentToolRegistry) -> None:
+    tool_registry.rag.read_section = AsyncMock()
+
+    observation, chunks, units = asyncio.run(
+        tool_registry.execute(
+            AsyncMock(),
+            "read_section",
+            {"section": "报警", "offset": "bad"},
+            question="q",
+            doc_ids=None,
+            explicit_filters=None,
+        )
+    )
+
+    assert units == 0
+    assert chunks == []
+    assert "offset 必须是非负整数" in observation
+    tool_registry.rag.read_section.assert_not_awaited()
 
 
 def test_execute_search_keyword(tool_registry: AgentToolRegistry) -> None:
@@ -709,6 +825,26 @@ def test_execute_search_chunks_formats_observation(tool_registry: AgentToolRegis
     assert len(chunks) == 1
     assert "search_chunks" in observation
     assert "Manual.pdf" in observation
+
+
+def test_execute_search_chunks_rejects_invalid_top_k(
+    tool_registry: AgentToolRegistry,
+) -> None:
+    observation, chunks, units = asyncio.run(
+        tool_registry.execute(
+            AsyncMock(),
+            "search_chunks",
+            {"query": "伺服报警", "top_k": 100},
+            question="q",
+            doc_ids=None,
+            explicit_filters=None,
+        )
+    )
+
+    assert units == 0
+    assert chunks == []
+    assert "top_k 必须是 1–20" in observation
+    tool_registry.rag.search_chunks.assert_not_awaited()
 
 
 def test_execute_finish_returns_reason(tool_registry: AgentToolRegistry) -> None:

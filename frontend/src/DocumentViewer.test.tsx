@@ -242,6 +242,49 @@ describe("DocumentViewer", () => {
     });
   });
 
+  it("shows the PDF page actually crossing the viewport marker", async () => {
+    renderViewer(pdfTarget);
+
+    const pageInput = await screen.findByRole("textbox", { name: /Page number|页码/i });
+    const scrollEl = document.querySelector(".doc-viewer-scroll") as HTMLElement;
+    const pages = Array.from(
+      document.querySelectorAll<HTMLElement>(".doc-viewer-page"),
+    );
+
+    Object.defineProperty(scrollEl, "clientHeight", { value: 1000, configurable: true });
+    vi.spyOn(scrollEl, "getBoundingClientRect").mockReturnValue({
+      top: 100,
+      bottom: 1100,
+      left: 0,
+      right: 400,
+      width: 400,
+      height: 1000,
+      x: 0,
+      y: 100,
+      toJSON: () => ({}),
+    });
+    pages.forEach((page, index) => {
+      const top = [-700, 150, 1050][index];
+      vi.spyOn(page, "getBoundingClientRect").mockReturnValue({
+        top,
+        bottom: top + 800,
+        left: 0,
+        right: 400,
+        width: 400,
+        height: 800,
+        x: 0,
+        y: top,
+        toJSON: () => ({}),
+      });
+    });
+
+    fireEvent.scroll(scrollEl);
+
+    await waitFor(() => {
+      expect(pageInput).toHaveValue("2");
+    });
+  });
+
   it("shows an error when a PDF page image fails to load", async () => {
     renderViewer(pdfTarget);
 

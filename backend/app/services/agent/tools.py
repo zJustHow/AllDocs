@@ -41,6 +41,7 @@ SEARCH_SNIPPET_MAX = 240
 BATCH_SNIPPET_MAX = 160
 NEIGHBOR_READ_MAX = 3
 PAGE_READ_MAX_CHUNKS = 30
+READ_FULL_TEXT_TOKEN_BUDGET = 6000
 LOOKUP_ASSET_MAX = 5
 
 
@@ -144,6 +145,31 @@ def _format_chunks(
     return "\n\n".join(lines)
 
 
+def _estimate_text_tokens(text: str) -> int:
+    """Conservative tokenizer-free estimate for mixed Chinese/Latin manual text."""
+    if not text:
+        return 0
+    cjk = sum(1 for char in text if "\u3400" <= char <= "\u9fff")
+    return cjk + max(1, (len(text) - cjk + 3) // 4)
+
+
+def _limit_full_text_chunks(
+    chunks: list[dict],
+    *,
+    token_budget: int = READ_FULL_TEXT_TOKEN_BUDGET,
+) -> tuple[list[dict], bool]:
+    """Keep complete chunks within budget, always preserving at least one chunk."""
+    limited: list[dict] = []
+    used = 0
+    for chunk in chunks:
+        cost = _estimate_text_tokens(_format_chunk_body(chunk, full_text=True)) + 80
+        if limited and used + cost > token_budget:
+            return limited, True
+        limited.append(chunk)
+        used += cost
+    return limited, False
+
+
 def _merge_batch_chunks(results: list[tuple[str, list[dict]]]) -> list[dict]:
     """Merge batch search hits in first-seen order, keeping the highest score per chunk."""
     merged_by_key: dict[str, dict] = {}
@@ -226,7 +252,7 @@ def format_documents_list(documents: list[Document]) -> str:
     return "\n".join(lines)
 
 
-def _parse_optional_uuid(raw: object) -> UUID | None:
+def _parse_optional_uuid(raw: object, *, field: str = "document_id") -> UUID | None:
     if raw is None:
         return None
     text = str(raw).strip()
@@ -234,8 +260,15 @@ def _parse_optional_uuid(raw: object) -> UUID | None:
         return None
     try:
         return UUID(text)
-    except ValueError:
-        return None
+    except ValueError as exc:
+        raise ValueError(f"{field} 必须是有效 UUID。") from exc
+
+
+def _validate_document_scope(
+    document_id: UUID | None, doc_ids: list[UUID] | None
+) -> None:
+    if document_id is not None and doc_ids and document_id not in doc_ids:
+        raise ValueError("document_id 不在当前会话文档范围内。")
 
 
 def merge_chunks_into_evidence(
@@ -262,9 +295,24 @@ def parse_tool_filters(raw: dict | None, doc_ids: list[UUID] | None) -> ChunkFil
         return ChunkFilter.from_request(doc_ids, None)
     try:
         filters = ChunkFilter.model_validate(raw)
-    except ValidationError:
-        return ChunkFilter.from_request(doc_ids, None)
-    return ChunkFilter.from_request(doc_ids, filters if filters.has_constraints() else None)
+    except ValidationError as exc:
+        raise ValueError(f"filters 参数无效：{exc.errors()[0]['msg']}") from exc
+    if filters.asset_types and any(
+        asset_type not in {"table", "figure"} for asset_type in filters.asset_types
+    ):
+        raise ValueError("filters.asset_types 仅支持 table 或 figure。")
+    if (
+        filters.page_gte is not None
+        and filters.page_lte is not None
+        and filters.page_gte > filters.page_lte
+    ):
+        raise ValueError("filters.page_gte 不能大于 page_lte。")
+    scoped = ChunkFilter.from_request(
+        doc_ids, filters if filters.has_constraints() else None
+    )
+    if filters.document_ids and doc_ids and not scoped.document_ids:
+        raise ValueError("filters.document_ids 不在当前会话文档范围内。")
+    return scoped
 
 
 def parse_batch_searches(action_input: dict, *, max_items: int) -> list[dict]:
@@ -293,14 +341,40 @@ def _parse_neighbor_count(raw: object, *, default: int) -> int:
     return max(0, min(value, NEIGHBOR_READ_MAX))
 
 
-def _parse_optional_positive_int(raw: object) -> int | None:
+def _parse_optional_positive_int(raw: object, *, field: str) -> int | None:
     if raw is None:
         return None
     try:
         value = int(raw)
-    except (TypeError, ValueError):
-        return None
-    return value if value >= 1 else None
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{field} 必须是正整数。") from exc
+    if value < 1:
+        raise ValueError(f"{field} 必须是正整数。")
+    return value
+
+
+def _parse_non_negative_int(raw: object, *, field: str, default: int = 0) -> int:
+    if raw is None:
+        return default
+    try:
+        value = int(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{field} 必须是非负整数。") from exc
+    if value < 0:
+        raise ValueError(f"{field} 必须是非负整数。")
+    return value
+
+
+def _parse_top_k(raw: object, *, default: int) -> int:
+    if raw is None:
+        return default
+    try:
+        value = int(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("top_k 必须是 1–20 的整数。") from exc
+    if not 1 <= value <= 20:
+        raise ValueError("top_k 必须是 1–20 的整数。")
+    return value
 
 
 def count_retrieval_units(action: str, action_input: dict, *, max_batch: int) -> int:
@@ -326,11 +400,9 @@ class AgentToolRegistry:
         search_input: dict,
         query_vector: list[float] | None = None,
     ) -> list[dict]:
-        top_k = search_input.get("top_k")
-        try:
-            top_k = int(top_k) if top_k is not None else self.rag.settings.rag_top_k
-        except (TypeError, ValueError):
-            top_k = self.rag.settings.rag_top_k
+        top_k = _parse_top_k(
+            search_input.get("top_k"), default=self.rag.settings.rag_top_k
+        )
         tool_filters = parse_tool_filters(search_input.get("filters"), doc_ids)
         chunk_filter = ChunkFilter.merge_sources(
             doc_ids,
@@ -381,19 +453,26 @@ class AgentToolRegistry:
         if action == "read_section":
             section = str(action_input.get("section") or "").strip() or None
             lookup_question = str(action_input.get("question") or question)
+            try:
+                offset = _parse_non_negative_int(action_input.get("offset"), field="offset")
+                document_id = _parse_optional_uuid(action_input.get("document_id"))
+                _validate_document_scope(document_id, doc_ids)
+            except ValueError as exc:
+                return str(exc), [], 0
             if not section and not lookup_question.strip():
                 return "read_section 需要 section 或 question。", [], 0
-            document_id = _parse_optional_uuid(action_input.get("document_id"))
-            chunks, resolved, error = await self.rag.read_section(
+            chunks, resolved, page, error = await self.rag.read_section(
                 db,
                 lookup_question,
                 doc_ids,
                 section=section,
                 document_id=document_id,
                 max_chunks=PAGE_READ_MAX_CHUNKS,
+                offset=offset,
             )
             if error:
                 return error, [], 0
+            chunks, token_limited = _limit_full_text_chunks(chunks)
             observation = _format_chunks(
                 chunks,
                 source_tool="read_section",
@@ -402,20 +481,38 @@ class AgentToolRegistry:
             if resolved is not None:
                 observation += (
                     f"\n（章节 §{resolved.section_path} · "
-                    f"p.{resolved.start_page}–{resolved.end_page} · 共 {len(chunks)} 条）"
+                    f"p.{resolved.start_page}–{resolved.end_page} · "
+                    f"本页 {len(chunks)} 条 · offset={offset}）"
                 )
+            has_more = token_limited or (page is not None and page.has_more)
+            if has_more:
+                next_offset = (
+                    offset + len(chunks)
+                    if token_limited
+                    else page.next_offset if page is not None else offset + len(chunks)
+                )
+                observation += (
+                    "\n⚠️ 本章内容已截断，仍有后续 chunk。"
+                    f"请继续调用 read_section，并保持相同章节参数、设置 "
+                    f"offset={next_offset}。"
+                )
+            elif page is not None and offset > 0:
+                observation += "\n（本章已读取完毕，无更多 chunk。）"
             return observation, chunks, 0
 
         if action == "search_chunks":
             query = str(action_input.get("query") or question).strip()
-            chunks = await self._search_chunks(
-                db,
-                query=query,
-                question=question,
-                doc_ids=doc_ids,
-                explicit_filters=explicit_filters,
-                search_input=action_input,
-            )
+            try:
+                chunks = await self._search_chunks(
+                    db,
+                    query=query,
+                    question=question,
+                    doc_ids=doc_ids,
+                    explicit_filters=explicit_filters,
+                    search_input=action_input,
+                )
+            except ValueError as exc:
+                return str(exc), [], 0
             return _format_chunks(chunks, source_tool="search_chunks"), chunks, 1
 
         if action == "search_keyword":
@@ -428,17 +525,21 @@ class AgentToolRegistry:
             query = str(action_input.get("query") or question).strip()
             if not query:
                 return "search_keyword 需要 query。", [], 0
-            tool_filters = parse_tool_filters(action_input.get("filters"), doc_ids)
+            try:
+                tool_filters = parse_tool_filters(action_input.get("filters"), doc_ids)
+            except ValueError as exc:
+                return str(exc), [], 0
             chunk_filter = ChunkFilter.merge_sources(
                 doc_ids,
                 explicit_filters,
                 tool_filters if tool_filters.has_constraints() else None,
             )
-            top_k = action_input.get("top_k")
             try:
-                top_k = int(top_k) if top_k is not None else self.rag.settings.rag_top_k
-            except (TypeError, ValueError):
-                top_k = self.rag.settings.rag_top_k
+                top_k = _parse_top_k(
+                    action_input.get("top_k"), default=self.rag.settings.rag_top_k
+                )
+            except ValueError as exc:
+                return str(exc), [], 0
             chunks = await self.rag.search_keyword(
                 db,
                 query,
@@ -456,6 +557,12 @@ class AgentToolRegistry:
                 return "search_chunks_batch 需要非空 searches 列表。", [], 0
 
             queries = [str(item.get("query") or "").strip() for item in searches]
+            try:
+                for item in searches:
+                    parse_tool_filters(item.get("filters"), doc_ids)
+                    _parse_top_k(item.get("top_k"), default=self.rag.settings.rag_top_k)
+            except ValueError as exc:
+                return str(exc), [], 0
             query_vectors = await self.rag.embed_queries(queries)
 
             async def run_search(
@@ -494,8 +601,12 @@ class AgentToolRegistry:
                 return "lookup_asset 需要 figure_number（如 4-7）。", [], 0
             kind = str(action_input.get("kind") or "").strip().lower() or None
             if kind not in {None, "figure", "table"}:
-                kind = None
-            document_id = _parse_optional_uuid(action_input.get("document_id"))
+                return "kind 仅支持 figure 或 table。", [], 0
+            try:
+                document_id = _parse_optional_uuid(action_input.get("document_id"))
+                _validate_document_scope(document_id, doc_ids)
+            except ValueError as exc:
+                return str(exc), [], 0
             chunks, error = await lookup_asset(
                 db,
                 figure_number,
@@ -510,10 +621,23 @@ class AgentToolRegistry:
             return observation, chunks, 0
 
         if action == "read_pages":
-            page = _parse_optional_positive_int(action_input.get("page"))
-            page_gte = _parse_optional_positive_int(action_input.get("page_gte"))
-            page_lte = _parse_optional_positive_int(action_input.get("page_lte"))
-            document_id = _parse_optional_uuid(action_input.get("document_id"))
+            try:
+                page = _parse_optional_positive_int(action_input.get("page"), field="page")
+                page_gte = _parse_optional_positive_int(
+                    action_input.get("page_gte"), field="page_gte"
+                )
+                page_lte = _parse_optional_positive_int(
+                    action_input.get("page_lte"), field="page_lte"
+                )
+                offset = _parse_non_negative_int(action_input.get("offset"), field="offset")
+                document_id = _parse_optional_uuid(action_input.get("document_id"))
+                _validate_document_scope(document_id, doc_ids)
+                if page is not None and (page_gte is not None or page_lte is not None):
+                    raise ValueError("page 与 page_gte/page_lte 不能同时使用。")
+                if page_gte is not None and page_lte is not None and page_gte > page_lte:
+                    raise ValueError("page_gte 不能大于 page_lte。")
+            except ValueError as exc:
+                return str(exc), [], 0
             chunks, error = await self.rag.read_pages(
                 db,
                 page=page,
@@ -521,10 +645,14 @@ class AgentToolRegistry:
                 page_lte=page_lte,
                 document_id=document_id,
                 doc_ids=doc_ids,
-                max_chunks=PAGE_READ_MAX_CHUNKS,
+                max_chunks=PAGE_READ_MAX_CHUNKS + 1,
+                offset=offset,
             )
             if error:
                 return error, [], 0
+            db_has_more = len(chunks) > PAGE_READ_MAX_CHUNKS
+            chunks = chunks[:PAGE_READ_MAX_CHUNKS]
+            chunks, token_limited = _limit_full_text_chunks(chunks)
             observation = _format_chunks(
                 chunks,
                 source_tool="read_pages",
@@ -536,6 +664,11 @@ class AgentToolRegistry:
                 observation += (
                     f"\n（页码范围 p.{page_gte or '?'}"
                     f"–{page_lte or '?'}，共 {len(chunks)} 条）"
+                )
+            if db_has_more or token_limited:
+                observation += (
+                    "\n⚠️ 页面内容已截断，仍有后续 chunk。请保持相同页码参数，"
+                    f"继续调用 read_pages，并设置 offset={offset + len(chunks)}。"
                 )
             return observation, chunks, 0
 

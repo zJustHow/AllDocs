@@ -100,8 +100,9 @@ AGENT_TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "function": {
             "name": "read_pages",
             "description": (
-                "按已知页码读取页面内全部 chunk（按 chunk_index 排序），返回完整正文。"
+                "按已知页码分页读取 chunk（按 chunk_index 排序），返回完整正文。"
                 "适用于「第 N 页写了什么」；需已知具体页码。"
+                "若结果提示已截断，必须使用返回的 next offset 继续读取。"
                 "不知页码只知章节名 → lookup_toc 或 read_section；勿用语义检索代替按页阅读。"
             ),
             "parameters": {
@@ -127,6 +128,12 @@ AGENT_TOOL_DEFINITIONS: list[dict[str, Any]] = [
                         "format": "uuid",
                         "description": "可选；限定文档",
                     },
+                    "offset": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "default": 0,
+                        "description": "分页偏移；续读使用上次提示的 next offset",
+                    },
                 },
             },
         },
@@ -136,8 +143,9 @@ AGENT_TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "function": {
             "name": "read_section",
             "description": (
-                "按章节名匹配目录，读取该节页码范围内全部 chunk，返回完整正文。"
+                "按章节名匹配目录，分页读取该节页码范围内的 chunk，返回完整正文。"
                 "适用于整章操作流程、本章所有报警码、整节参数表等。"
+                "若结果提示已截断，必须使用返回的 next offset 继续读取，直至无更多 chunk。"
                 "只需页码不需正文 → lookup_toc；已知单页 → read_pages；"
                 "单点事实/跨节检索 → search_chunks。"
             ),
@@ -156,6 +164,12 @@ AGENT_TOOL_DEFINITIONS: list[dict[str, Any]] = [
                         "type": "string",
                         "format": "uuid",
                         "description": "可选；限定文档",
+                    },
+                    "offset": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "default": 0,
+                        "description": "分页偏移；首次为 0，续读使用上次提示的 next offset",
                     },
                 },
             },

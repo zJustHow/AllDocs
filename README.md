@@ -241,7 +241,7 @@ Asset 级字段：`figure_number`（归一化图号，如 `4-7`）、`figure_cap
 | `list_outline` | 列出文档章节树 |
 | `lookup_toc` | 查询章节起止页码 |
 | `read_pages` | 按页码读取页面内全部 chunk |
-| `read_section` | 读取指定章节页码范围内的全部 chunk |
+| `read_section` | 分页读取指定章节页码范围内的 chunk；截断时返回下一页 offset |
 | `search_chunks` / `search_chunks_batch` | 混合检索；支持 `asset_types`、`section_prefix`、`section_contains`、`page_gte` / `page_lte` 等过滤 |
 | `search_keyword` | 短语/关键词 BM25 全文检索（报警码、型号等） |
 | `lookup_asset` | 按图号/表号精确查找插图或表格 |

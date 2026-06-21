@@ -238,7 +238,7 @@ describe("AgentSteps", () => {
     expect(screen.getByText("Menu location")).toBeInTheDocument();
   });
 
-  it("shows reasoning, truncates long observations, and summarizes completed steps", async () => {
+  it("shows reasoning, preserves full observations, and summarizes completed steps", async () => {
     const user = userEvent.setup();
     const longObservation = "x".repeat(300);
     renderSteps([
@@ -268,8 +268,7 @@ describe("AgentSteps", () => {
     expect(screen.getByText("Start with semantic search.")).toBeInTheDocument();
     expect(screen.getByText("p.7")).toBeInTheDocument();
     const observation = document.querySelector(".agent-observation");
-    expect(observation?.textContent?.length).toBeLessThan(longObservation.length);
-    expect(observation?.textContent).toMatch(/…$/);
+    expect(observation?.textContent).toBe(longObservation);
   });
 
   it("collapses after the agent finishes running", async () => {

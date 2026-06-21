@@ -571,13 +571,32 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
     if (scrollSyncLockRef.current || resizingRef.current || pageCount === null) return;
 
     const scrollEl = scrollRef.current;
-    if (!scrollEl || estimatedPageRowHeight <= 0) return;
+    if (!scrollEl) return;
 
-    const marker = scrollEl.scrollTop + scrollEl.clientHeight * 0.3;
-    const bestPage = Math.min(
-      pageCount,
-      Math.max(1, Math.floor(marker / estimatedPageRowHeight) + 1),
-    );
+    // Read the page under the viewport marker from the rendered page positions.
+    // Deriving it from an estimated row height drifts when PDF pages have
+    // different dimensions or the virtualizer has measured their real sizes.
+    const scrollRect = scrollEl.getBoundingClientRect();
+    const marker = scrollRect.top + scrollEl.clientHeight * 0.3;
+    let bestPage: number | null = null;
+    let nearestDistance = Number.POSITIVE_INFINITY;
+
+    for (const [page, pageEl] of pageRefs.current) {
+      const rect = pageEl.getBoundingClientRect();
+      if (rect.top <= marker && rect.bottom > marker) {
+        bestPage = page;
+        break;
+      }
+
+      const distance = marker < rect.top ? rect.top - marker : marker - rect.bottom;
+      if (distance < nearestDistance) {
+        nearestDistance = distance;
+        bestPage = page;
+      }
+    }
+
+    if (bestPage === null) return;
+    bestPage = Math.min(pageCount, Math.max(1, bestPage));
 
     ensurePagesLoaded(bestPage);
     setCurrentPage((prev) => {
@@ -585,7 +604,7 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
       setPageInput(String(bestPage));
       return bestPage;
     });
-  }, [ensurePagesLoaded, estimatedPageRowHeight, pageCount]);
+  }, [ensurePagesLoaded, pageCount]);
 
   useEffect(() => {
     if (previewMode !== "pdf" || pageCount === null) return;

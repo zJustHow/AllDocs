@@ -62,12 +62,6 @@ function summarizeActionInput(action: string, input: Record<string, unknown>): s
   return [];
 }
 
-function truncate(text: string, max = 160): string {
-  const trimmed = text.trim();
-  if (trimmed.length <= max) return trimmed;
-  return `${trimmed.slice(0, max)}…`;
-}
-
 function AgentSteps({ steps, running = false }: AgentStepsProps) {
   const { t } = useI18n();
   const [expanded, setExpanded] = useState(running);
@@ -162,7 +156,7 @@ function AgentSteps({ steps, running = false }: AgentStepsProps) {
               ) : null}
               {!isRunning && step.observation ? (
                 <pre className="agent-observation" title={step.observation}>
-                  {truncate(step.observation, 240)}
+                  {step.observation.trim()}
                 </pre>
               ) : null}
             </article>

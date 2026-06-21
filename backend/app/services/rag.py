@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+from dataclasses import dataclass
 from uuid import UUID
 
 from langdetect import DetectorFactory, detect
@@ -25,6 +26,14 @@ logger = logging.getLogger(__name__)
 
 # Internal delimiter between evidence blocks in <context>; not shown to users.
 _CONTEXT_CHUNK_SEPARATOR = "\n\n<!-- chunk -->\n\n"
+
+
+@dataclass(frozen=True)
+class SectionReadPage:
+    offset: int
+    limit: int
+    has_more: bool
+    next_offset: int | None
 
 
 def model_path_ready(model_ref: str) -> bool:
@@ -279,6 +288,7 @@ class RAGService:
         document_id: UUID | None = None,
         doc_ids: list[UUID] | None = None,
         max_chunks: int = 30,
+        offset: int = 0,
     ) -> tuple[list[dict], str | None]:
         if page is not None:
             page_gte = page
@@ -299,7 +309,11 @@ class RAGService:
             stmt = stmt.where(Chunk.document_id == document_id)
         elif doc_ids:
             stmt = stmt.where(Chunk.document_id.in_(doc_ids))
-        stmt = stmt.order_by(Document.name, Chunk.chunk_index).limit(max(1, max_chunks))
+        stmt = (
+            stmt.order_by(Document.name, Chunk.chunk_index)
+            .offset(max(0, offset))
+            .limit(max(1, max_chunks))
+        )
 
         result = await db.execute(stmt)
         rows = result.all()
@@ -344,7 +358,8 @@ class RAGService:
         section: str | None = None,
         document_id: UUID | None = None,
         max_chunks: int = 30,
-    ) -> tuple[list[dict], ResolvedSection | None, str | None]:
+        offset: int = 0,
+    ) -> tuple[list[dict], ResolvedSection | None, SectionReadPage | None, str | None]:
         resolved = await resolve_section(
             db,
             question,
@@ -353,7 +368,7 @@ class RAGService:
             document_id=document_id,
         )
         if resolved is None:
-            return [], None, "未找到匹配章节。"
+            return [], None, None, "未找到匹配章节。"
 
         chunks, error = await self.read_pages(
             db,
@@ -361,10 +376,20 @@ class RAGService:
             page_lte=resolved.end_page,
             document_id=resolved.document_id,
             doc_ids=doc_ids,
-            max_chunks=max_chunks,
+            max_chunks=max_chunks + 1,
+            offset=offset,
         )
         if error:
-            return [], resolved, error
+            return [], resolved, None, error
+
+        has_more = len(chunks) > max_chunks
+        chunks = chunks[:max_chunks]
+        page = SectionReadPage(
+            offset=max(0, offset),
+            limit=max_chunks,
+            has_more=has_more,
+            next_offset=max(0, offset) + max_chunks if has_more else None,
+        )
 
         section_path = resolved.section_path.casefold()
         if section_path:
@@ -377,7 +402,7 @@ class RAGService:
             if filtered:
                 chunks = filtered
 
-        return chunks, resolved, None
+        return chunks, resolved, page, None
 
     def build_context(self, chunks: list[dict]) -> str:
         parts: list[str] = []

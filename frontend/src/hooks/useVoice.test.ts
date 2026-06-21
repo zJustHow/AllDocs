@@ -260,4 +260,54 @@ describe("useVoice", () => {
     expect(setError).toHaveBeenCalled();
     expect(setLoading).toHaveBeenCalledWith(false);
   });
+
+  it("does not request microphone access while another response is loading", async () => {
+    const getUserMedia = vi.mocked(navigator.mediaDevices.getUserMedia);
+    const { result } = renderVoiceHook(["doc-1"], true);
+
+    await act(async () => {
+      await result.current.startRecording();
+    });
+
+    expect(getUserMedia).not.toHaveBeenCalled();
+    expect(result.current.recording).toBe(false);
+  });
+
+  it("reports microphone permission failures", async () => {
+    vi.mocked(navigator.mediaDevices.getUserMedia).mockRejectedValueOnce(
+      new Error("microphone denied"),
+    );
+    const { result } = renderVoiceHook();
+
+    await act(async () => {
+      await result.current.startRecording();
+    });
+
+    expect(setError).toHaveBeenCalledWith("Error: microphone denied");
+    expect(result.current.recording).toBe(false);
+    expect(createVoiceSocket).not.toHaveBeenCalled();
+  });
+
+  it("finishes with an error when the voice socket disconnects early", async () => {
+    const { result } = renderVoiceHook();
+
+    await act(async () => {
+      await result.current.startRecording();
+    });
+    await act(async () => {
+      result.current.stopRecording();
+    });
+    await waitFor(() => {
+      expect(createVoiceSocket).toHaveBeenCalled();
+    });
+
+    const ws = vi.mocked(createVoiceSocket).mock.results[0]?.value as MockWebSocket;
+    await act(async () => {
+      ws.onclose?.();
+    });
+
+    expect(setError).toHaveBeenCalled();
+    expect(setLoading).toHaveBeenLastCalledWith(false);
+    expect(result.current.voiceStatus).toBeNull();
+  });
 });

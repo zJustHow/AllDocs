@@ -183,6 +183,43 @@ button {
   cursor: pointer;
 }
 
+/* Native scrollbars stay out of the way until their container is scrolling. */
+* {
+  scrollbar-width: none !important;
+}
+
+*::-webkit-scrollbar {
+  width: 0 !important;
+  height: 0 !important;
+}
+
+.floating-scrollbar {
+  position: fixed;
+  z-index: 1;
+  display: none;
+  border-radius: var(--radius-full);
+  background: var(--color-gray-400);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.16s ease;
+}
+
+.floating-scrollbar.is-visible {
+  opacity: 0.58;
+}
+
+.floating-scrollbar--vertical {
+  width: 5px;
+}
+
+.floating-scrollbar--horizontal {
+  height: 5px;
+}
+
+.floating-scrollbar--viewer {
+  background: var(--alpha-white-45);
+}
+
 .app {
   --active-settings-width: var(--settings-width);
   display: flex;
@@ -690,7 +727,6 @@ button {
   overflow-y: auto;
   overscroll-behavior: contain;
   scroll-padding-bottom: var(--composer-stack-height);
-  scrollbar-gutter: stable;
 }
 
 /* ── Welcome / empty state ── */
@@ -1299,7 +1335,6 @@ button {
   overflow-x: auto;
   overflow-y: hidden;
   -webkit-overflow-scrolling: touch;
-  scrollbar-width: thin;
 }
 
 .answer-media-block--table .answer-media-figures {

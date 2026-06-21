@@ -9,6 +9,7 @@ import {
 import Composer from "./Composer";
 import DocumentViewer from "./DocumentViewer";
 import { useDocuments } from "./hooks/useDocuments";
+import { useAutoHideScrollbars } from "./hooks/useAutoHideScrollbars";
 import { useChat } from "./hooks/useChat";
 import { useChatScroll } from "./hooks/useChatScroll";
 import { useComposerStackHeight } from "./hooks/useComposerStackHeight";
@@ -31,6 +32,7 @@ import { useConfirmDialog } from "./useConfirmDialog";
 const SettingsPanel = lazy(() => import("./SettingsPanel"));
 
 export default function App() {
+  useAutoHideScrollbars();
   const { t, locale, setLocale } = useI18n();
   const { confirm, dialog: confirmDialog } = useConfirmDialog();
   const [error, setError] = useState<string | null>(null);

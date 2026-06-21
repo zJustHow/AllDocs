@@ -5,10 +5,67 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from app.config import Settings
 from app.services.rag import RAGService
 from app.services.toc_lookup import (
+    ResolvedSection,
     extract_toc_query,
     format_documents_outline,
     outline_to_chunks,
 )
+
+
+def test_read_section_returns_next_offset_when_truncated() -> None:
+    doc_id = uuid.uuid4()
+    resolved = ResolvedSection(
+        document_id=doc_id,
+        document_name="Manual.pdf",
+        section_path="第3章 报警",
+        title="报警",
+        start_page=10,
+        end_page=40,
+        score=10.0,
+    )
+    settings = Settings(
+        inference_url="http://inference",
+        hybrid_enabled=False,
+        rerank_enabled=False,
+    )
+    with (
+        patch("app.services.embedding_provider.get_embedding_service", return_value=MagicMock()),
+        patch("app.services.rag.VectorStore", return_value=MagicMock()),
+    ):
+        rag = RAGService(settings)
+
+    page_chunks = [
+        {
+            "chunk_id": str(uuid.uuid4()),
+            "section": "第3章 报警",
+            "text": f"chunk {index}",
+        }
+        for index in range(31)
+    ]
+    rag.read_pages = AsyncMock(return_value=(page_chunks, None))
+
+    with patch(
+        "app.services.rag.resolve_section",
+        new=AsyncMock(return_value=resolved),
+    ):
+        chunks, returned_section, page, error = asyncio.run(
+            rag.read_section(
+                AsyncMock(),
+                "报警",
+                [doc_id],
+                max_chunks=30,
+                offset=60,
+            )
+        )
+
+    assert error is None
+    assert returned_section == resolved
+    assert len(chunks) == 30
+    assert page is not None
+    assert page.has_more is True
+    assert page.next_offset == 90
+    assert rag.read_pages.await_args.kwargs["offset"] == 60
+    assert rag.read_pages.await_args.kwargs["max_chunks"] == 31
 
 
 def test_extract_toc_query_parses_chapter_and_terms() -> None:
