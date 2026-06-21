@@ -161,8 +161,6 @@ const zh = {
       rag_agent_max_retrievals: "Agent 最大检索次数",
       rag_batch_search_max: "并行检索上限",
       rag_step_align_min_score: "步骤对齐最低分",
-      rag_min_rerank_score: "Rerank 最低分",
-      rag_min_retrieval_score: "检索最低分",
       embed_skip_table_when_answer_has_markdown: "回答含表格时跳过插图",
       embed_skip_table_lookback: "插图跳过回看句数",
       rerank_enabled: "启用 Rerank",

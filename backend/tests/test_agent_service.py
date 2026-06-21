@@ -203,9 +203,8 @@ def test_agent_run_ask_user_returns_clarification() -> None:
     assert result.evidence == []
 
 
-def test_agent_run_low_relevance_fallback() -> None:
+def test_agent_run_does_not_reject_low_score_evidence() -> None:
     service = _make_service()
-    service.settings = service.settings.model_copy(update={"rag_min_retrieval_score": 0.8})
     service.rag.search_chunks = AsyncMock(
         return_value=[
             {
@@ -247,8 +246,8 @@ def test_agent_run_low_relevance_fallback() -> None:
 
     result = asyncio.run(service.run("随机问题", doc_ids=None, filters=None))
 
-    assert result.fallback_message is not None
-    assert "相关性" in result.fallback_message
+    assert result.fallback_message is None
+    assert len(result.evidence) == 1
 
 
 def test_agent_run_executes_multiple_tool_calls_in_parallel() -> None:

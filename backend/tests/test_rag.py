@@ -5,7 +5,6 @@ from app.config import Settings
 from app.services.rag import (
     RAGService,
     detect_language,
-    low_relevance_message,
     model_path_ready,
     not_found_message,
     resolve_retrieval_fallback,
@@ -34,32 +33,26 @@ def test_detect_language_zh_and_en() -> None:
 def test_user_messages_for_zh_and_en() -> None:
     assert "操作指南" in not_found_message("zh")
     assert "Not found" in not_found_message("en")
-    assert "相关性" in low_relevance_message("zh")
-    assert "relevant" in low_relevance_message("en")
 
 
-def test_resolve_retrieval_fallback_low_relevance() -> None:
-    settings = Settings(rag_min_retrieval_score=0.5, rag_min_rerank_score=0.3)
+def test_resolve_retrieval_fallback_does_not_reject_low_scores() -> None:
     evidence = [
         {"from_semantic_search": True, "score": 0.2},
         {"from_semantic_search": True, "score": 0.1},
     ]
 
-    message = resolve_retrieval_fallback("zh", evidence=evidence, settings=settings)
-    assert message == low_relevance_message("zh")
+    assert resolve_retrieval_fallback("zh", evidence=evidence) is None
 
 
 def test_resolve_retrieval_fallback_not_found_without_evidence() -> None:
-    settings = Settings()
-    message = resolve_retrieval_fallback("en", evidence=[], settings=settings)
+    message = resolve_retrieval_fallback("en", evidence=[])
     assert message == not_found_message("en")
 
 
 def test_resolve_retrieval_fallback_none_when_scores_are_high_enough() -> None:
-    settings = Settings(rag_min_retrieval_score=0.4)
     evidence = [{"from_semantic_search": True, "score": 0.9}]
 
-    assert resolve_retrieval_fallback("zh", evidence=evidence, settings=settings) is None
+    assert resolve_retrieval_fallback("zh", evidence=evidence) is None
 
 
 def test_build_context_formats_headers_and_visual_marker() -> None:

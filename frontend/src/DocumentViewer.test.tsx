@@ -165,6 +165,32 @@ describe("DocumentViewer", () => {
     });
   });
 
+  it("repositions a citation after its PDF page image finishes loading", async () => {
+    const scrollTo = vi
+      .spyOn(HTMLElement.prototype, "scrollTo")
+      .mockImplementation(vi.fn());
+    renderViewer({
+      ...pdfTarget,
+      regions: [{ page: 1, bbox: [0.1, 0.8, 0.3, 0.9] }],
+    });
+
+    const image = await screen.findByRole("img", { name: /manual.pdf p\.1/i });
+    const scrollEl = document.querySelector(".doc-viewer-scroll") as HTMLElement;
+    Object.defineProperty(scrollEl, "clientHeight", { value: 800, configurable: true });
+    Object.defineProperty(image, "complete", { value: true, configurable: true });
+    Object.defineProperty(image, "naturalWidth", { value: 800, configurable: true });
+    Object.defineProperty(image, "naturalHeight", { value: 1200, configurable: true });
+    Object.defineProperty(image, "offsetWidth", { value: 400, configurable: true });
+    Object.defineProperty(image, "offsetHeight", { value: 600, configurable: true });
+    scrollTo.mockClear();
+
+    image.dispatchEvent(new Event("load"));
+
+    await waitFor(() => {
+      expect(scrollTo).toHaveBeenCalledWith({ top: 230, behavior: "auto" });
+    });
+  });
+
   it("keeps bbox highlights visible without showing the resize mask when changing citations", async () => {
     const view = renderViewer(pdfTarget);
     const image = await screen.findByRole("img", { name: /manual.pdf p\.1/i });

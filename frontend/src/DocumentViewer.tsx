@@ -195,9 +195,6 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
     () => pageRowHeight(placeholderHeight),
     [placeholderHeight],
   );
-  const estimatedPageRowHeightRef = useRef(estimatedPageRowHeight);
-  estimatedPageRowHeightRef.current = estimatedPageRowHeight;
-
   const pageVirtualizer = useVirtualizer({
     count: pageCount ?? 0,
     getScrollElement: () => scrollRef.current,
@@ -268,7 +265,7 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
       pageVirtualizerRef.current.scrollToIndex(page - 1, { align: "start", behavior });
       scrollEl.scrollTop = Math.max(
         0,
-        (page - 1) * estimatedPageRowHeightRef.current - 16,
+        (page - 1) * estimatedPageRowHeight - 16,
       );
 
       const pageEl = pageRefs.current.get(page);
@@ -295,6 +292,7 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
     },
     [
       ensurePagesLoaded,
+      estimatedPageRowHeight,
       highlightRegions,
       pageCount,
       primaryRegion,
@@ -725,6 +723,9 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
                                   highlightRegions.some((region) => region.page === page)
                                 ) {
                                   updateHighlights();
+                                }
+                                if (primaryRegion?.page === page) {
+                                  requestAnimationFrame(() => scrollToTarget("auto"));
                                 }
                               }}
                               onError={() => setError(t("errors.loadDocumentFailed"))}

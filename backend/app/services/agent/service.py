@@ -520,8 +520,6 @@ class AgentRAGService:
         fallback = resolve_retrieval_fallback(
             lang,
             evidence=state.evidence,
-            settings=self.settings,
-            reranker_active=self.rag.reranker is not None,
         )
         if fallback:
             logger.info(

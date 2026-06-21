@@ -45,52 +45,12 @@ def not_found_message(lang: str) -> str:
     return "Not found in the operation guide." if lang == "en" else "操作指南中未找到相关信息。"
 
 
-def low_relevance_message(lang: str) -> str:
-    if lang == "en":
-        return (
-            "The operation guide was searched, but the retrieved passages are not relevant enough "
-            "to answer confidently. Try rephrasing with more specific keywords, model numbers, "
-            "or fault symptoms."
-        )
-    return (
-        "操作指南里检索到了片段，但与您的问题相关性不足，暂时无法据此给出可靠回答。"
-        "建议补充更具体的关键词、型号或故障现象后重新提问。"
-    )
-
-
-def _min_relevance_score(settings: Settings, *, reranker_active: bool = False) -> float:
-    if reranker_active:
-        return settings.rag_min_rerank_score
-    return settings.rag_min_retrieval_score
-
-
-def _semantic_primary_scores(evidence: list[dict]) -> list[float]:
-    scores: list[float] = []
-    for chunk in evidence:
-        if not chunk.get("from_semantic_search"):
-            continue
-        score = chunk.get("score")
-        if score is not None:
-            scores.append(float(score))
-    return scores
-
-
 def resolve_retrieval_fallback(
     lang: str,
     *,
     evidence: list[dict],
-    settings: Settings,
-    reranker_active: bool = False,
 ) -> str | None:
     """Return a user-facing fallback when synthesis should be skipped, else None."""
-    semantic_evidence = [chunk for chunk in evidence if chunk.get("from_semantic_search")]
-    if semantic_evidence:
-        scores = _semantic_primary_scores(evidence)
-        threshold = _min_relevance_score(settings, reranker_active=reranker_active)
-        if scores and max(scores) < threshold:
-            return low_relevance_message(lang)
-        return None
-
     if not evidence:
         return not_found_message(lang)
 

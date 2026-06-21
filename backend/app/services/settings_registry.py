@@ -39,8 +39,6 @@ EDITABLE_FIELDS: tuple[SettingField, ...] = (
     SettingField("rag_agent_max_retrievals", "rag", "int"),
     SettingField("rag_batch_search_max", "rag", "int"),
     SettingField("rag_step_align_min_score", "rag", "float"),
-    SettingField("rag_min_rerank_score", "rag", "float"),
-    SettingField("rag_min_retrieval_score", "rag", "float"),
     SettingField("embed_skip_table_when_answer_has_markdown", "rag", "bool"),
     SettingField("embed_skip_table_lookback", "rag", "int"),
     # Retrieval

@@ -297,7 +297,7 @@ describe("SettingsPanel", () => {
           id: "rag",
           fields: [
             {
-              key: "rag_min_rerank_score",
+              key: "rag_step_align_min_score",
               type: "float" as const,
               secret: false,
               default: 0.5,
@@ -315,13 +315,13 @@ describe("SettingsPanel", () => {
     renderPanel();
 
     await screen.findByRole("dialog");
-    const scoreInput = screen.getByLabelText(/Min rerank score|最小 rerank/i);
+    const scoreInput = screen.getByLabelText(/Step align min score|步骤对齐最低分/i);
     fireEvent.change(scoreInput, { target: { value: "0.75" } });
 
     await user.click(screen.getByRole("button", { name: /保存|Save/i }));
 
     await waitFor(() => {
-      expect(patchSettings).toHaveBeenCalledWith({ rag_min_rerank_score: 0.75 });
+      expect(patchSettings).toHaveBeenCalledWith({ rag_step_align_min_score: 0.75 });
     });
   });
 

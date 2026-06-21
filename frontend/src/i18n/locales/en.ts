@@ -161,8 +161,6 @@ const en = {
       rag_agent_max_retrievals: "Agent max retrievals",
       rag_batch_search_max: "Parallel search limit",
       rag_step_align_min_score: "Step align min score",
-      rag_min_rerank_score: "Min rerank score",
-      rag_min_retrieval_score: "Min retrieval score",
       embed_skip_table_when_answer_has_markdown: "Skip embeds when answer has table",
       embed_skip_table_lookback: "Embed skip lookback sentences",
       rerank_enabled: "Enable rerank",
