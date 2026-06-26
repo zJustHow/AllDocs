@@ -6,6 +6,8 @@ import DocumentViewer from "./DocumentViewer";
 import { I18nProvider } from "./i18n";
 import type { ViewerTarget } from "./citations";
 
+let virtualizedItemLimit: number | null = null;
+
 vi.mock("@tanstack/react-virtual", () => ({
   useVirtualizer: ({
     count,
@@ -15,10 +17,11 @@ vi.mock("@tanstack/react-virtual", () => ({
     estimateSize?: (index: number) => number;
   }) => {
     const rowHeight = estimateSize?.(0) ?? 900;
+    const renderedCount = virtualizedItemLimit ?? count;
     return {
       getTotalSize: () => count * rowHeight,
       getVirtualItems: () =>
-        Array.from({ length: count }, (_, index) => ({
+        Array.from({ length: renderedCount }, (_, index) => ({
           index,
           start: index * rowHeight,
           key: String(index),
@@ -35,6 +38,7 @@ let intersectionCallback: IntersectionObserverCallback | null = null;
 
 beforeEach(() => {
   intersectionCallback = null;
+  virtualizedItemLimit = null;
   class IntersectionObserverMock implements IntersectionObserver {
     readonly root = null;
     readonly rootMargin = "";
@@ -223,6 +227,31 @@ describe("DocumentViewer", () => {
     expect(document.querySelector(".doc-viewer-resize-mask")).not.toHaveClass(
       "is-visible",
     );
+  });
+
+  it("cancels a pending citation scroll retry when the target changes", async () => {
+    virtualizedItemLimit = 0;
+    const cancelAnimationFrameSpy = vi.spyOn(window, "cancelAnimationFrame");
+    const { rerender } = renderViewer({
+      ...pdfTarget,
+      page: 3,
+      regions: [{ page: 3, bbox: [0.1, 0.2, 0.3, 0.4] }],
+    });
+
+    rerender(
+      <I18nProvider>
+        <DocumentViewer
+          target={{
+            ...pdfTarget,
+            page: 2,
+            regions: [{ page: 2, bbox: [0.2, 0.3, 0.4, 0.5] }],
+          }}
+          onClose={vi.fn()}
+        />
+      </I18nProvider>,
+    );
+
+    expect(cancelAnimationFrameSpy).toHaveBeenCalled();
   });
 
   it("navigates PDF pages with arrow keys", async () => {

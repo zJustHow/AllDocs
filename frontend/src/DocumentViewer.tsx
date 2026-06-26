@@ -382,15 +382,25 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
     }
 
     let retries = 0;
+    let cancelled = false;
+    let frame: number | null = null;
     const retry = () => {
+      if (cancelled) return;
       if (scrollToTarget("auto") || retries >= SCROLL_TO_TARGET_MAX_RETRIES) {
         finish();
         return;
       }
       retries += 1;
-      requestAnimationFrame(retry);
+      frame = requestAnimationFrame(retry);
     };
-    requestAnimationFrame(retry);
+    frame = requestAnimationFrame(retry);
+
+    return () => {
+      cancelled = true;
+      if (frame !== null) {
+        cancelAnimationFrame(frame);
+      }
+    };
   }, [
     pageCount,
     previewMode,

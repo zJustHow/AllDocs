@@ -5,14 +5,14 @@ import { useAutoHideScrollbars } from "./useAutoHideScrollbars";
 
 function Harness() {
   useAutoHideScrollbars();
-  return <div data-testid="scroller" />;
+  return <div data-testid="scroller" style={{ overflow: "auto" }} />;
 }
 
 function NestedHarness() {
   useAutoHideScrollbars();
   return (
-    <div data-testid="vertical">
-      <div data-testid="horizontal" />
+    <div data-testid="vertical" style={{ overflowY: "auto" }}>
+      <div data-testid="horizontal" style={{ overflowX: "auto" }} />
     </div>
   );
 }
@@ -20,11 +20,20 @@ function NestedHarness() {
 function EmptyChatHarness() {
   useAutoHideScrollbars();
   return (
-    <div data-testid="scrollable-parent">
+    <div data-testid="scrollable-parent" style={{ overflow: "auto" }}>
       <div className="chat-area-empty" data-testid="empty-chat">
         <div data-testid="welcome" />
       </div>
     </div>
+  );
+}
+
+function CitationHarness() {
+  useAutoHideScrollbars();
+  return (
+    <button type="button" className="citation-link" data-testid="citation">
+      [1]
+    </button>
   );
 }
 
@@ -112,6 +121,28 @@ describe("useAutoHideScrollbars", () => {
     });
 
     fireEvent.wheel(welcome, { deltaY: 20 });
+
+    expect(document.querySelector(".floating-scrollbar.is-visible")).not.toBeInTheDocument();
+  });
+
+  it("does not show a floating scrollbar for citation buttons", () => {
+    const { getByTestId } = render(<CitationHarness />);
+    const citation = getByTestId("citation");
+
+    Object.defineProperties(citation, {
+      clientWidth: { value: 16, configurable: true },
+      scrollWidth: { value: 24, configurable: true },
+    });
+    vi.spyOn(citation, "getBoundingClientRect").mockReturnValue({
+      ...rect,
+      right: 24,
+      bottom: 20,
+      width: 24,
+      height: 20,
+    });
+
+    fireEvent.pointerMove(citation, { clientX: 20, clientY: 10 });
+    fireEvent.wheel(citation, { deltaX: 20 });
 
     expect(document.querySelector(".floating-scrollbar.is-visible")).not.toBeInTheDocument();
   });

@@ -22,13 +22,33 @@ interface DragState {
 function isScrollable(element: HTMLElement): boolean {
   if (element.classList.contains("chat-area-empty")) return false;
   return (
-    element.scrollHeight > element.clientHeight + 1 ||
-    element.scrollWidth > element.clientWidth + 1
+    canScrollOnAxis(element, "vertical") || canScrollOnAxis(element, "horizontal")
+  );
+}
+
+function hasScrollableOverflow(
+  element: HTMLElement,
+  axis: "horizontal" | "vertical",
+): boolean {
+  if (element === document.scrollingElement) return true;
+  const styles = window.getComputedStyle(element);
+  const declared =
+    axis === "vertical"
+      ? styles.overflowY || styles.overflow
+      : styles.overflowX || styles.overflow;
+  const inline =
+    axis === "vertical"
+      ? element.style.overflowY || element.style.overflow
+      : element.style.overflowX || element.style.overflow;
+  return [declared, inline].some(
+    (overflow) =>
+      overflow === "auto" || overflow === "scroll" || overflow === "overlay",
   );
 }
 
 function canScrollOnAxis(element: HTMLElement, axis: "horizontal" | "vertical"): boolean {
   if (element.classList.contains("chat-area-empty")) return false;
+  if (!hasScrollableOverflow(element, axis)) return false;
   return axis === "vertical"
     ? element.scrollHeight > element.clientHeight + 1
     : element.scrollWidth > element.clientWidth + 1;
