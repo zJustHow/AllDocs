@@ -1,7 +1,10 @@
 /** @vitest-environment jsdom */
 import { act, fireEvent, render } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { useAutoHideScrollbars } from "./useAutoHideScrollbars";
+import {
+  hideFloatingScrollbars,
+  useAutoHideScrollbars,
+} from "./useAutoHideScrollbars";
 
 function Harness() {
   useAutoHideScrollbars();
@@ -70,6 +73,27 @@ describe("useAutoHideScrollbars", () => {
     expect(floatingBar).toHaveClass("is-visible");
 
     act(() => vi.advanceTimersByTime(1));
+    expect(floatingBar).not.toHaveClass("is-visible");
+  });
+
+  it("hides visible scrollbars immediately when requested", () => {
+    vi.useFakeTimers();
+    const { getByTestId } = render(<Harness />);
+    const scroller = getByTestId("scroller");
+
+    Object.defineProperties(scroller, {
+      clientHeight: { value: 100, configurable: true },
+      scrollHeight: { value: 300, configurable: true },
+    });
+
+    fireEvent.scroll(scroller);
+    const floatingBar = document.querySelector(".floating-scrollbar--vertical");
+    expect(floatingBar).toHaveClass("is-visible");
+
+    hideFloatingScrollbars();
+
+    expect(floatingBar).not.toHaveClass("is-visible");
+    act(() => vi.advanceTimersByTime(800));
     expect(floatingBar).not.toHaveClass("is-visible");
   });
 

@@ -136,12 +136,15 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
   const resizeFrameRef = useRef<number | null>(null);
   const resizingRef = useRef(false);
   const currentPageRef = useRef(currentPage);
+  const targetScrollKeyRef = useRef("");
+  const pageLoadScrollFrameRef = useRef<number | null>(null);
   const highlightRegions = useMemo(() => resolveHighlightRegions(target), [target]);
   const primaryRegion = highlightRegions[0] ?? null;
   const targetRegionsKey = useMemo(
     () => highlightRegionsKey(highlightRegions),
     [highlightRegions],
   );
+  const targetScrollKey = `${target.documentId}:${target.page ?? ""}:${targetRegionsKey}`;
 
   const pageCount = target.pageCount ?? null;
   const requiredLoadedPages = useMemo(
@@ -170,6 +173,7 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
           : previewMode.toUpperCase();
 
   currentPageRef.current = currentPage;
+  targetScrollKeyRef.current = targetScrollKey;
 
   useEffect(() => {
     const timer = setTimeout(() => setRenderZoom(zoom), ZOOM_DEBOUNCE_MS);
@@ -339,6 +343,27 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
     },
     [ensurePagesLoaded, pageCount],
   );
+
+  const scheduleScrollToCurrentTarget = useCallback(() => {
+    const scheduledKey = targetScrollKey;
+    if (pageLoadScrollFrameRef.current !== null) {
+      cancelAnimationFrame(pageLoadScrollFrameRef.current);
+    }
+    pageLoadScrollFrameRef.current = requestAnimationFrame(() => {
+      pageLoadScrollFrameRef.current = null;
+      if (targetScrollKeyRef.current !== scheduledKey) return;
+      scrollToTarget("auto");
+    });
+  }, [scrollToTarget, targetScrollKey]);
+
+  useEffect(() => {
+    return () => {
+      if (pageLoadScrollFrameRef.current !== null) {
+        cancelAnimationFrame(pageLoadScrollFrameRef.current);
+        pageLoadScrollFrameRef.current = null;
+      }
+    };
+  }, [targetScrollKey]);
 
   useEffect(() => {
     setReadyPageImages(new Set());
@@ -754,7 +779,7 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
                                   updateHighlights();
                                 }
                                 if (primaryRegion?.page === page) {
-                                  requestAnimationFrame(() => scrollToTarget("auto"));
+                                  scheduleScrollToCurrentTarget();
                                 }
                               }}
                               onError={() => setError(t("errors.loadDocumentFailed"))}

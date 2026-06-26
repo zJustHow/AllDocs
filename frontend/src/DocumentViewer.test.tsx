@@ -254,6 +254,57 @@ describe("DocumentViewer", () => {
     expect(cancelAnimationFrameSpy).toHaveBeenCalled();
   });
 
+  it("ignores a delayed page-load scroll from the previous citation", async () => {
+    let nextFrame = 1;
+    const frameCallbacks = new Map<number, FrameRequestCallback>();
+    const requestAnimationFrameSpy = vi
+      .spyOn(window, "requestAnimationFrame")
+      .mockImplementation((callback) => {
+        const frame = nextFrame;
+        nextFrame += 1;
+        frameCallbacks.set(frame, callback);
+        return frame;
+      });
+    vi.spyOn(window, "cancelAnimationFrame").mockImplementation((frame) => {
+      frameCallbacks.delete(frame);
+    });
+
+    const view = renderViewer(pdfTarget);
+    const pageInput = await screen.findByRole("textbox", { name: /Page number|页码/i });
+    const image = await screen.findByRole("img", { name: /manual.pdf p\.1/i });
+    Object.defineProperty(image, "complete", { value: true, configurable: true });
+    Object.defineProperty(image, "naturalWidth", { value: 800, configurable: true });
+    Object.defineProperty(image, "naturalHeight", { value: 1200, configurable: true });
+    Object.defineProperty(image, "offsetWidth", { value: 400, configurable: true });
+    Object.defineProperty(image, "offsetHeight", { value: 600, configurable: true });
+
+    image.dispatchEvent(new Event("load"));
+    expect(requestAnimationFrameSpy).toHaveBeenCalled();
+
+    view.rerender(
+      <I18nProvider>
+        <DocumentViewer
+          target={{
+            ...pdfTarget,
+            page: 2,
+            regions: [{ page: 2, bbox: [0.2, 0.3, 0.4, 0.5] }],
+          }}
+          onClose={vi.fn()}
+        />
+      </I18nProvider>,
+    );
+
+    await waitFor(() => {
+      expect(pageInput).toHaveValue("2");
+    });
+
+    for (const callback of [...frameCallbacks.values()]) {
+      callback(0);
+    }
+
+    expect(pageInput).toHaveValue("2");
+  });
+
   it("navigates PDF pages with arrow keys", async () => {
     renderViewer(pdfTarget);
 

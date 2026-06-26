@@ -3,6 +3,7 @@ import { useEffect } from "react";
 const HIDE_DELAY_MS = 800;
 const MIN_THUMB_SIZE = 24;
 const HOVER_HIT_SLOP = 12;
+const HIDE_SCROLLBARS_EVENT = "alldocs:hide-floating-scrollbars";
 
 interface FloatingBars {
   horizontal: HTMLDivElement;
@@ -120,6 +121,17 @@ export function useAutoHideScrollbars() {
         const timer = hideTimers.get(element);
         if (timer !== undefined) window.clearTimeout(timer);
         hideTimers.delete(element);
+      }
+    };
+
+    const hideAllBars = () => {
+      dragState = null;
+      hoverElement = null;
+      for (const timer of hideTimers.values()) window.clearTimeout(timer);
+      hideTimers.clear();
+      for (const bars of barsByElement.values()) {
+        bars.horizontal.classList.remove("is-visible");
+        bars.vertical.classList.remove("is-visible");
       }
     };
 
@@ -329,6 +341,7 @@ export function useAutoHideScrollbars() {
     document.addEventListener("pointermove", handlePointerMove);
     document.addEventListener("pointerup", handlePointerUp);
     document.addEventListener("pointercancel", handlePointerUp);
+    document.addEventListener(HIDE_SCROLLBARS_EVENT, hideAllBars);
     window.addEventListener("resize", handleResize);
 
     return () => {
@@ -337,6 +350,7 @@ export function useAutoHideScrollbars() {
       document.removeEventListener("pointermove", handlePointerMove);
       document.removeEventListener("pointerup", handlePointerUp);
       document.removeEventListener("pointercancel", handlePointerUp);
+      document.removeEventListener(HIDE_SCROLLBARS_EVENT, hideAllBars);
       window.removeEventListener("resize", handleResize);
       for (const timer of hideTimers.values()) window.clearTimeout(timer);
       for (const bars of barsByElement.values()) {
@@ -345,4 +359,8 @@ export function useAutoHideScrollbars() {
       }
     };
   }, []);
+}
+
+export function hideFloatingScrollbars() {
+  document.dispatchEvent(new Event(HIDE_SCROLLBARS_EVENT));
 }

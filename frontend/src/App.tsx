@@ -9,7 +9,10 @@ import {
 import Composer from "./Composer";
 import DocumentViewer from "./DocumentViewer";
 import { useDocuments } from "./hooks/useDocuments";
-import { useAutoHideScrollbars } from "./hooks/useAutoHideScrollbars";
+import {
+  hideFloatingScrollbars,
+  useAutoHideScrollbars,
+} from "./hooks/useAutoHideScrollbars";
 import { useChat } from "./hooks/useChat";
 import { useChatScroll } from "./hooks/useChatScroll";
 import { useComposerStackHeight } from "./hooks/useComposerStackHeight";
@@ -38,6 +41,16 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
 
   const { sidebarOpen, closeSidebar, toggleSidebar } = useSidebarLayout();
+
+  const handleCloseSidebar = () => {
+    hideFloatingScrollbars();
+    closeSidebar();
+  };
+
+  const handleToggleSidebar = () => {
+    hideFloatingScrollbars();
+    toggleSidebar();
+  };
 
   const {
     settingsOpen,
@@ -145,7 +158,7 @@ export default function App() {
     >
       <div
         className={`sidebar-overlay ${sidebarOpen ? "visible" : ""}`}
-        onClick={closeSidebar}
+        onClick={handleCloseSidebar}
         aria-hidden="true"
       />
       <div
@@ -161,7 +174,7 @@ export default function App() {
         readyCount={readyDocs.length}
         uploading={uploading}
         statusLabel={statusLabel}
-        onToggle={toggleSidebar}
+        onToggle={handleToggleSidebar}
         onNewChat={handleNewChat}
         onUpload={handleUpload}
         onToggleDoc={toggleDoc}
@@ -173,7 +186,7 @@ export default function App() {
         <header className="top-bar">
           <button
             className={`icon-btn top-bar-menu ${sidebarOpen ? "hidden" : ""}`}
-            onClick={toggleSidebar}
+            onClick={handleToggleSidebar}
             aria-label={sidebarOpen ? undefined : t("sidebar.open")}
             aria-hidden={sidebarOpen}
             tabIndex={sidebarOpen ? -1 : 0}
