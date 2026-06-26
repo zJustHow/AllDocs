@@ -201,19 +201,24 @@ button {
   background: var(--color-gray-400);
   opacity: 0;
   pointer-events: none;
-  transition: opacity 0.16s ease;
+  touch-action: none;
+  transition: none;
 }
 
 .floating-scrollbar.is-visible {
   opacity: 0.58;
+  pointer-events: auto;
+  transition: opacity 0.16s ease;
 }
 
 .floating-scrollbar--vertical {
   width: 5px;
+  cursor: ns-resize;
 }
 
 .floating-scrollbar--horizontal {
   height: 5px;
+  cursor: ew-resize;
 }
 
 .floating-scrollbar--viewer {

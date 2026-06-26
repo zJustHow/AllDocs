@@ -28,6 +28,18 @@ function EmptyChatHarness() {
   );
 }
 
+const rect = {
+  top: 0,
+  right: 100,
+  bottom: 100,
+  left: 0,
+  width: 100,
+  height: 100,
+  x: 0,
+  y: 0,
+  toJSON: () => ({}),
+};
+
 describe("useAutoHideScrollbars", () => {
   afterEach(() => vi.useRealTimers());
 
@@ -56,17 +68,6 @@ describe("useAutoHideScrollbars", () => {
     const { getByTestId } = render(<NestedHarness />);
     const vertical = getByTestId("vertical");
     const horizontal = getByTestId("horizontal");
-    const rect = {
-      top: 0,
-      right: 100,
-      bottom: 100,
-      left: 0,
-      width: 100,
-      height: 100,
-      x: 0,
-      y: 0,
-      toJSON: () => ({}),
-    };
 
     Object.defineProperties(vertical, {
       clientHeight: { value: 100, configurable: true },
@@ -113,5 +114,111 @@ describe("useAutoHideScrollbars", () => {
     fireEvent.wheel(welcome, { deltaY: 20 });
 
     expect(document.querySelector(".floating-scrollbar.is-visible")).not.toBeInTheDocument();
+  });
+
+  it("shows the vertical scrollbar when the pointer moves over its edge", () => {
+    const { getByTestId } = render(<Harness />);
+    const scroller = getByTestId("scroller");
+
+    Object.defineProperties(scroller, {
+      clientHeight: { value: 100, configurable: true },
+      scrollHeight: { value: 300, configurable: true },
+    });
+    vi.spyOn(scroller, "getBoundingClientRect").mockReturnValue(rect);
+
+    fireEvent.pointerMove(scroller, { clientX: 96, clientY: 50 });
+
+    const floatingBar = document.querySelector<HTMLElement>(".floating-scrollbar--vertical");
+    expect(floatingBar).toHaveClass("is-visible");
+    expect(floatingBar?.style.display).toBe("block");
+  });
+
+  it("shows the horizontal scrollbar when the pointer moves over its edge", () => {
+    const { getByTestId } = render(<Harness />);
+    const scroller = getByTestId("scroller");
+
+    Object.defineProperties(scroller, {
+      clientWidth: { value: 100, configurable: true },
+      scrollWidth: { value: 300, configurable: true },
+    });
+    vi.spyOn(scroller, "getBoundingClientRect").mockReturnValue(rect);
+
+    fireEvent.pointerMove(scroller, { clientX: 50, clientY: 96 });
+
+    const floatingBar = document.querySelector<HTMLElement>(".floating-scrollbar--horizontal");
+    expect(floatingBar).toHaveClass("is-visible");
+    expect(floatingBar?.style.display).toBe("block");
+  });
+
+  it("keeps a hovered image scrollbar visible when the pointer is over its thumb", () => {
+    vi.useFakeTimers();
+    const { getByTestId } = render(<Harness />);
+    const scroller = getByTestId("scroller");
+
+    Object.defineProperties(scroller, {
+      clientWidth: { value: 100, configurable: true },
+      scrollWidth: { value: 300, configurable: true },
+    });
+    vi.spyOn(scroller, "getBoundingClientRect").mockReturnValue(rect);
+
+    fireEvent.pointerMove(scroller, { clientX: 50, clientY: 96 });
+    const floatingBar = document.querySelector<HTMLElement>(
+      ".floating-scrollbar--horizontal",
+    );
+    expect(floatingBar).toHaveClass("is-visible");
+
+    act(() => vi.advanceTimersByTime(700));
+    fireEvent.pointerMove(floatingBar!, { clientX: 50, clientY: 96 });
+    act(() => vi.advanceTimersByTime(101));
+
+    expect(floatingBar).toHaveClass("is-visible");
+  });
+
+  it("drags the vertical floating scrollbar thumb", () => {
+    const { getByTestId } = render(<Harness />);
+    const scroller = getByTestId("scroller");
+
+    Object.defineProperties(scroller, {
+      clientHeight: { value: 100, configurable: true },
+      scrollHeight: { value: 300, configurable: true },
+    });
+    vi.spyOn(scroller, "getBoundingClientRect").mockReturnValue(rect);
+
+    fireEvent.scroll(scroller);
+    const floatingBar = document.querySelector<HTMLElement>(".floating-scrollbar--vertical");
+    expect(floatingBar).not.toBeNull();
+    vi.spyOn(floatingBar!, "getBoundingClientRect").mockReturnValue({
+      ...rect,
+      height: Number.parseFloat(floatingBar!.style.height),
+    });
+
+    fireEvent.pointerDown(floatingBar!, { clientY: 0, pointerId: 1 });
+    fireEvent.pointerMove(document, { clientY: 33.333, pointerId: 1 });
+
+    expect(scroller.scrollTop).toBeCloseTo(100, 0);
+  });
+
+  it("drags the horizontal floating scrollbar thumb", () => {
+    const { getByTestId } = render(<Harness />);
+    const scroller = getByTestId("scroller");
+
+    Object.defineProperties(scroller, {
+      clientWidth: { value: 100, configurable: true },
+      scrollWidth: { value: 300, configurable: true },
+    });
+    vi.spyOn(scroller, "getBoundingClientRect").mockReturnValue(rect);
+
+    fireEvent.scroll(scroller);
+    const floatingBar = document.querySelector<HTMLElement>(".floating-scrollbar--horizontal");
+    expect(floatingBar).not.toBeNull();
+    vi.spyOn(floatingBar!, "getBoundingClientRect").mockReturnValue({
+      ...rect,
+      width: Number.parseFloat(floatingBar!.style.width),
+    });
+
+    fireEvent.pointerDown(floatingBar!, { clientX: 0, pointerId: 1 });
+    fireEvent.pointerMove(document, { clientX: 33.333, pointerId: 1 });
+
+    expect(scroller.scrollLeft).toBeCloseTo(100, 0);
   });
 });
