@@ -6,7 +6,8 @@ from fastapi.responses import Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import ChunkAsset, Document, DocumentStatus
+from app.api.auth_deps import get_current_user, get_current_user_flexible
+from app.db.models import ChunkAsset, Document, DocumentStatus, User
 from app.db.session import get_db
 from app.services.storage import StorageService
 
@@ -17,6 +18,7 @@ router = APIRouter(prefix="/assets", tags=["assets"])
 async def get_asset(
     asset_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_user_flexible),
 ) -> Response:
     result = await db.execute(
         select(ChunkAsset).where(ChunkAsset.id == asset_id).limit(1)

@@ -2,7 +2,7 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import SettingsPanel from "./SettingsPanel";
+import SettingsPage from "./SettingsPage";
 import { I18nProvider } from "./i18n";
 
 const fetchSettings = vi.fn();
@@ -45,76 +45,67 @@ const samplePayload = {
   ],
 };
 
-function renderPanel(open = true, onClose = vi.fn(), withOverlay = false) {
+function renderPage(isAdmin = true) {
   return render(
     <I18nProvider>
-      {withOverlay ? (
-        <div
-          className="settings-overlay visible"
-          onClick={onClose}
-          aria-hidden="true"
-        />
-      ) : null}
-      <SettingsPanel open={open} onClose={onClose} />
+      <SettingsPage isAdmin={isAdmin} />
     </I18nProvider>,
   );
 }
 
-describe("SettingsPanel", () => {
+async function waitForAutoSave() {
+  await waitFor(
+    () => {
+      expect(patchSettings).toHaveBeenCalled();
+    },
+    { timeout: 2000 },
+  );
+}
+
+describe("SettingsPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     fetchSettings.mockResolvedValue(samplePayload);
     patchSettings.mockResolvedValue(samplePayload);
   });
 
-  it("hides the panel when closed", () => {
-    renderPanel(false);
-    expect(screen.getByRole("dialog", { hidden: true })).toHaveAttribute("aria-hidden", "true");
-    expect(fetchSettings).not.toHaveBeenCalled();
-  });
+  it("loads settings and renders fields on mount", async () => {
+    renderPage();
 
-  it("loads settings and renders fields when opened", async () => {
-    renderPanel();
-
-    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: /Management|管理/i })).toBeInTheDocument();
     expect(fetchSettings).toHaveBeenCalledTimes(1);
     expect(screen.getByLabelText(/模型|Model/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /保存|Save/i })).not.toBeInTheDocument();
   });
 
   it("filters fields by search query", async () => {
     const user = userEvent.setup();
-    renderPanel();
+    renderPage();
 
-    await screen.findByRole("dialog");
+    await screen.findByRole("heading", { name: /Management|管理/i });
     await user.type(screen.getByRole("searchbox"), "llm_api_key");
 
     expect(screen.getByLabelText(/API Key/i)).toBeInTheDocument();
     expect(screen.queryByLabelText(/^模型$|^Model$/i)).not.toBeInTheDocument();
   });
 
-  it("saves dirty field changes", async () => {
+  it("auto-saves dirty field changes", async () => {
     const user = userEvent.setup();
-    renderPanel();
+    renderPage();
 
-    await screen.findByRole("dialog");
+    await screen.findByRole("heading", { name: /Management|管理/i });
     const modelInput = screen.getByLabelText(/模型|Model/i);
     await user.clear(modelInput);
     await user.type(modelInput, "gpt-4.1");
 
-    const saveButton = screen.getByRole("button", { name: /保存|Save/i });
-    expect(saveButton).toBeEnabled();
-
-    await user.click(saveButton);
-
-    await waitFor(() => {
-      expect(patchSettings).toHaveBeenCalledWith({ llm_model: "gpt-4.1" });
-    });
+    await waitForAutoSave();
+    expect(patchSettings).toHaveBeenCalledWith({ llm_model: "gpt-4.1" });
     expect(await screen.findByText(/已保存|Settings saved/i)).toBeInTheDocument();
   });
 
   it("shows a load error when settings cannot be fetched", async () => {
     fetchSettings.mockRejectedValue(new Error("Settings unavailable"));
-    renderPanel();
+    renderPage();
 
     expect(await screen.findByText(/Settings unavailable/)).toBeInTheDocument();
   });
@@ -122,55 +113,35 @@ describe("SettingsPanel", () => {
   it("shows a save error when patch settings fails", async () => {
     patchSettings.mockRejectedValue(new Error("Save rejected"));
     const user = userEvent.setup();
-    renderPanel();
+    renderPage();
 
-    await screen.findByRole("dialog");
+    await screen.findByRole("heading", { name: /Management|管理/i });
     const modelInput = screen.getByLabelText(/模型|Model/i);
     await user.clear(modelInput);
     await user.type(modelInput, "gpt-4.1");
-    await user.click(screen.getByRole("button", { name: /保存|Save/i }));
 
     expect(await screen.findByText(/Save rejected/)).toBeInTheDocument();
   });
 
-  it("closes on Escape key", async () => {
-    const onClose = vi.fn();
+  it("auto-saves when resetting an overridden section back to defaults", async () => {
     const user = userEvent.setup();
-    renderPanel(true, onClose);
+    renderPage();
 
-    await screen.findByRole("dialog");
-    await user.keyboard("{Escape}");
-    expect(onClose).toHaveBeenCalledTimes(1);
+    await screen.findByRole("heading", { name: /Management|管理/i });
+    const llmGroup = screen
+      .getByRole("button", { name: /^LLM$/i })
+      .closest(".settings-group") as HTMLElement;
+    await user.click(
+      within(llmGroup).getByRole("button", {
+        name: /Reset LLM to defaults|恢复 LLM 默认配置/i,
+      }),
+    );
+
+    await waitForAutoSave();
+    expect(patchSettings).toHaveBeenCalledWith({ llm_api_key: null });
   });
 
-  it("closes when clicking the overlay", async () => {
-    const onClose = vi.fn();
-    const user = userEvent.setup();
-    renderPanel(true, onClose, true);
-
-    await screen.findByRole("dialog");
-    await user.click(document.querySelector(".settings-overlay") as HTMLElement);
-    expect(onClose).toHaveBeenCalledTimes(1);
-  });
-
-  it("resets an overridden field back to the default", async () => {
-    const user = userEvent.setup();
-    renderPanel();
-
-    await screen.findByRole("dialog");
-    const apiKeyField = screen.getByLabelText(/API Key/i).closest(".settings-field") as HTMLElement;
-    await user.click(within(apiKeyField).getByRole("button", { name: /Reset|重置/i }));
-
-    const saveButton = screen.getByRole("button", { name: /保存|Save/i });
-    expect(saveButton).toBeEnabled();
-    await user.click(saveButton);
-
-    await waitFor(() => {
-      expect(patchSettings).toHaveBeenCalledWith({ llm_api_key: null });
-    });
-  });
-
-  it("renders bool and numeric field types", async () => {
+  it("auto-saves bool and numeric field types", async () => {
     const ingestPayload = {
       groups: [
         {
@@ -200,29 +171,26 @@ describe("SettingsPanel", () => {
     patchSettings.mockResolvedValue(ingestPayload);
 
     const user = userEvent.setup();
-    renderPanel();
+    renderPage();
 
-    await screen.findByRole("dialog");
+    await screen.findByRole("heading", { name: /Management|管理/i });
     await user.click(screen.getByRole("checkbox"));
     const maxInput = screen.getByLabelText(/Max VLM analyses per page|每页最多/i);
     fireEvent.change(maxInput, { target: { value: "4" } });
 
-    await user.click(screen.getByRole("button", { name: /保存|Save/i }));
-
-    await waitFor(() => {
-      expect(patchSettings).toHaveBeenLastCalledWith({
-        ingest_caption_enabled: true,
-        ingest_caption_max_per_page: 4,
-      });
+    await waitForAutoSave();
+    expect(patchSettings).toHaveBeenLastCalledWith({
+      ingest_caption_enabled: true,
+      ingest_caption_max_per_page: 4,
     });
   });
 
   it("collapses and expands setting groups", async () => {
     const user = userEvent.setup();
-    renderPanel();
+    renderPage();
 
-    await screen.findByRole("dialog");
-    const toggle = screen.getByRole("button", { name: /LLM|大模型/i });
+    await screen.findByRole("heading", { name: /Management|管理/i });
+    const toggle = screen.getByRole("button", { name: /^LLM$/i });
     expect(screen.getByLabelText(/模型|Model/i)).toBeInTheDocument();
 
     await user.click(toggle);
@@ -234,9 +202,9 @@ describe("SettingsPanel", () => {
 
   it("shows an empty state when search matches nothing", async () => {
     const user = userEvent.setup();
-    renderPanel();
+    renderPage();
 
-    await screen.findByRole("dialog");
+    await screen.findByRole("heading", { name: /Management|管理/i });
     await user.type(screen.getByRole("searchbox"), "does-not-exist");
 
     expect(await screen.findByText(/No matching settings|没有匹配的设置/i)).toBeInTheDocument();
@@ -244,10 +212,10 @@ describe("SettingsPanel", () => {
 
   it("expands collapsed groups while searching", async () => {
     const user = userEvent.setup();
-    renderPanel();
+    renderPage();
 
-    await screen.findByRole("dialog");
-    const toggle = screen.getByRole("button", { name: /LLM|大模型/i });
+    await screen.findByRole("heading", { name: /Management|管理/i });
+    const toggle = screen.getByRole("button", { name: /^LLM$/i });
     await user.click(toggle);
     expect(screen.queryByLabelText(/模型|Model/i)).not.toBeInTheDocument();
 
@@ -255,42 +223,26 @@ describe("SettingsPanel", () => {
     expect(screen.getByLabelText(/模型|Model/i)).toBeInTheDocument();
   });
 
-  it("closes from the header close button", async () => {
-    const onClose = vi.fn();
-    const user = userEvent.setup();
-    renderPanel(true, onClose);
+  it("links back to the main app from the top bar", async () => {
+    renderPage();
 
-    await screen.findByRole("dialog");
-    await user.click(screen.getByRole("button", { name: /Close dialog|关闭对话框/i }));
-    expect(onClose).toHaveBeenCalledTimes(1);
+    await screen.findByRole("heading", { name: /Management|管理/i });
+    expect(screen.getByRole("link", { name: /Back|返回/i })).toHaveAttribute("href", "/");
   });
 
-  it("closes from the footer cancel button", async () => {
-    const onClose = vi.fn();
+  it("auto-saves a new secret field value", async () => {
     const user = userEvent.setup();
-    renderPanel(true, onClose);
+    renderPage();
 
-    await screen.findByRole("dialog");
-    await user.click(screen.getByRole("button", { name: /Cancel|取消/i }));
-    expect(onClose).toHaveBeenCalledTimes(1);
-  });
-
-  it("saves a new secret field value", async () => {
-    const user = userEvent.setup();
-    renderPanel();
-
-    await screen.findByRole("dialog");
+    await screen.findByRole("heading", { name: /Management|管理/i });
     const apiKeyInput = screen.getByLabelText(/API Key/i);
     await user.type(apiKeyInput, "sk-new-secret");
 
-    await user.click(screen.getByRole("button", { name: /保存|Save/i }));
-
-    await waitFor(() => {
-      expect(patchSettings).toHaveBeenCalledWith({ llm_api_key: "sk-new-secret" });
-    });
+    await waitForAutoSave();
+    expect(patchSettings).toHaveBeenCalledWith({ llm_api_key: "sk-new-secret" });
   });
 
-  it("renders and saves float fields", async () => {
+  it("auto-saves float fields", async () => {
     const floatPayload = {
       groups: [
         {
@@ -311,21 +263,17 @@ describe("SettingsPanel", () => {
     fetchSettings.mockResolvedValue(floatPayload);
     patchSettings.mockResolvedValue(floatPayload);
 
-    const user = userEvent.setup();
-    renderPanel();
+    renderPage();
 
-    await screen.findByRole("dialog");
+    await screen.findByRole("heading", { name: /Management|管理/i });
     const scoreInput = screen.getByLabelText(/Step align min score|步骤对齐最低分/i);
     fireEvent.change(scoreInput, { target: { value: "0.75" } });
 
-    await user.click(screen.getByRole("button", { name: /保存|Save/i }));
-
-    await waitFor(() => {
-      expect(patchSettings).toHaveBeenCalledWith({ rag_step_align_min_score: 0.75 });
-    });
+    await waitForAutoSave();
+    expect(patchSettings).toHaveBeenCalledWith({ rag_step_align_min_score: 0.75 });
   });
 
-  it("restores numeric defaults when the input is cleared", async () => {
+  it("does not auto-save when a numeric input is cleared back to default", async () => {
     const ingestPayload = {
       groups: [
         {
@@ -346,16 +294,19 @@ describe("SettingsPanel", () => {
     fetchSettings.mockResolvedValue(ingestPayload);
     patchSettings.mockResolvedValue(ingestPayload);
 
-    const user = userEvent.setup();
-    renderPanel();
+    renderPage();
 
-    await screen.findByRole("dialog");
+    await screen.findByRole("heading", { name: /Management|管理/i });
     const maxInput = screen.getByLabelText(/Max VLM analyses per page|每页最多/i);
     fireEvent.change(maxInput, { target: { value: "4" } });
-    fireEvent.change(maxInput, { target: { value: "" } });
+    await waitForAutoSave();
+    patchSettings.mockClear();
 
+    fireEvent.change(maxInput, { target: { value: "" } });
     expect(maxInput).toHaveValue(2);
-    expect(screen.getByRole("button", { name: /保存|Save/i })).toBeDisabled();
+
+    await new Promise((resolve) => window.setTimeout(resolve, 600));
+    expect(patchSettings).not.toHaveBeenCalled();
   });
 
   it("shows the masked secret hint when the field is set", async () => {
@@ -380,9 +331,9 @@ describe("SettingsPanel", () => {
     };
     fetchSettings.mockResolvedValue(secretPayload);
 
-    renderPanel();
+    renderPage();
 
-    await screen.findByRole("dialog");
+    await screen.findByRole("heading", { name: /Management|管理/i });
     expect(screen.getByText(/Currently set: sk-test\*\*\*\*|当前已设置：sk-test\*\*\*\*/i)).toBeInTheDocument();
   });
 });

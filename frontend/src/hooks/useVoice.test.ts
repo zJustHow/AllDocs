@@ -137,6 +137,8 @@ describe("useVoice", () => {
         selectedDocIds,
         sessionId: "session-1",
         loading,
+        isAdmin: true,
+        readyDocCount: selectedDocIds.length,
         setMessages,
         setSessionId,
         setLoading,

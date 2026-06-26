@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 
-from app.api import assets, chat, documents, settings, ws_voice
+from app.api import admin, assets, auth, chat, documents, settings, ws_voice
 from app.db.session import async_session_factory, init_db
 from app.config import get_settings
 from app.observability import (
@@ -56,6 +56,9 @@ app.add_middleware(
 )
 app.add_middleware(RequestObservabilityMiddleware)
 
+app.include_router(auth.router, prefix="/api/v1")
+app.include_router(admin.users_router, prefix="/api/v1")
+app.include_router(admin.audit_router, prefix="/api/v1")
 app.include_router(documents.router, prefix="/api/v1")
 app.include_router(assets.router, prefix="/api/v1")
 app.include_router(chat.router, prefix="/api/v1")

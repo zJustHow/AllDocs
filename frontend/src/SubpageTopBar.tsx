@@ -1,0 +1,30 @@
+import type { ReactNode } from "react";
+import { ChevronLeftIcon } from "./icons";
+import { useI18n } from "./i18n";
+import { AppLink } from "./AppLink";
+
+interface SubpageTopBarProps {
+  title: string;
+  children?: ReactNode;
+}
+
+export default function SubpageTopBar({ title, children }: SubpageTopBarProps) {
+  const { t } = useI18n();
+
+  return (
+    <div className="top-bar-slot">
+      <header className="top-bar subpage-top-bar">
+        <AppLink
+          href="/"
+          className="icon-btn top-bar-menu subpage-top-bar-back"
+          aria-label={t("settings.back")}
+        >
+          <ChevronLeftIcon />
+        </AppLink>
+        <h1 className="top-bar-title">{title}</h1>
+        <div className="top-bar-spacer" aria-hidden="true" />
+        {children}
+      </header>
+    </div>
+  );
+}

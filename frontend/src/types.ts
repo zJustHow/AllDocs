@@ -8,6 +8,7 @@ export interface DocumentItem {
   progress: number;
   progress_message: string | null;
   error_message: string | null;
+  chat_enabled: boolean;
   created_at: string;
 }
 

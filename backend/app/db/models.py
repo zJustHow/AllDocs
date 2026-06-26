@@ -29,6 +29,91 @@ class DocumentStatus(str, enum.Enum):
     deleting = "deleting"
 
 
+class UserRole(str, enum.Enum):
+    user = "user"
+    admin = "admin"
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    role: Mapped[UserRole] = mapped_column(Enum(UserRole), default=UserRole.user)
+    display_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    is_active: Mapped[bool] = mapped_column(default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    identities: Mapped[list["UserIdentity"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+
+
+class UserIdentity(Base):
+    __tablename__ = "user_identities"
+    __table_args__ = (
+        Index("uq_user_identities_provider_uid", "provider", "provider_uid", unique=True),
+        Index("ix_user_identities_user_id", "user_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    provider: Mapped[str] = mapped_column(String(32))
+    provider_uid: Mapped[str] = mapped_column(String(256))
+    verified: Mapped[bool] = mapped_column(default=True)
+    credential_hash: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    extra: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    user: Mapped["User"] = relationship(back_populates="identities")
+
+
+class RefreshToken(Base):
+    __tablename__ = "refresh_tokens"
+    __table_args__ = (Index("ix_refresh_tokens_user_id", "user_id"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    token_hash: Mapped[str] = mapped_column(String(64))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class OtpChallenge(Base):
+    __tablename__ = "otp_challenges"
+    __table_args__ = (
+        Index("ix_otp_challenges_phone", "phone"),
+        Index("ix_otp_challenges_email", "email"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    phone: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    email: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    code_hash: Mapped[str] = mapped_column(String(64))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class AdminAuditLog(Base):
+    __tablename__ = "admin_audit_logs"
+    __table_args__ = (
+        Index("ix_admin_audit_logs_created_at", "created_at"),
+        Index("ix_admin_audit_logs_actor_user_id", "actor_user_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    actor_user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    target_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    action: Mapped[str] = mapped_column(String(64))
+    details: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class Document(Base):
     __tablename__ = "documents"
 
@@ -45,6 +130,7 @@ class Document(Base):
     toc_entries: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     progress: Mapped[int] = mapped_column(Integer, default=0)
     progress_message: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    chat_enabled: Mapped[bool] = mapped_column(default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
@@ -109,6 +195,9 @@ class Session(Base):
     __table_args__ = (Index("ix_sessions_doc_ids", "doc_ids", postgresql_using="gin"),)
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
     doc_ids: Mapped[list] = mapped_column(JSONB, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

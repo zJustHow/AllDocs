@@ -13,10 +13,10 @@ import type { DocumentItem } from "./types";
 interface SidebarProps {
   open: boolean;
   documents: DocumentItem[];
-  selectedDocIds: string[];
   readyCount: number;
   uploading: boolean;
   statusLabel: Record<DocumentItem["status"], string>;
+  isAdmin: boolean;
   onToggle: () => void;
   onNewChat: () => void;
   onUpload: (file: File | null) => void;
@@ -28,10 +28,10 @@ interface SidebarProps {
 function Sidebar({
   open,
   documents,
-  selectedDocIds,
   readyCount,
   uploading,
   statusLabel,
+  isAdmin,
   onToggle,
   onNewChat,
   onUpload,
@@ -59,106 +59,137 @@ function Sidebar({
           {t("sidebar.newChat")}
         </button>
 
-        <label className="upload-btn">
-          <input
-            type="file"
-            accept={getUploadAccept()}
-            hidden
-            disabled={uploading}
-            onChange={(e) => onUpload(e.target.files?.[0] ?? null)}
-          />
-          <PlusIcon />
-          <span>
-            {uploading ? t("sidebar.uploading") : t("sidebar.uploadDoc")}
-          </span>
-        </label>
-        <p className="upload-hint">{t("sidebar.uploadHint")}</p>
+        {isAdmin ? (
+          <>
+            <label className="upload-btn">
+              <input
+                type="file"
+                accept={getUploadAccept()}
+                hidden
+                disabled={uploading}
+                onChange={(e) => onUpload(e.target.files?.[0] ?? null)}
+              />
+              <PlusIcon />
+              <span>
+                {uploading ? t("sidebar.uploading") : t("sidebar.uploadDoc")}
+              </span>
+            </label>
+            <p className="upload-hint">{t("sidebar.uploadHint")}</p>
+            <p className="upload-hint">{t("sidebar.chatEnabledHint")}</p>
+          </>
+        ) : null}
 
         <div className="sidebar-section-label">
-          {t("sidebar.docLibrary", { count: readyCount })}
+          {isAdmin
+            ? t("sidebar.docLibrary", { count: readyCount })
+            : t("sidebar.docLibraryReadonly", { count: readyCount })}
         </div>
 
         <div className="doc-list">
           {documents.length === 0 && (
-            <p className="doc-list-empty">{t("sidebar.emptyList")}</p>
+            <p className="doc-list-empty">
+              {isAdmin ? t("sidebar.emptyList") : t("sidebar.emptyListUser")}
+            </p>
           )}
           {documents.map((doc) => (
             <div key={doc.id} className={`doc-item ${doc.status}`}>
-              <label className="doc-main">
-                <input
-                  type="checkbox"
-                  className="doc-checkbox"
-                  checked={selectedDocIds.includes(doc.id)}
-                  disabled={doc.status !== "ready"}
-                  onChange={() => onToggleDoc(doc.id)}
-                />
-                <div className="doc-body">
-                  <strong className="doc-name" title={doc.name}>
-                    {doc.name}
-                  </strong>
-                  <div className="doc-meta">
-                    <span className={`status ${doc.status}`}>
-                      {statusLabel[doc.status]}
-                    </span>
-                    {doc.page_count ? (
-                      <span className="muted">
-                        {t("doc.pages", { count: doc.page_count })}
+              {isAdmin ? (
+                <label className="doc-main">
+                  <input
+                    type="checkbox"
+                    className="doc-checkbox"
+                    checked={doc.chat_enabled ?? true}
+                    disabled={doc.status !== "ready"}
+                    onChange={() => onToggleDoc(doc.id)}
+                  />
+                  <div className="doc-body">
+                    <strong className="doc-name" title={doc.name}>
+                      {doc.name}
+                    </strong>
+                    <div className="doc-meta">
+                      <span className={`status ${doc.status}`}>
+                        {statusLabel[doc.status]}
                       </span>
-                    ) : null}
-                    {doc.ocr_pages ? (
-                      <span className="muted">OCR {doc.ocr_pages}</span>
+                      {doc.page_count ? (
+                        <span className="muted">
+                          {t("doc.pages", { count: doc.page_count })}
+                        </span>
+                      ) : null}
+                      {doc.ocr_pages ? (
+                        <span className="muted">OCR {doc.ocr_pages}</span>
+                      ) : null}
+                    </div>
+                    {(doc.status === "pending" ||
+                      doc.status === "processing") && (
+                      <div className="index-progress">
+                        <div className="index-progress-bar">
+                          <div
+                            className="index-progress-fill"
+                            style={{
+                              width: `${doc.status === "pending" ? 0 : doc.progress}%`,
+                            }}
+                          />
+                        </div>
+                        <span className="index-progress-label">
+                          {doc.progress_message ??
+                            (doc.status === "pending"
+                              ? t("doc.status.pending")
+                              : t("doc.indexing"))}
+                          {doc.status === "processing"
+                            ? ` ${doc.progress}%`
+                            : ""}
+                        </span>
+                      </div>
+                    )}
+                    {doc.error_message ? (
+                      <span className="error-text">{doc.error_message}</span>
                     ) : null}
                   </div>
-                  {(doc.status === "pending" ||
-                    doc.status === "processing") && (
-                    <div className="index-progress">
-                      <div className="index-progress-bar">
-                        <div
-                          className="index-progress-fill"
-                          style={{
-                            width: `${doc.status === "pending" ? 0 : doc.progress}%`,
-                          }}
-                        />
-                      </div>
-                      <span className="index-progress-label">
-                        {doc.progress_message ??
-                          (doc.status === "pending"
-                            ? t("doc.status.pending")
-                            : t("doc.indexing"))}
-                        {doc.status === "processing"
-                          ? ` ${doc.progress}%`
-                          : ""}
+                </label>
+              ) : (
+                <div className="doc-main doc-main-readonly">
+                  <div className="doc-body">
+                    <strong className="doc-name" title={doc.name}>
+                      {doc.name}
+                    </strong>
+                    <div className="doc-meta">
+                      <span className={`status ${doc.status}`}>
+                        {statusLabel[doc.status]}
                       </span>
+                      {doc.page_count ? (
+                        <span className="muted">
+                          {t("doc.pages", { count: doc.page_count })}
+                        </span>
+                      ) : null}
                     </div>
-                  )}
-                  {doc.error_message ? (
-                    <span className="error-text">{doc.error_message}</span>
-                  ) : null}
+                  </div>
                 </div>
-              </label>
-              <div className="doc-actions">
-                {(doc.status === "ready" || doc.status === "failed") && (
+              )}
+              {isAdmin ? (
+                <div className="doc-actions">
+                  {(doc.status === "ready" || doc.status === "failed") && (
+                    <button
+                      type="button"
+                      className="doc-action-btn"
+                      onClick={() => onReindex(doc.id)}
+                      title={t("sidebar.reindexDoc")}
+                      aria-label={t("sidebar.reindexDoc")}
+                    >
+                      <ReindexIcon />
+                    </button>
+                  )}
                   <button
                     type="button"
-                    className="doc-action-btn"
-                    onClick={() => onReindex(doc.id)}
-                    title={t("sidebar.reindexDoc")}
-                    aria-label={t("sidebar.reindexDoc")}
+                    className="doc-action-btn danger"
+                    onClick={() => onDelete(doc.id)}
+                    disabled={doc.status === "deleting"}
+                    title={t("sidebar.deleteDoc")}
+                    aria-label={t("sidebar.deleteDoc")}
                   >
-                    <ReindexIcon />
+                    <TrashIcon />
                   </button>
-                )}
-                <button
-                  type="button"
-                  className="doc-action-btn danger"
-                  onClick={() => onDelete(doc.id)}
-                  disabled={doc.status === "deleting"}
-                  title={t("sidebar.deleteDoc")}
-                  aria-label={t("sidebar.deleteDoc")}
-                >
-                  <TrashIcon />
-                </button>
-              </div>
+                </div>
+              ) : null}
             </div>
           ))}
         </div>

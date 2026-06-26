@@ -244,6 +244,99 @@ INGEST_CAPTION_MODEL=qwen-vl-plus
 
 未配置时回退到 `LLM_*` 凭据。
 
+#### （6）用户认证（生产必配）
+
+生产环境**不要**使用 `AUTH_DISABLED=true`。至少配置 JWT 密钥与首个管理员账号：
+
+```env
+# 强随机字符串，可用: openssl rand -hex 32
+JWT_SECRET=your-production-jwt-secret
+JWT_ACCESS_TTL_MINUTES=30
+JWT_REFRESH_TTL_DAYS=14
+AUTH_DISABLED=false
+
+BOOTSTRAP_ADMIN_EMAIL=admin@yourcompany.com
+BOOTSTRAP_ADMIN_PASSWORD=your-strong-admin-password
+```
+
+API 首次启动时会自动创建上述 Admin（若该邮箱尚未注册）。也可在容器内手动创建：
+
+```bash
+docker compose -f docker-compose.prod.yml exec api \
+  python -m app.cli create-admin --email admin@yourcompany.com
+```
+
+**手机验证码（阿里云 SMS）**
+
+```env
+SMS_PROVIDER=aliyun
+SMS_OTP_TTL_SECONDS=300
+SMS_OTP_RESEND_SECONDS=60
+SMS_OTP_MAX_ATTEMPTS=5
+
+ALIYUN_SMS_ACCESS_KEY_ID=your-access-key-id
+ALIYUN_SMS_ACCESS_KEY_SECRET=your-access-key-secret
+ALIYUN_SMS_SIGN_NAME=你的短信签名
+ALIYUN_SMS_TEMPLATE_CODE=SMS_xxxxxx
+ALIYUN_SMS_REGION=cn-hangzhou
+ALIYUN_SMS_ENDPOINT=https://dysmsapi.aliyuncs.com
+```
+
+- 开发调试可设 `SMS_PROVIDER=console`，验证码会写入 API 日志（**生产勿用**）
+- 短信模板变量须包含 `code`，与系统发送的 JSON `{"code":"123456"}` 一致
+- 在 [阿里云短信控制台](https://dysms.console.aliyun.com/) 申请签名与模板
+
+**邮箱注册验证码（SMTP）**
+
+```env
+EMAIL_PROVIDER=smtp
+EMAIL_OTP_TTL_SECONDS=300
+EMAIL_OTP_RESEND_SECONDS=60
+EMAIL_OTP_MAX_ATTEMPTS=5
+
+SMTP_HOST=smtp.example.com
+SMTP_PORT=587
+SMTP_USER=your-smtp-user
+SMTP_PASSWORD=your-smtp-password
+SMTP_FROM=noreply@example.com
+SMTP_USE_TLS=true
+```
+
+- 开发调试可设 `EMAIL_PROVIDER=console`，验证码会写入 API 日志（**生产勿用**）
+- 阿里云邮件推送、腾讯企业邮等均可通过 SMTP 接入；`SMTP_FROM` 需与发信域名/账号一致
+
+**微信扫码登录（可选）**
+
+1. 在 [微信开放平台](https://open.weixin.qq.com/) 创建网站应用，获取 AppID / AppSecret
+2. 授权回调域填写你的公网域名（须与 Nginx 对外域名一致）
+3. 配置：
+
+```env
+WECHAT_APP_ID=wxXXXXXXXX
+WECHAT_APP_SECRET=xxxxxxxx
+WECHAT_REDIRECT_URI=https://docs.example.com/api/v1/auth/wechat/callback
+AUTH_FRONTEND_CALLBACK_URL=https://docs.example.com/auth/callback
+```
+
+- `WECHAT_REDIRECT_URI` 指向 **API** 的 OAuth 回调（经 Nginx 转发 `/api/`）
+- `AUTH_FRONTEND_CALLBACK_URL` 指向 **前端** 页面，用于登录完成后写入 token
+- 绑定微信时前端会跳转到 `/api/v1/auth/wechat/bind/authorize?token=...`
+
+**权限说明**
+
+| 能力 | Admin | 普通用户 |
+|------|-------|----------|
+| 查看文档、对话、语音 | ✅ | ✅ |
+| 选择 RAG 文档 / 上传 / 删除 / 设置 | ✅ | ❌ |
+| 用户管理、审计日志 | ✅ | ❌ |
+| 账号绑定 / 解绑 | ✅ | ✅ |
+
+修改 `.env` 中的认证相关变量后，需重启 API：
+
+```bash
+docker compose -f docker-compose.prod.yml restart api
+```
+
 ### 3.5 启动生产栈
 
 ```bash
@@ -450,6 +543,9 @@ docker compose -f docker-compose.prod.yml restart api worker-ingestion worker-ma
 | 入库一直 `failed` | ES/Qdrant/MinIO 未就绪   | `docker compose logs worker-ingestion`                            |
 | 更新后配置丢失       | 上传时覆盖了 `.env`        | 重新编辑 `.env`；同步时保持 `--exclude '.env'`                          |
 | 语音不可用         | Piper 模型缺失            | `bash scripts/download_piper_models.sh /opt/alldocs/models/piper` |
+| 登录后 401 / 无法访问 API | `AUTH_DISABLED` 与前端 token 不一致；`JWT_SECRET` 变更导致旧 token 失效 | 确认 `.env` 中 `AUTH_DISABLED=false`；清除浏览器缓存重新登录 |
+| 手机验证码收不到       | 阿里云 SMS 未配置或模板变量不匹配 | 检查 `SMS_PROVIDER=aliyun` 与 `ALIYUN_SMS_*`；对照短信模板是否含 `code` |
+| 微信登录失败         | 回调域 / Redirect URI 与公网域名不一致 | 核对 `WECHAT_REDIRECT_URI`、`AUTH_FRONTEND_CALLBACK_URL` 与开放平台配置 |
 
 
 进一步诊断：
@@ -471,6 +567,8 @@ dmesg | tail | grep -i oom
 □ bash scripts/server-bootstrap.sh
 □ bash scripts/server-bootstrap.sh --generate-secrets
 □ 编辑 .env：LLM_API_KEY、Redis/Qdrant/ES/MinIO/INFERENCE 内网地址
+□ 编辑 .env：JWT_SECRET、BOOTSTRAP_ADMIN_*（AUTH_DISABLED=false）
+□ （可选）配置 ALIYUN_SMS_* 或 WECHAT_* 登录方式
 □ 备份 .env 到安全位置
 □ bash scripts/server-bootstrap.sh --start
 □ 浏览器访问 http://<IP>，上传测试文档并问答
@@ -499,7 +597,7 @@ rsync -avz --delete \
 cd /opt/alldocs
 bash scripts/server-bootstrap.sh
 bash scripts/server-bootstrap.sh --generate-secrets
-vim .env   # LLM_API_KEY + Docker 内网 URL
+vim .env   # LLM_API_KEY + Docker 内网 URL + JWT_SECRET + BOOTSTRAP_ADMIN_*
 bash scripts/server-bootstrap.sh --start
 ```
 

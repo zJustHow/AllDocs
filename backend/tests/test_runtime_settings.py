@@ -4,6 +4,7 @@ from app.services.runtime_settings import (
     build_settings_response,
     mask_secret,
     set_overrides,
+    update_overrides,
 )
 from app.services.settings_registry import coerce_setting_value, serialize_setting_value
 
@@ -68,3 +69,23 @@ def test_coerce_setting_value() -> None:
     field = FIELD_BY_KEY["hybrid_enabled"]
     assert coerce_setting_value(field, "true") is True
     assert serialize_setting_value(True) == "true"
+
+
+def test_update_overrides_records_changes() -> None:
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from app.db.models import Base
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    session = Session()
+    try:
+        set_overrides({})
+        _, changes = update_overrides(session, {"rag_top_k": 7})
+        assert changes["rag_top_k"]["to"] == 7
+        assert "from" in changes["rag_top_k"]
+    finally:
+        session.close()
+        set_overrides({})

@@ -17,6 +17,7 @@ const documents: DocumentItem[] = [
     progress: 100,
     progress_message: null,
     error_message: null,
+    chat_enabled: true,
     created_at: "2026-01-01T00:00:00Z",
   },
   {
@@ -28,6 +29,7 @@ const documents: DocumentItem[] = [
     progress: 40,
     progress_message: "OCR page 2",
     error_message: null,
+    chat_enabled: false,
     created_at: "2026-01-02T00:00:00Z",
   },
 ];
@@ -53,10 +55,10 @@ function renderSidebar(overrides: Partial<ComponentProps<typeof Sidebar>> = {}) 
       <Sidebar
         open
         documents={documents}
-        selectedDocIds={["doc-ready"]}
         readyCount={1}
         uploading={false}
         statusLabel={statusLabel}
+        isAdmin
         onToggle={onToggle}
         onNewChat={onNewChat}
         onUpload={onUpload}
@@ -116,6 +118,7 @@ describe("Sidebar", () => {
           progress: 0,
           progress_message: null,
           error_message: null,
+          chat_enabled: false,
           created_at: "2026-01-03T00:00:00Z",
         },
         {
@@ -127,6 +130,7 @@ describe("Sidebar", () => {
           progress: 0,
           progress_message: null,
           error_message: "Index failed",
+          chat_enabled: false,
           created_at: "2026-01-04T00:00:00Z",
         },
         {
@@ -138,10 +142,10 @@ describe("Sidebar", () => {
           progress: 0,
           progress_message: null,
           error_message: null,
+          chat_enabled: false,
           created_at: "2026-01-05T00:00:00Z",
         },
       ],
-      selectedDocIds: [],
       readyCount: 0,
     });
 
@@ -156,7 +160,6 @@ describe("Sidebar", () => {
     const user = userEvent.setup();
     const { onUpload, onToggle } = renderSidebar({
       documents: [],
-      selectedDocIds: [],
       readyCount: 0,
     });
 

@@ -12,6 +12,7 @@ import {
   type ViewerTarget,
 } from "./citations";
 import { embedDedupeKey } from "./shared/contract";
+import { withAuthQuery } from "./auth/tokenStore";
 import { useI18n } from "./i18n";
 import ProseBlock from "./ProseBlock";
 import type { Citation, MessageEmbed } from "./types";
@@ -147,17 +148,18 @@ function AnswerEmbedFigure({ embed, onOpenDocument }: AnswerEmbedFigureProps) {
   const imgRef = useRef<HTMLImageElement>(null);
   const linkLabel = embedDisplayCaption(embed, t);
   const isTable = embed.type === "table";
+  const mediaUrl = embed.url?.startsWith("/") ? withAuthQuery(embed.url) : embed.url;
 
   useEffect(() => {
     setImageState("loading");
-  }, [embed.url]);
+  }, [mediaUrl]);
 
   useEffect(() => {
     const img = imgRef.current;
     if (img?.complete) {
       setImageState(img.naturalWidth > 0 ? "loaded" : "error");
     }
-  }, [embed.url]);
+  }, [mediaUrl]);
 
   return (
     <figure
@@ -184,7 +186,7 @@ function AnswerEmbedFigure({ embed, onOpenDocument }: AnswerEmbedFigureProps) {
         ) : null}
         <img
           ref={imgRef}
-          src={embed.url}
+          src={mediaUrl}
           alt={linkLabel}
           loading="eager"
           className={`answer-embed-image${
@@ -196,7 +198,7 @@ function AnswerEmbedFigure({ embed, onOpenDocument }: AnswerEmbedFigureProps) {
       </button>
       <ImageLightbox
         open={lightboxOpen}
-        src={embed.url}
+        src={mediaUrl}
         alt={linkLabel}
         caption={linkLabel}
         onClose={() => setLightboxOpen(false)}

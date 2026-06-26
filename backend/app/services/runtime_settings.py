@@ -111,10 +111,28 @@ def build_settings_response() -> dict[str, Any]:
     }
 
 
-def update_overrides(session: Session, values: dict[str, Any]) -> dict[str, str]:
+def _audit_setting_value(key: str, value: Any) -> Any:
+    field = FIELD_BY_KEY[key]
+    if field.secret:
+        return mask_secret(str(value)) if value else None
+    return value
+
+
+def update_overrides(session: Session, values: dict[str, Any]) -> tuple[dict[str, str], dict[str, dict[str, Any]]]:
     current = load_overrides_from_session(session)
     env = _env_settings()
     effective = apply_overrides(env, current)
+    changes: dict[str, dict[str, Any]] = {}
+
+    def record_change(key: str, old_value: Any, new_value: Any) -> None:
+        old_display = _audit_setting_value(key, old_value)
+        field = FIELD_BY_KEY[key]
+        if field.secret:
+            new_display = "(updated)" if new_value else None
+        else:
+            new_display = _audit_setting_value(key, new_value)
+        if old_display != new_display:
+            changes[key] = {"from": old_display, "to": new_display}
 
     for key, raw_value in values.items():
         if key not in EDITABLE_KEYS:
@@ -122,7 +140,10 @@ def update_overrides(session: Session, values: dict[str, Any]) -> dict[str, str]
 
         field = FIELD_BY_KEY[key]
         if raw_value is None:
-            current.pop(key, None)
+            if key in current:
+                old_value = getattr(effective, key)
+                current.pop(key, None)
+                record_change(key, old_value, getattr(env, key))
             continue
 
         if field.secret:
@@ -153,10 +174,15 @@ def update_overrides(session: Session, values: dict[str, Any]) -> dict[str, str]
             compare_value = current_value
 
         if serialized == serialize_setting_value(default) and not field.secret:
-            current.pop(key, None)
+            if key in current:
+                current.pop(key, None)
+                record_change(key, current_value, default)
         elif field.secret and serialized == serialize_setting_value(compare_value) and key in current:
             continue
         else:
+            new_value = coerce_setting_value(field, serialized)
+            if key not in current or current[key] != serialized:
+                record_change(key, current_value, new_value)
             current[key] = serialized
 
     session.execute(delete(AppSetting))
@@ -165,4 +191,4 @@ def update_overrides(session: Session, values: dict[str, Any]) -> dict[str, str]
     session.commit()
 
     set_overrides(current)
-    return current
+    return current, changes

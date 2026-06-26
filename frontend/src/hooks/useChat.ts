@@ -16,12 +16,16 @@ interface UseChatOptions {
   selectedDocIds: string[];
   setScrollTargetId: (id: string | null) => void;
   setError: Dispatch<SetStateAction<string | null>>;
+  isAdmin: boolean;
+  readyDocCount: number;
 }
 
 export function useChat({
   selectedDocIds,
   setScrollTargetId,
   setError,
+  isAdmin,
+  readyDocCount,
 }: UseChatOptions) {
   const { t } = useI18n();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -53,8 +57,8 @@ export function useChat({
     async (textOverride?: string) => {
       const text = (textOverride ?? input).trim();
       if (!text || loading) return;
-      if (selectedDocIds.length === 0) {
-        setError(t("chat.selectDocError"));
+      if (readyDocCount === 0) {
+        setError(t(isAdmin ? "chat.selectDocError" : "chat.noDocsError"));
         return;
       }
 
@@ -105,7 +109,7 @@ export function useChat({
         setLoading(false);
       }
     },
-    [input, loading, selectedDocIds, sessionId, setError, setScrollTargetId, t],
+    [input, loading, selectedDocIds, sessionId, setError, setScrollTargetId, t, isAdmin, readyDocCount],
   );
 
   return {

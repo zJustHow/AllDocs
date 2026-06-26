@@ -5,6 +5,7 @@ import {
   deleteDocument,
   listDocuments,
   reindexDocument,
+  setDocumentChatEnabled,
   uploadDocument,
 } from "../api";
 import { loadSupportedFormats } from "../fileTypes";
@@ -19,6 +20,7 @@ vi.mock("../api", async () => {
     uploadDocument: vi.fn(),
     deleteDocument: vi.fn(),
     reindexDocument: vi.fn(),
+    setDocumentChatEnabled: vi.fn(),
   };
 });
 
@@ -50,7 +52,7 @@ describe("useDocuments", () => {
   });
 
   function renderDocumentsHook() {
-    return renderHookWithI18n(() => useDocuments({ setError, confirm }));
+    return renderHookWithI18n(() => useDocuments({ setError, confirm, isAdmin: true }));
   }
 
   it("loads supported formats and selects ready documents on mount", async () => {
@@ -67,6 +69,25 @@ describe("useDocuments", () => {
     expect(result.current.indexingDocs).toEqual([]);
   });
 
+  it("toggles document chat availability via API", async () => {
+    vi.mocked(setDocumentChatEnabled).mockResolvedValueOnce({
+      ...sampleDocument,
+      chat_enabled: false,
+    });
+    const { result } = renderDocumentsHook();
+
+    await waitFor(() => {
+      expect(result.current.selectedDocIds).toEqual(["doc-1"]);
+    });
+
+    await act(async () => {
+      await result.current.toggleDoc("doc-1");
+    });
+
+    expect(setDocumentChatEnabled).toHaveBeenCalledWith("doc-1", false);
+    expect(result.current.selectedDocIds).toEqual([]);
+  });
+
   it("reports load failures through setError", async () => {
     vi.mocked(listDocuments).mockRejectedValueOnce(new Error("load failed"));
     renderDocumentsHook();
@@ -76,44 +97,8 @@ describe("useDocuments", () => {
     });
   });
 
-  it("toggles document selection without reverting to auto-select", async () => {
-    const { result } = renderDocumentsHook();
 
-    await waitFor(() => {
-      expect(result.current.selectedDocIds).toEqual(["doc-1"]);
-    });
-
-    act(() => {
-      result.current.toggleDoc("doc-1");
-    });
-    expect(result.current.selectedDocIds).toEqual([]);
-
-    vi.mocked(listDocuments).mockResolvedValue([
-      sampleDocument,
-      processingDocument,
-    ]);
-    Object.defineProperty(document, "visibilityState", {
-      configurable: true,
-      value: "hidden",
-    });
-    act(() => {
-      document.dispatchEvent(new Event("visibilitychange"));
-    });
-    Object.defineProperty(document, "visibilityState", {
-      configurable: true,
-      value: "visible",
-    });
-    act(() => {
-      document.dispatchEvent(new Event("visibilitychange"));
-    });
-
-    await waitFor(() => {
-      expect(result.current.documents).toHaveLength(2);
-    });
-    expect(result.current.selectedDocIds).toEqual([]);
-  });
-
-  it("uploads a file and refreshes the library", async () => {
+  it("reports load failures through setError", async () => {
     const { result } = renderDocumentsHook();
     await waitFor(() => {
       expect(result.current.documents).toHaveLength(1);
@@ -160,7 +145,6 @@ describe("useDocuments", () => {
     });
 
     expect(deleteDocument).toHaveBeenCalledWith("doc-1");
-    expect(result.current.selectedDocIds).toEqual([]);
   });
 
   it("skips delete when confirmation is cancelled", async () => {

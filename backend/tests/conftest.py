@@ -45,7 +45,13 @@ def _patched_app_lifecycle() -> Generator[None, None, None]:
         patch("app.db.session.async_session_factory", _session_factory),
         patch("app.services.runtime_settings.refresh_from_session", AsyncMock()),
         patch("app.services.infra_init.ensure_external_stores_async", AsyncMock()),
+        patch("app.config.get_settings") as mock_settings,
     ):
+        settings = MagicMock()
+        settings.auth_disabled = True
+        settings.metrics_enabled = True
+        settings.log_level = "INFO"
+        mock_settings.return_value = settings
         _install_import_stubs()
         yield
 

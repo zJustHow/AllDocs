@@ -59,6 +59,40 @@ class Settings(BaseSettings):
     minio_bucket: str = "manuals"
     minio_secure: bool = False
 
+    auth_disabled: bool = False
+    jwt_secret: str = "change-me-in-production"
+    jwt_access_ttl_minutes: int = 30
+    jwt_refresh_ttl_days: int = 14
+    bootstrap_admin_email: str = ""
+    bootstrap_admin_password: str = ""
+
+    sms_provider: str = "console"
+    sms_otp_ttl_seconds: int = 300
+    sms_otp_resend_seconds: int = 60
+    sms_otp_max_attempts: int = 5
+    aliyun_sms_access_key_id: str = ""
+    aliyun_sms_access_key_secret: str = ""
+    aliyun_sms_sign_name: str = ""
+    aliyun_sms_template_code: str = ""
+    aliyun_sms_region: str = "cn-hangzhou"
+    aliyun_sms_endpoint: str = "https://dysmsapi.aliyuncs.com"
+
+    email_provider: str = "console"
+    email_otp_ttl_seconds: int = 300
+    email_otp_resend_seconds: int = 60
+    email_otp_max_attempts: int = 5
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_from: str = ""
+    smtp_use_tls: bool = True
+
+    wechat_app_id: str = ""
+    wechat_app_secret: str = ""
+    wechat_redirect_uri: str = ""
+    auth_frontend_callback_url: str = "http://localhost:3000/auth/callback"
+
     whisper_model: str = "large-v3"
     whisper_device: str = "cpu"
     whisper_compute_type: str = "int8"

@@ -1,6 +1,5 @@
 import {
-  lazy,
-  Suspense,
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -8,6 +7,9 @@ import {
 } from "react";
 import Composer from "./Composer";
 import DocumentViewer from "./DocumentViewer";
+import LoginPage from "./auth/LoginPage";
+import AuthCallback from "./auth/AuthCallback";
+import { useAuth } from "./auth/AuthContext";
 import { useDocuments } from "./hooks/useDocuments";
 import {
   hideFloatingScrollbarsAfterLayout,
@@ -26,6 +28,7 @@ import {
   AllDocsIcon,
   DocIcon,
   MenuIcon,
+  ProfileIcon,
   SettingsIcon,
   WarningTriangleIcon,
 } from "./icons";
@@ -34,10 +37,65 @@ import Sidebar from "./Sidebar";
 import { useConfirmDialog } from "./useConfirmDialog";
 import { PANEL_CLOSE_MS } from "./layout";
 
-const SettingsPanel = lazy(() => import("./SettingsPanel"));
+import { hasStoredSession } from "./auth/session";
+import ProfilePage from "./ProfilePage";
+import SettingsPage from "./SettingsPage";
+import { AppLink } from "./AppLink";
+import { navigate, useAppPath } from "./routing";
 const VIEWER_SCROLLBAR_SUPPRESSION_MS = PANEL_CLOSE_MS + 120;
 
 export default function App() {
+  const path = useAppPath();
+  const { user, loading, isAdmin, logout } = useAuth();
+  const bootstrapping = loading && !user;
+
+  useEffect(() => {
+    if (!bootstrapping && path === "/settings" && user && !isAdmin) {
+      navigate("/");
+    }
+  }, [bootstrapping, path, user, isAdmin]);
+
+  if (path === "/auth/callback") {
+    return <AuthCallback />;
+  }
+
+  if (bootstrapping) {
+    if (path === "/profile" && hasStoredSession()) {
+      return <ProfilePage onLogout={logout} />;
+    }
+    if (path === "/settings" && hasStoredSession()) {
+      return <SettingsPage isAdmin={false} />;
+    }
+    return (
+      <div className="auth-page">
+        <div className="auth-loading">{/* i18n not required for bootstrap */}…</div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <LoginPage />;
+  }
+
+  if (path === "/profile") {
+    return <ProfilePage onLogout={logout} />;
+  }
+
+  if (path === "/settings") {
+    if (!isAdmin) {
+      return null;
+    }
+    return <SettingsPage isAdmin />;
+  }
+
+  return <MainApp isAdmin={isAdmin} />;
+}
+
+interface MainAppProps {
+  isAdmin: boolean;
+}
+
+function MainApp({ isAdmin }: MainAppProps) {
   useAutoHideScrollbars();
   const { t, locale, setLocale } = useI18n();
   const { confirm, dialog: confirmDialog } = useConfirmDialog();
@@ -55,14 +113,7 @@ export default function App() {
     toggleSidebar();
   };
 
-  const {
-    settingsOpen,
-    rightPanelOrder,
-    registerRightPanel,
-    unregisterRightPanel,
-    closeSettings,
-    toggleSettings,
-  } = useRightPanels();
+  const { rightPanelOrder, registerRightPanel, unregisterRightPanel } = useRightPanels();
 
   const {
     chatAreaRef,
@@ -82,7 +133,7 @@ export default function App() {
     handleUpload,
     handleDelete,
     handleReindex,
-  } = useDocuments({ setError, confirm });
+  } = useDocuments({ setError, confirm, isAdmin });
 
   const { viewerTarget, viewerOpen, openDocument, closeViewer } =
     useDocumentViewer({
@@ -127,12 +178,14 @@ export default function App() {
     textareaRef,
     clearChat,
     sendText,
-  } = useChat({ selectedDocIds, setScrollTargetId, setError });
+  } = useChat({ selectedDocIds, setScrollTargetId, setError, isAdmin, readyDocCount: readyDocs.length });
 
   const { recording, voiceStatus, startRecording, stopRecording } = useVoice({
     selectedDocIds,
     sessionId,
     loading,
+    isAdmin,
+    readyDocCount: readyDocs.length,
     setMessages,
     setSessionId,
     setLoading,
@@ -142,7 +195,6 @@ export default function App() {
 
   const rightPanelsToRender = useMemo(() => {
     const panels = [...rightPanelOrder];
-    if (!panels.includes("settings")) panels.push("settings");
     if (viewerTarget && !panels.includes("viewer")) panels.push("viewer");
     return panels;
   }, [rightPanelOrder, viewerTarget]);
@@ -167,27 +219,20 @@ export default function App() {
   };
 
   return (
-    <div
-      className={`app ${viewerOpen ? "with-viewer viewer-open" : ""} ${settingsOpen ? "settings-open" : ""}`}
-    >
+    <div className={`app ${viewerOpen ? "with-viewer viewer-open" : ""}`}>
       <div
         className={`sidebar-overlay ${sidebarOpen ? "visible" : ""}`}
         onClick={handleCloseSidebar}
-        aria-hidden="true"
-      />
-      <div
-        className={`settings-overlay ${settingsOpen ? "visible" : ""}`}
-        onClick={closeSettings}
         aria-hidden="true"
       />
 
       <Sidebar
         open={sidebarOpen}
         documents={documents}
-        selectedDocIds={selectedDocIds}
         readyCount={readyDocs.length}
         uploading={uploading}
         statusLabel={statusLabel}
+        isAdmin={isAdmin}
         onToggle={handleToggleSidebar}
         onNewChat={handleNewChat}
         onUpload={handleUpload}
@@ -197,7 +242,8 @@ export default function App() {
       />
 
       <div className="main">
-        <header className="top-bar">
+        <div className="top-bar-slot">
+          <header className="top-bar">
           <button
             className={`icon-btn top-bar-menu ${sidebarOpen ? "hidden" : ""}`}
             onClick={handleToggleSidebar}
@@ -208,20 +254,30 @@ export default function App() {
             <MenuIcon />
           </button>
           <span className="top-bar-title">{t("app.brand")}</span>
-          {selectedDocIds.length > 0 ? (
+          {isAdmin && selectedDocIds.length > 0 ? (
             <span className="top-bar-sub">
               <DocIcon />
               {t("topBar.docsSelected", { count: selectedDocIds.length })}
             </span>
-          ) : readyDocs.length > 0 ? (
+          ) : !isAdmin && readyDocs.length > 0 ? (
+            <span className="top-bar-sub">
+              <DocIcon />
+              {t("topBar.allDocs", { count: readyDocs.length })}
+            </span>
+          ) : isAdmin && readyDocs.length > 0 ? (
             <span className="top-bar-sub top-bar-hint">
               <WarningTriangleIcon />
               {t("topBar.selectDocs")}
             </span>
-          ) : (
+          ) : isAdmin ? (
             <span className="top-bar-sub top-bar-hint">
               <WarningTriangleIcon />
               {t("topBar.uploadFirst")}
+            </span>
+          ) : (
+            <span className="top-bar-sub top-bar-hint">
+              <WarningTriangleIcon />
+              {t("topBar.noDocs")}
             </span>
           )}
           <div className="top-bar-spacer" aria-hidden="true" />
@@ -242,17 +298,24 @@ export default function App() {
               </button>
             ))}
           </div>
-          <button
-            type="button"
-            className={`icon-btn settings-btn ${settingsOpen ? "hidden" : ""}`}
-            onClick={toggleSettings}
-            aria-label={settingsOpen ? undefined : t("settings.open")}
-            aria-hidden={settingsOpen}
-            tabIndex={settingsOpen ? -1 : 0}
+          <AppLink
+            href="/profile"
+            className="icon-btn profile-btn"
+            aria-label={t("profile.open")}
           >
-            <SettingsIcon />
-          </button>
-        </header>
+            <ProfileIcon />
+          </AppLink>
+          {isAdmin ? (
+            <AppLink
+              href="/settings"
+              className="icon-btn settings-btn"
+              aria-label={t("settings.open")}
+            >
+              <SettingsIcon />
+            </AppLink>
+          ) : null}
+          </header>
+        </div>
 
         <div className="chat-shell">
           <div
@@ -301,19 +364,6 @@ export default function App() {
       </div>
 
       {rightPanelsToRender.map((panel) => {
-        if (panel === "settings") {
-          return (
-            <div
-              key="settings"
-              className={`settings-panel-slot ${settingsOpen ? "is-open" : ""}`}
-            >
-              <Suspense fallback={null}>
-                <SettingsPanel open={settingsOpen} onClose={closeSettings} />
-              </Suspense>
-            </div>
-          );
-        }
-
         if (panel === "viewer" && viewerTarget) {
           return (
             <div

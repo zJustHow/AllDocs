@@ -8,6 +8,7 @@ from app.services.chunk_filter import ChunkFilter
 __all__ = [
     "ChatRequest",
     "ChunkFilter",
+    "DocumentChatEnabledRequest",
     "DocumentResponse",
 ]
 
@@ -23,7 +24,12 @@ class DocumentResponse(BaseModel):
     progress: int = 0
     progress_message: str | None = None
     error_message: str | None
+    chat_enabled: bool = True
     created_at: datetime
+
+
+class DocumentChatEnabledRequest(BaseModel):
+    chat_enabled: bool
 
 
 class ChatRequest(BaseModel):

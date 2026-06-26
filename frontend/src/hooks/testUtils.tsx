@@ -29,6 +29,7 @@ export const sampleDocument: DocumentItem = {
   progress: 100,
   progress_message: null,
   error_message: null,
+  chat_enabled: true,
   created_at: "2026-01-01T00:00:00Z",
 };
 

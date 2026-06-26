@@ -1,36 +1,21 @@
 import json
 import uuid
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 
+from app.api.auth_deps import get_current_user
 from app.api.schemas import ChatRequest
 from app.config import get_settings
-from app.db.models import Message, Session
+from app.db.models import Message, User
 from app.db.session import async_session_factory
 from app.services.agent.answer_flow import persist_turn, stream_agent_answer
+from app.services.chat_sessions import get_or_create_chat_session
 from app.services.deps import get_agent_service
 from app.services.rag import detect_language
 
 router = APIRouter(prefix="/chat", tags=["chat"])
-
-
-async def _get_or_create_session(
-    db,
-    session_id: uuid.UUID | None,
-    doc_ids: list[uuid.UUID],
-) -> Session:
-    if session_id:
-        session = await db.get(Session, session_id)
-        if not session:
-            raise HTTPException(status_code=404, detail="Session not found")
-        return session
-
-    session = Session(doc_ids=[str(doc_id) for doc_id in doc_ids])
-    db.add(session)
-    await db.flush()
-    return session
 
 
 STREAM_HEADERS = {
@@ -45,10 +30,15 @@ def _sse(payload: dict) -> str:
 
 
 @router.post("")
-async def chat(payload: ChatRequest):
+async def chat(payload: ChatRequest, user: User = Depends(get_current_user)):
     settings = get_settings()
     async with async_session_factory() as db:
-        session = await _get_or_create_session(db, payload.session_id, payload.doc_ids)
+        session, doc_ids = await get_or_create_chat_session(
+            db,
+            user=user,
+            session_id=payload.session_id,
+            requested_doc_ids=payload.doc_ids,
+        )
         await db.commit()
         session_id = session.id
         history_result = await db.execute(
@@ -58,7 +48,6 @@ async def chat(payload: ChatRequest):
             {"role": message.role, "content": message.content}
             for message in history_result.scalars().all()
         ]
-        doc_ids = payload.doc_ids or [uuid.UUID(doc_id) for doc_id in session.doc_ids]
 
     chunk_filters = payload.filters
     lang = detect_language(payload.message)

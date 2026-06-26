@@ -35,7 +35,13 @@ describe("useChat", () => {
 
   function renderChatHook(selectedDocIds: string[] = ["doc-1"]) {
     return renderHookWithI18n(() =>
-      useChat({ selectedDocIds, setScrollTargetId, setError }),
+      useChat({
+        selectedDocIds,
+        setScrollTargetId,
+        setError,
+        isAdmin: true,
+        readyDocCount: selectedDocIds.length,
+      }),
     );
   }
 

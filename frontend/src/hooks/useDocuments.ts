@@ -2,12 +2,17 @@ import {
   useCallback,
   useEffect,
   useMemo,
-  useRef,
   useState,
   type Dispatch,
   type SetStateAction,
 } from "react";
-import { deleteDocument, listDocuments, reindexDocument, uploadDocument } from "../api";
+import {
+  deleteDocument,
+  listDocuments,
+  reindexDocument,
+  setDocumentChatEnabled,
+  uploadDocument,
+} from "../api";
 import { loadSupportedFormats } from "../fileTypes";
 import { useI18n } from "../i18n";
 import type { DocumentItem } from "../types";
@@ -16,14 +21,13 @@ import type { ConfirmOptions } from "../useConfirmDialog";
 interface UseDocumentsOptions {
   setError: Dispatch<SetStateAction<string | null>>;
   confirm: (options: ConfirmOptions | string) => Promise<boolean>;
+  isAdmin: boolean;
 }
 
-export function useDocuments({ setError, confirm }: UseDocumentsOptions) {
+export function useDocuments({ setError, confirm, isAdmin }: UseDocumentsOptions) {
   const { t } = useI18n();
   const [documents, setDocuments] = useState<DocumentItem[]>([]);
-  const [selectedDocIds, setSelectedDocIds] = useState<string[]>([]);
   const [uploading, setUploading] = useState(false);
-  const userModifiedSelectionRef = useRef(false);
 
   const statusLabel = useMemo(
     (): Record<DocumentItem["status"], string> => ({
@@ -36,9 +40,27 @@ export function useDocuments({ setError, confirm }: UseDocumentsOptions) {
     [t],
   );
 
+  const visibleDocuments = useMemo(
+    () =>
+      isAdmin
+        ? documents
+        : documents.filter(
+            (doc) => doc.status === "ready" && (doc.chat_enabled ?? true),
+          ),
+    [documents, isAdmin],
+  );
+
   const readyDocs = useMemo(
-    () => documents.filter((doc) => doc.status === "ready"),
+    () =>
+      documents.filter(
+        (doc) => doc.status === "ready" && (doc.chat_enabled ?? true),
+      ),
     [documents],
+  );
+
+  const selectedDocIds = useMemo(
+    () => readyDocs.map((doc) => doc.id),
+    [readyDocs],
   );
 
   const indexingDocs = useMemo(
@@ -55,15 +77,6 @@ export function useDocuments({ setError, confirm }: UseDocumentsOptions) {
   const refreshDocuments = useCallback(async () => {
     const docs = await listDocuments();
     setDocuments(docs);
-    setSelectedDocIds((prev) => {
-      const readyIds = docs
-        .filter((d) => d.status === "ready")
-        .map((d) => d.id);
-      if (prev.length === 0 && !userModifiedSelectionRef.current) {
-        return readyIds;
-      }
-      return prev.filter((id) => readyIds.includes(id));
-    });
   }, []);
 
   useEffect(() => {
@@ -108,14 +121,27 @@ export function useDocuments({ setError, confirm }: UseDocumentsOptions) {
     };
   }, [refreshDocuments, indexingDocs.length, setError]);
 
-  const toggleDoc = useCallback((docId: string) => {
-    userModifiedSelectionRef.current = true;
-    setSelectedDocIds((prev) =>
-      prev.includes(docId)
-        ? prev.filter((id) => id !== docId)
-        : [...prev, docId],
-    );
-  }, []);
+  const toggleDoc = useCallback(
+    async (docId: string) => {
+      const doc = documents.find((item) => item.id === docId);
+      if (!doc || doc.status !== "ready") return;
+
+      const nextEnabled = !(doc.chat_enabled ?? true);
+      setDocuments((prev) =>
+        prev.map((item) =>
+          item.id === docId ? { ...item, chat_enabled: nextEnabled } : item,
+        ),
+      );
+      setError(null);
+      try {
+        await setDocumentChatEnabled(docId, nextEnabled);
+      } catch (err) {
+        setError(String(err));
+        await refreshDocuments();
+      }
+    },
+    [documents, refreshDocuments, setError],
+  );
 
   const handleUpload = useCallback(
     async (file: File | null) => {
@@ -143,7 +169,6 @@ export function useDocuments({ setError, confirm }: UseDocumentsOptions) {
         variant: "danger",
       });
       if (!confirmed) return;
-      setSelectedDocIds((prev) => prev.filter((id) => id !== docId));
       await deleteDocument(docId);
       await refreshDocuments();
     },
@@ -170,7 +195,7 @@ export function useDocuments({ setError, confirm }: UseDocumentsOptions) {
   );
 
   return {
-    documents,
+    documents: visibleDocuments,
     selectedDocIds,
     readyDocs,
     indexingDocs,

@@ -25,7 +25,16 @@ async def init_db() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         await conn.run_sync(_ensure_chunk_asset_columns)
+        await conn.run_sync(_ensure_sessions_user_id)
+        await conn.run_sync(_ensure_otp_challenge_columns)
+        await conn.run_sync(_ensure_documents_chat_enabled)
         await conn.run_sync(_ensure_indexes)
+
+    async with async_session_factory() as db:
+        from app.services.auth_service import ensure_bootstrap_admin
+
+        await ensure_bootstrap_admin(db)
+        await db.commit()
 
 
 def _ensure_chunk_asset_columns(sync_conn) -> None:
@@ -62,6 +71,43 @@ def _ensure_chunk_asset_columns(sync_conn) -> None:
                 sync_conn.execute(text("ALTER TABLE chunks ADD COLUMN sub_index JSONB"))
         if "layout_regions" not in chunk_columns:
             sync_conn.execute(text("ALTER TABLE chunks ADD COLUMN layout_regions JSONB"))
+
+
+def _ensure_otp_challenge_columns(sync_conn) -> None:
+    from sqlalchemy import inspect, text
+
+    inspector = inspect(sync_conn)
+    if "otp_challenges" not in inspector.get_table_names():
+        return
+    columns = {column["name"] for column in inspector.get_columns("otp_challenges")}
+    if "email" not in columns:
+        sync_conn.execute(text("ALTER TABLE otp_challenges ADD COLUMN email VARCHAR(256)"))
+    if sync_conn.dialect.name == "postgresql" and "phone" in columns:
+        sync_conn.execute(text("ALTER TABLE otp_challenges ALTER COLUMN phone DROP NOT NULL"))
+
+
+def _ensure_sessions_user_id(sync_conn) -> None:
+    from sqlalchemy import inspect, text
+
+    inspector = inspect(sync_conn)
+    if "sessions" not in inspector.get_table_names():
+        return
+    columns = {column["name"] for column in inspector.get_columns("sessions")}
+    if "user_id" not in columns:
+        sync_conn.execute(text("ALTER TABLE sessions ADD COLUMN user_id UUID REFERENCES users(id) ON DELETE SET NULL"))
+
+
+def _ensure_documents_chat_enabled(sync_conn) -> None:
+    from sqlalchemy import inspect, text
+
+    inspector = inspect(sync_conn)
+    if "documents" not in inspector.get_table_names():
+        return
+    columns = {column["name"] for column in inspector.get_columns("documents")}
+    if "chat_enabled" not in columns:
+        sync_conn.execute(
+            text("ALTER TABLE documents ADD COLUMN chat_enabled BOOLEAN NOT NULL DEFAULT TRUE")
+        )
 
 
 def _ensure_indexes(sync_conn) -> None:

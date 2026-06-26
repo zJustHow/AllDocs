@@ -7,9 +7,11 @@ from fastapi.responses import Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.schemas import DocumentResponse
-from app.db.models import Document, DocumentStatus
+from app.api.auth_deps import get_current_user, get_current_user_flexible, require_admin
+from app.api.schemas import DocumentChatEnabledRequest, DocumentResponse
+from app.db.models import Document, DocumentStatus, User
 from app.db.session import get_db
+from app.services.audit_service import record_admin_audit
 from app.services.document_reindex import (
     find_reindexable_by_name,
     reset_document_for_reindex,
@@ -48,6 +50,7 @@ def _document_media_type(document: Document) -> str:
 async def upload_document(
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_admin),
 ) -> DocumentResponse:
     if not file.filename:
         raise HTTPException(status_code=400, detail="Filename is required")
@@ -68,6 +71,16 @@ async def upload_document(
         await asyncio.to_thread(storage.upload, existing.object_key, data, content_type)
         existing.content_type = content_type
         reset_document_for_reindex(existing)
+        await record_admin_audit(
+            db,
+            actor_user_id=admin.id,
+            action="document.upload",
+            details={
+                "document_id": str(existing.id),
+                "document_name": file.filename,
+                "replaced": True,
+            },
+        )
         await db.commit()
         await db.refresh(existing)
         enqueue(process_document, str(existing.id))
@@ -85,6 +98,16 @@ async def upload_document(
         status=DocumentStatus.pending,
     )
     db.add(document)
+    await record_admin_audit(
+        db,
+        actor_user_id=admin.id,
+        action="document.upload",
+        details={
+            "document_id": str(document.id),
+            "document_name": file.filename,
+            "replaced": False,
+        },
+    )
     await db.commit()
     await db.refresh(document)
 
@@ -93,13 +116,16 @@ async def upload_document(
 
 
 @router.get("", response_model=list[DocumentResponse])
-async def list_documents(db: AsyncSession = Depends(get_db)) -> list[DocumentResponse]:
+async def list_documents(
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_user),
+) -> list[DocumentResponse]:
     result = await db.execute(select(Document).order_by(Document.created_at.desc()))
     return [DocumentResponse.model_validate(item) for item in result.scalars().all()]
 
 
 @router.get("/formats")
-async def get_supported_formats() -> dict:
+async def get_supported_formats(_: User = Depends(get_current_user)) -> dict:
     return supported_formats_payload()
 
 
@@ -107,6 +133,7 @@ async def get_supported_formats() -> dict:
 async def get_document_file(
     document_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_user_flexible),
 ) -> Response:
     document = await db.get(Document, document_id)
     if not document or document.status == DocumentStatus.deleting:
@@ -125,6 +152,7 @@ async def get_document_file(
 async def get_document_preview(
     document_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_user_flexible),
 ) -> Response:
     document = await db.get(Document, document_id)
     if not document or document.status == DocumentStatus.deleting:
@@ -154,6 +182,7 @@ async def render_document_page(
     page: int,
     scale: float = Query(default=2.0, ge=0.5, le=4.0),
     db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_user_flexible),
 ) -> Response:
     if page < 1:
         raise HTTPException(status_code=400, detail="Page must be >= 1")
@@ -180,10 +209,44 @@ async def render_document_page(
     )
 
 
+@router.patch("/{document_id}/chat-enabled", response_model=DocumentResponse)
+async def set_document_chat_enabled(
+    document_id: uuid.UUID,
+    payload: DocumentChatEnabledRequest,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_admin),
+) -> DocumentResponse:
+    document = await db.get(Document, document_id)
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+    if payload.chat_enabled and document.status != DocumentStatus.ready:
+        raise HTTPException(
+            status_code=400,
+            detail="Only ready documents can be enabled for chat",
+        )
+    if payload.chat_enabled != document.chat_enabled:
+        previous = document.chat_enabled
+        document.chat_enabled = payload.chat_enabled
+        await record_admin_audit(
+            db,
+            actor_user_id=admin.id,
+            action="document.chat_enabled",
+            details={
+                "document_id": str(document.id),
+                "document_name": document.name,
+                "chat_enabled": {"from": previous, "to": payload.chat_enabled},
+            },
+        )
+        await db.commit()
+        await db.refresh(document)
+    return DocumentResponse.model_validate(document)
+
+
 @router.post("/{document_id}/reindex", response_model=DocumentResponse)
 async def reindex_document(
     document_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_admin),
 ) -> DocumentResponse:
     document = await db.get(Document, document_id)
     if not document:
@@ -192,6 +255,17 @@ async def reindex_document(
         document = await schedule_document_reindex(db, document)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    await record_admin_audit(
+        db,
+        actor_user_id=admin.id,
+        action="document.reindex",
+        details={
+            "document_id": str(document.id),
+            "document_name": document.name,
+        },
+    )
+    await db.commit()
+    await db.refresh(document)
     return DocumentResponse.model_validate(document)
 
 
@@ -199,6 +273,7 @@ async def reindex_document(
 async def delete_document(
     document_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_admin),
 ) -> dict[str, str]:
     document = await db.get(Document, document_id)
     if not document:
@@ -211,6 +286,15 @@ async def delete_document(
     document.status = DocumentStatus.deleting
     document.progress = 0
     document.error_message = None
+    await record_admin_audit(
+        db,
+        actor_user_id=admin.id,
+        action="document.delete",
+        details={
+            "document_id": str(document.id),
+            "document_name": document.name,
+        },
+    )
     await db.commit()
 
     enqueue(delete_document_task, str(document_id))

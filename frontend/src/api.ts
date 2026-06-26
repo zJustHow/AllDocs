@@ -6,16 +6,18 @@ import type {
   MessageEmbed,
 } from "./types";
 import { parseAgentStepPayload } from "./agentStepUtils";
+import { authFetch, authFetchJson } from "./auth/http";
+import { getAccessToken, withAuthQuery } from "./auth/tokenStore";
 import { t } from "./i18n";
 
 const API_BASE = "";
 
 export function documentFileUrl(documentId: string): string {
-  return `${API_BASE}/api/v1/documents/${documentId}/file`;
+  return withAuthQuery(`${API_BASE}/api/v1/documents/${documentId}/file`);
 }
 
 export function documentPreviewUrl(documentId: string): string {
-  return `${API_BASE}/api/v1/documents/${documentId}/preview`;
+  return withAuthQuery(`${API_BASE}/api/v1/documents/${documentId}/preview`);
 }
 
 export function documentPageRenderUrl(
@@ -23,19 +25,23 @@ export function documentPageRenderUrl(
   page: number,
   scale = 2,
 ): string {
-  return `${API_BASE}/api/v1/documents/${documentId}/pages/${page}/render?scale=${scale}`;
+  return withAuthQuery(
+    `${API_BASE}/api/v1/documents/${documentId}/pages/${page}/render?scale=${scale}`,
+  );
+}
+
+export function assetUrl(assetId: string): string {
+  return withAuthQuery(`${API_BASE}/api/v1/assets/${assetId}`);
 }
 
 export async function listDocuments(): Promise<DocumentItem[]> {
-  const res = await fetch(`${API_BASE}/api/v1/documents`);
-  if (!res.ok) throw new Error(t("errors.loadDocumentsFailed"));
-  return res.json();
+  return authFetchJson<DocumentItem[]>("/api/v1/documents");
 }
 
 export async function uploadDocument(file: File): Promise<DocumentItem> {
   const form = new FormData();
   form.append("file", file);
-  const res = await fetch(`${API_BASE}/api/v1/documents`, {
+  const res = await authFetch("/api/v1/documents", {
     method: "POST",
     body: form,
   });
@@ -47,15 +53,31 @@ export async function uploadDocument(file: File): Promise<DocumentItem> {
 }
 
 export async function deleteDocument(id: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/v1/documents/${id}`, { method: "DELETE" });
+  const res = await authFetch(`/api/v1/documents/${id}`, { method: "DELETE" });
   if (!res.ok) throw new Error(t("errors.deleteFailed"));
 }
 
 export async function reindexDocument(id: string): Promise<DocumentItem> {
-  const res = await fetch(`${API_BASE}/api/v1/documents/${id}/reindex`, { method: "POST" });
+  const res = await authFetch(`/api/v1/documents/${id}/reindex`, { method: "POST" });
   if (!res.ok) {
     const detail = await res.text();
     throw new Error(detail || t("errors.reindexFailed"));
+  }
+  return res.json();
+}
+
+export async function setDocumentChatEnabled(
+  id: string,
+  chatEnabled: boolean,
+): Promise<DocumentItem> {
+  const res = await authFetch(`/api/v1/documents/${id}/chat-enabled`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ chat_enabled: chatEnabled }),
+  });
+  if (!res.ok) {
+    const detail = await res.text();
+    throw new Error(detail || t("errors.updateDocFailed"));
   }
   return res.json();
 }
@@ -83,7 +105,7 @@ export async function streamChat(
   docIds: string[],
   handlers: StreamHandlers,
 ): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/v1/chat`, {
+  const res = await authFetch("/api/v1/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -158,7 +180,9 @@ export async function streamChat(
 
 export function createVoiceSocket(): WebSocket {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  return new WebSocket(`${protocol}//${window.location.host}/ws/voice`);
+  const token = getAccessToken();
+  const query = token ? `?token=${encodeURIComponent(token)}` : "";
+  return new WebSocket(`${protocol}//${window.location.host}/ws/voice${query}`);
 }
 
 export type SettingFieldType = "string" | "int" | "float" | "bool" | "secret";
@@ -184,15 +208,13 @@ export interface SettingsPayload {
 }
 
 export async function fetchSettings(): Promise<SettingsPayload> {
-  const res = await fetch(`${API_BASE}/api/v1/settings`);
-  if (!res.ok) throw new Error(t("errors.loadSettingsFailed"));
-  return res.json();
+  return authFetchJson<SettingsPayload>("/api/v1/settings");
 }
 
 export async function patchSettings(
   values: Record<string, string | number | boolean | null>,
 ): Promise<SettingsPayload> {
-  const res = await fetch(`${API_BASE}/api/v1/settings`, {
+  const res = await authFetch("/api/v1/settings", {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ values }),

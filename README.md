@@ -12,6 +12,7 @@
 - Retrieval Agent：`list_documents`、`list_outline`、`lookup_toc`、`read_pages`、`read_section`、`lookup_asset`、`search_chunks` / `search_chunks_batch`、`search_keyword` 等工具多步检索
 - 流式对话、引用跳转、解析期可选 VLM 对内嵌图分类描述（并辅助识别栅格表）与句级插图对齐
 - WebSocket 语音问答（Whisper 转写 + Piper 合成）
+- 用户认证与 RBAC：邮箱 / 手机 OTP / 微信登录，管理员与普通用户分权
 
 ---
 
@@ -65,7 +66,7 @@ flowchart LR
 
 | 组件 | 作用 |
 |------|------|
-| **PostgreSQL** | 文档、chunk、asset、会话、消息与运行时配置覆盖 |
+| **PostgreSQL** | 文档、chunk、asset、会话、消息、用户与运行时配置覆盖 |
 | **MinIO** | 原始文件与表格/插图 PNG |
 | **Qdrant** | chunk 向量（语义检索） |
 | **Elasticsearch** | 正文与 caption 全文索引（IK 分词） |
@@ -132,7 +133,7 @@ docker compose --profile inference up -d inference
 AllDocs/
 ├── backend/
 │   ├── app/
-│   │   ├── api/              # documents, chat, assets, settings, ws_voice
+│   │   ├── api/              # documents, chat, assets, settings, auth, admin, ws_voice
 │   │   ├── services/         # ingestion, rag, llm, vector_store, …
 │   │   │   └── agent/        # Retrieval Agent、answer_flow、工具注册
 │   │   ├── inference/        # 可选 BGE embed/rerank HTTP 服务
@@ -320,6 +321,96 @@ Agent 限制（`.env`）：`RAG_AGENT_MAX_STEPS=10`、`RAG_AGENT_MAX_RETRIEVALS=
 
 ---
 
+## 用户认证与权限
+
+默认启用 JWT 鉴权（`AUTH_DISABLED=false`）。开发/测试可设 `AUTH_DISABLED=true` 跳过校验（等价于内置 Admin 用户）。
+
+### 角色
+
+| 能力 | Admin | 普通用户 |
+|------|-------|----------|
+| 查看文档列表、预览、对话、语音 | ✅ | ✅ |
+| 选择参与 RAG 的文档 | ✅ | ❌（自动使用全部 `ready` 文档） |
+| 上传 / 重新索引 / 删除文档 | ✅ | ❌ |
+| 管理（系统配置、用户管理、审计日志） | ✅ | ❌ |
+| 账号面板（绑定 / 解绑登录方式） | ✅ | ✅ |
+
+### 登录方式
+
+| 方式 | 说明 |
+|------|------|
+| **邮箱** | 登录用密码；**注册**需邮箱验证码 + 设置密码 |
+| **手机 OTP** | 验证码登录；未注册手机号验证通过后自动建号 |
+| **微信 OAuth** | 扫码登录；未绑定账号自动注册 |
+
+账号面板支持**绑定**额外登录方式；**解绑**时需至少保留一种（`DELETE /api/v1/auth/bind/{provider}`，`provider` 为 `email` | `phone` | `wechat`）。
+
+### 首次管理员
+
+在 `.env` 中配置：
+
+```env
+BOOTSTRAP_ADMIN_EMAIL=admin@example.com
+BOOTSTRAP_ADMIN_PASSWORD=your-secure-password
+```
+
+API 启动时会自动创建该 Admin 账号（若邮箱尚未注册）。
+
+也可手动创建：
+
+```bash
+docker compose exec api python -m app.cli create-admin --email admin@example.com
+```
+
+### 认证相关 API
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/auth/register/email` | 邮箱注册（直接设密码，可选） |
+| POST | `/auth/register/email-otp/send` | 发送邮箱注册验证码 |
+| POST | `/auth/register/email-otp/verify` | 验证码注册并设置密码 |
+| POST | `/auth/login/email` | 邮箱登录 |
+| POST | `/auth/otp/send` | 发送手机验证码 |
+| POST | `/auth/otp/verify` | 验证码登录 / 注册 |
+| GET | `/auth/wechat/authorize` | 微信 OAuth 跳转 |
+| GET | `/auth/wechat/callback` | 微信 OAuth 回调 |
+| POST | `/auth/bind/email` | 绑定邮箱（需登录） |
+| POST | `/auth/bind/otp/send` | 绑定手机：发送验证码 |
+| POST | `/auth/bind/otp/verify` | 绑定手机：验证 |
+| GET | `/auth/wechat/bind/authorize` | 绑定微信 |
+| DELETE | `/auth/bind/{provider}` | 解绑登录方式 |
+| POST | `/auth/refresh` | 刷新 access token |
+| POST | `/auth/logout` | 注销 refresh token |
+| GET | `/auth/me` | 当前用户信息 |
+| GET | `/admin/users` | 用户列表（Admin） |
+| PATCH | `/admin/users/{id}` | 修改角色 / 启用状态 / 昵称（Admin，写入审计日志） |
+| GET | `/admin/audit-logs` | 审计日志（Admin） |
+
+以上路径均带前缀 `/api/v1`。受保护接口需在请求头携带 `Authorization: Bearer <access_token>`；媒体资源 URL 亦支持 `?token=` 查询参数。
+
+### 环境变量
+
+| 变量 | 说明 |
+|------|------|
+| `JWT_SECRET` | 签名密钥（生产环境务必修改） |
+| `JWT_ACCESS_TTL_MINUTES` / `JWT_REFRESH_TTL_DAYS` | Token 有效期 |
+| `AUTH_DISABLED` | `true` 时跳过 JWT（仅开发/测试） |
+| `BOOTSTRAP_ADMIN_EMAIL` / `BOOTSTRAP_ADMIN_PASSWORD` | 首次 Admin |
+| `SMS_PROVIDER` | `console`（开发：验证码打日志）或 `aliyun` |
+| `SMS_OTP_*` | 手机验证码 TTL、重发间隔、最大尝试次数 |
+| `ALIYUN_SMS_*` | 阿里云短信 AccessKey、签名、模板等 |
+| `EMAIL_PROVIDER` | `console`（开发：验证码打日志）或 `smtp` |
+| `EMAIL_OTP_*` | 邮箱验证码 TTL、重发间隔、最大尝试次数 |
+| `SMTP_*` | SMTP 发信（`EMAIL_PROVIDER=smtp` 时必填） |
+| `WECHAT_APP_ID` / `WECHAT_APP_SECRET` / `WECHAT_REDIRECT_URI` | 微信开放平台 |
+| `AUTH_FRONTEND_CALLBACK_URL` | OAuth 完成后前端回调地址 |
+
+开发环境手机验证码：`SMS_PROVIDER=console`，在 API 日志中查看 OTP。邮箱注册验证码：`EMAIL_PROVIDER=console`，同样在 API 日志查看。生产环境设 `EMAIL_PROVIDER=smtp` 并填写 `SMTP_*`。
+
+完整列表见 [`.env.example`](.env.example)。
+
+---
+
 ## API 概览
 
 业务 HTTP API 使用前缀 `/api/v1`；WebSocket、健康检查与指标端点位于根路径：
@@ -338,6 +429,11 @@ Agent 限制（`.env`）：`RAG_AGENT_MAX_STEPS=10`、`RAG_AGENT_MAX_RETRIEVALS=
 | GET | `/assets/{asset_id}` | 表格/插图 PNG |
 | GET | `/settings` | 可读运行时配置（含 `.env` 与数据库覆盖） |
 | PATCH | `/settings` | 更新可编辑配置（持久化至 PostgreSQL，优先于 `.env`） |
+| POST | `/auth/register/email` | 邮箱注册（见「用户认证与权限」） |
+| POST | `/auth/login/email` | 邮箱登录 |
+| GET | `/auth/me` | 当前用户 |
+| GET | `/admin/users` | 用户管理（Admin） |
+| GET | `/admin/audit-logs` | 审计日志（Admin） |
 | WS | `/ws/voice` | 语音问答 |
 | GET | `/health` | 健康检查 |
 | GET | `/metrics` | Prometheus 指标（`METRICS_ENABLED=true` 时） |
@@ -359,6 +455,7 @@ Agent 限制（`.env`）：`RAG_AGENT_MAX_STEPS=10`、`RAG_AGENT_MAX_RETRIEVALS=
 | RAG / Agent | `RAG_CHUNK_SIZE`、`RAG_RETRIEVE_K`、`RAG_TOP_K`、`RAG_AGENT_*`、`RAG_STEP_ALIGN_MIN_SCORE`、`EMBED_SKIP_TABLE_*`、`HYBRID_ENABLED` |
 | OCR / PDF | `OCR_*`、`PDF_EXTRACT_TABLES`、`PDF_EXTRACT_EMBEDDED_IMAGES`、`PDF_MERGE_CROSS_PAGE_TABLES`、`PDF_FILTER_HEADER_FOOTER`、`PDF_*_MARGIN_RATIO` |
 | 基础设施 | `POSTGRES_URL`、`QDRANT_URL`、`ELASTICSEARCH_URL`、`MINIO_*` |
+| 认证 | `JWT_*`、`AUTH_DISABLED`、`BOOTSTRAP_ADMIN_*`、`SMS_*`、`ALIYUN_SMS_*`、`WECHAT_*`、`AUTH_FRONTEND_CALLBACK_URL` |
 | Worker | `CELERY_INGESTION_CONCURRENCY`、`CELERY_MAINTENANCE_CONCURRENCY` |
 | 可观测性 | `LOG_LEVEL`、`METRICS_ENABLED`、`METRICS_WORKER_PORT` |
 

@@ -5,13 +5,17 @@ import re
 import uuid
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from jwt.exceptions import InvalidTokenError
 from sqlalchemy import select
 
 from app.api.schemas import ChunkFilter
 from app.config import get_settings
-from app.db.models import Message, Session
+from app.db.models import Message, User
 from app.db.session import async_session_factory
 from app.services.agent.answer_flow import persist_turn, stream_agent_answer
+from app.services.auth_service import get_user_by_id
+from app.services.auth_tokens import decode_access_token
+from app.services.chat_sessions import get_or_create_chat_session
 from app.services.citations_util import strip_inline_citation_markers
 from app.services.deps import get_agent_service
 from app.services.rag import detect_language
@@ -56,8 +60,35 @@ async def _synthesize_sentence(
     )
 
 
+async def _authenticate_voice_socket(websocket: WebSocket) -> User | None:
+    settings = get_settings()
+    if settings.auth_disabled:
+        from app.api.auth_deps import _dev_user
+
+        return _dev_user()
+
+    token = websocket.query_params.get("token")
+    if not token:
+        return None
+    try:
+        payload = decode_access_token(token)
+        user_id = uuid.UUID(str(payload["sub"]))
+    except (InvalidTokenError, ValueError, KeyError):
+        return None
+
+    async with async_session_factory() as db:
+        user = await get_user_by_id(db, user_id)
+        if not user or not user.is_active:
+            return None
+    return user
+
+
 @router.websocket("/ws/voice")
 async def voice_websocket(websocket: WebSocket) -> None:
+    user = await _authenticate_voice_socket(websocket)
+    if not user:
+        await websocket.close(code=4401, reason="Unauthorized")
+        return
     await websocket.accept()
     speech = SpeechService()
     settings = get_settings()
@@ -140,17 +171,13 @@ async def voice_websocket(websocket: WebSocket) -> None:
             chunk_filters = ChunkFilter.model_validate(filters_raw) if filters_raw else None
 
             async with async_session_factory() as db:
-                if session_id_raw:
-                    session = await db.get(Session, uuid.UUID(str(session_id_raw)))
-                    if not session:
-                        await _send_json(websocket, {"type": "error", "message": "Session not found"})
-                        continue
-                else:
-                    session = Session(doc_ids=[str(doc_id) for doc_id in parsed_doc_ids])
-                    db.add(session)
-                    await db.flush()
-                    await db.commit()
-
+                session, effective_doc_ids = await get_or_create_chat_session(
+                    db,
+                    user=user,
+                    session_id=uuid.UUID(str(session_id_raw)) if session_id_raw else None,
+                    requested_doc_ids=parsed_doc_ids,
+                )
+                await db.commit()
                 session_id = session.id
                 history_result = await db.execute(
                     select(Message).where(Message.session_id == session_id).order_by(Message.created_at)
@@ -159,7 +186,6 @@ async def voice_websocket(websocket: WebSocket) -> None:
                     {"role": message.role, "content": message.content}
                     for message in history_result.scalars().all()
                 ]
-                effective_doc_ids = parsed_doc_ids or [uuid.UUID(doc_id) for doc_id in session.doc_ids]
 
             async def on_agent_step(event: dict) -> None:
                 await _send_json(websocket, event)

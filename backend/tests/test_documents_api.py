@@ -36,9 +36,10 @@ def test_upload_rejects_invalid_files_before_storage(
     filename: str, content: bytes, detail: str
 ) -> None:
     file = UploadFile(filename=filename, file=BytesIO(content))
+    admin = SimpleNamespace(id=uuid.uuid4())
 
     with pytest.raises(HTTPException) as exc_info:
-        asyncio.run(upload_document(file=file, db=AsyncMock()))
+        asyncio.run(upload_document(file=file, db=AsyncMock(), admin=admin))
 
     assert exc_info.value.status_code == 400
     assert detail in str(exc_info.value.detail)
@@ -86,7 +87,10 @@ def test_page_render_converts_renderer_errors_to_bad_request() -> None:
 
 def test_delete_marks_document_deleting_before_enqueue() -> None:
     document_id = uuid.uuid4()
+    admin = SimpleNamespace(id=uuid.uuid4())
     document = SimpleNamespace(
+        id=document_id,
+        name="manual.pdf",
         status=DocumentStatus.ready,
         progress_message=None,
         progress=100,
@@ -96,7 +100,7 @@ def test_delete_marks_document_deleting_before_enqueue() -> None:
     db.get.return_value = document
 
     with patch("app.api.documents.enqueue") as enqueue:
-        result = asyncio.run(delete_document(document_id, db))
+        result = asyncio.run(delete_document(document_id, db, admin))
 
     assert result == {"status": "deleting"}
     assert document.status == DocumentStatus.deleting
@@ -109,12 +113,13 @@ def test_delete_marks_document_deleting_before_enqueue() -> None:
 
 def test_delete_is_idempotent_while_deletion_is_in_progress() -> None:
     document_id = uuid.uuid4()
+    admin = SimpleNamespace(id=uuid.uuid4())
     document = SimpleNamespace(status=DocumentStatus.deleting)
     db = AsyncMock()
     db.get.return_value = document
 
     with patch("app.api.documents.enqueue") as enqueue:
-        result = asyncio.run(delete_document(document_id, db))
+        result = asyncio.run(delete_document(document_id, db, admin))
 
     assert result == {"status": "deleting"}
     db.commit.assert_not_awaited()

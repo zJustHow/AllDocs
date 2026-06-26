@@ -49,6 +49,8 @@ interface UseVoiceOptions {
   selectedDocIds: string[];
   sessionId: string | null;
   loading: boolean;
+  isAdmin: boolean;
+  readyDocCount: number;
   setMessages: Dispatch<SetStateAction<ChatMessage[]>>;
   setSessionId: (sessionId: string) => void;
   setLoading: (loading: boolean) => void;
@@ -60,6 +62,8 @@ export function useVoice({
   selectedDocIds,
   sessionId,
   loading,
+  isAdmin,
+  readyDocCount,
   setMessages,
   setSessionId,
   setLoading,
@@ -115,8 +119,8 @@ export function useVoice({
 
   const sendVoice = useCallback(
     async (blob: Blob, mimeType: string) => {
-      if (selectedDocIds.length === 0) {
-        setError(t("chat.selectDocError"));
+      if (readyDocCount === 0) {
+        setError(t(isAdmin ? "chat.selectDocError" : "chat.noDocsError"));
         return;
       }
 
@@ -258,6 +262,8 @@ export function useVoice({
       locale,
       selectedDocIds,
       sessionId,
+      isAdmin,
+      readyDocCount,
       setError,
       setLoading,
       setMessages,

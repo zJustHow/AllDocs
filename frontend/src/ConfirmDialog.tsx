@@ -49,7 +49,7 @@ export default function ConfirmDialog({
         onClick={onCancel}
       />
       <div
-        className="confirm-dialog glass-strong"
+        className="confirm-dialog"
         role="alertdialog"
         aria-modal="true"
         aria-labelledby={title ? "confirm-dialog-title" : undefined}
