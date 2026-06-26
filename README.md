@@ -120,6 +120,10 @@ docker compose --profile inference up -d inference
 
 环境变量：`SKIP_PIPER=1`（跳过语音模型）、`SKIP_NPM_INSTALL=1`（跳过 `npm install`）、`USE_DOCKER_MIRROR=1`（镜像站拉取基础镜像）。
 
+### 生产部署
+
+阿里云 ECS 完整部署步骤（本地上传代码、初始化、`.env`、版本更新、HTTPS、运维与排障）见 **[docs/deploy-aliyun.md](docs/deploy-aliyun.md)**。
+
 ---
 
 ## 项目结构

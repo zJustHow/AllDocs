@@ -137,16 +137,23 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
   const resizingRef = useRef(false);
   const currentPageRef = useRef(currentPage);
   const targetScrollKeyRef = useRef("");
-  const pageLoadScrollFrameRef = useRef<number | null>(null);
+  const targetScrollFrameRef = useRef<number | null>(null);
   const highlightRegions = useMemo(() => resolveHighlightRegions(target), [target]);
   const primaryRegion = highlightRegions[0] ?? null;
   const targetRegionsKey = useMemo(
     () => highlightRegionsKey(highlightRegions),
     [highlightRegions],
   );
-  const targetScrollKey = `${target.documentId}:${target.page ?? ""}:${targetRegionsKey}`;
 
   const pageCount = target.pageCount ?? null;
+  const targetPage = useMemo(
+    () =>
+      previewMode === "pdf" && pageCount !== null
+        ? resolveTargetPage(target, highlightRegions, pageCount)
+        : null,
+    [highlightRegions, pageCount, previewMode, target],
+  );
+  const targetScrollKey = `${target.documentId}:${targetPage ?? ""}:${targetRegionsKey}`;
   const requiredLoadedPages = useMemo(
     () => buildInitialLoadedPages(target, highlightRegions, pageCount),
     [highlightRegions, pageCount, target],
@@ -266,14 +273,14 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
       const page = resolveTargetPage(target, highlightRegions, pageCount);
       ensurePagesLoaded(page);
       scrollSyncLockRef.current = true;
-      pageVirtualizerRef.current.scrollToIndex(page - 1, { align: "start", behavior });
-      scrollEl.scrollTop = Math.max(
-        0,
-        (page - 1) * estimatedPageRowHeight - 16,
-      );
 
       const pageEl = pageRefs.current.get(page);
-      if (!pageEl) return false;
+      if (!pageEl) {
+        pageVirtualizerRef.current.scrollToIndex(page - 1, { align: "start", behavior });
+        setCurrentPage(page);
+        setPageInput(String(page));
+        return false;
+      }
 
       const scrollBbox = primaryRegion?.bbox ?? null;
       let positioned = false;
@@ -296,7 +303,6 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
     },
     [
       ensurePagesLoaded,
-      estimatedPageRowHeight,
       highlightRegions,
       pageCount,
       primaryRegion,
@@ -334,7 +340,13 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
       ensurePagesLoaded(next);
       setHighlightStylesByPage(new Map());
       scrollSyncLockRef.current = true;
-      pageVirtualizerRef.current.scrollToIndex(next - 1, { align: "start", behavior });
+      const scrollEl = scrollRef.current;
+      const pageEl = pageRefs.current.get(next);
+      if (scrollEl && pageEl) {
+        scrollToPageElement(scrollEl, pageEl, behavior);
+      } else {
+        pageVirtualizerRef.current.scrollToIndex(next - 1, { align: "start", behavior });
+      }
       setCurrentPage(next);
       setPageInput(String(next));
       window.setTimeout(() => {
@@ -344,26 +356,79 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
     [ensurePagesLoaded, pageCount],
   );
 
-  const scheduleScrollToCurrentTarget = useCallback(() => {
-    const scheduledKey = targetScrollKey;
-    if (pageLoadScrollFrameRef.current !== null) {
-      cancelAnimationFrame(pageLoadScrollFrameRef.current);
+  const syncCurrentPageFromScroll = useCallback(() => {
+    if (pageCount === null) return;
+
+    const scrollEl = scrollRef.current;
+    if (!scrollEl) return;
+
+    // Read the page under the viewport marker from the rendered page positions.
+    // Deriving it from an estimated row height drifts when PDF pages have
+    // different dimensions or the virtualizer has measured their real sizes.
+    const scrollRect = scrollEl.getBoundingClientRect();
+    const marker = scrollRect.top + scrollEl.clientHeight * 0.3;
+    let bestPage: number | null = null;
+    let nearestDistance = Number.POSITIVE_INFINITY;
+
+    for (const [page, pageEl] of pageRefs.current) {
+      const rect = pageEl.getBoundingClientRect();
+      if (rect.top <= marker && rect.bottom > marker) {
+        bestPage = page;
+        break;
+      }
+
+      const distance = marker < rect.top ? rect.top - marker : marker - rect.bottom;
+      if (distance < nearestDistance) {
+        nearestDistance = distance;
+        bestPage = page;
+      }
     }
-    pageLoadScrollFrameRef.current = requestAnimationFrame(() => {
-      pageLoadScrollFrameRef.current = null;
-      if (targetScrollKeyRef.current !== scheduledKey) return;
-      scrollToTarget("auto");
+
+    if (bestPage === null) return;
+    bestPage = Math.min(pageCount, Math.max(1, bestPage));
+
+    ensurePagesLoaded(bestPage);
+    setCurrentPage((prev) => {
+      if (prev === bestPage) return prev;
+      setPageInput(String(bestPage));
+      return bestPage;
     });
-  }, [scrollToTarget, targetScrollKey]);
+  }, [ensurePagesLoaded, pageCount]);
+
+  const scheduleScrollToCurrentTarget = useCallback(
+    (delayFrames = 1) => {
+      const scheduledKey = targetScrollKey;
+      if (targetScrollFrameRef.current !== null) {
+        cancelAnimationFrame(targetScrollFrameRef.current);
+      }
+
+      const scheduleFrame = (remainingFrames: number) => {
+        targetScrollFrameRef.current = requestAnimationFrame(() => {
+          targetScrollFrameRef.current = null;
+          if (targetScrollKeyRef.current !== scheduledKey) return;
+          if (remainingFrames > 0) {
+            scheduleFrame(remainingFrames - 1);
+            return;
+          }
+          scrollToTarget("auto");
+          scrollSyncLockRef.current = false;
+          updateHighlights();
+        });
+      };
+
+      scheduleFrame(delayFrames);
+    },
+    [scrollToTarget, targetScrollKey, updateHighlights],
+  );
 
   useEffect(() => {
     return () => {
-      if (pageLoadScrollFrameRef.current !== null) {
-        cancelAnimationFrame(pageLoadScrollFrameRef.current);
-        pageLoadScrollFrameRef.current = null;
+      if (targetScrollFrameRef.current !== null) {
+        cancelAnimationFrame(targetScrollFrameRef.current);
+        targetScrollFrameRef.current = null;
       }
     };
-  }, [targetScrollKey]);
+  }, []);
 
   useEffect(() => {
     setReadyPageImages(new Set());
@@ -524,10 +589,13 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
       resizeTimerRef.current = setTimeout(() => {
         resizeTimerRef.current = null;
         commitWidth();
+        pageVirtualizerRef.current.measure?.();
         resizeFrameRef.current = requestAnimationFrame(() => {
           resizeFrameRef.current = null;
           resizingRef.current = false;
           setResizeMaskVisible(false);
+          syncCurrentPageFromScroll();
+          updateHighlights();
         });
       }, RESIZE_SETTLE_MS);
     });
@@ -544,7 +612,7 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
       }
       resizingRef.current = false;
     };
-  }, [previewMode]);
+  }, [previewMode, syncCurrentPageFromScroll, updateHighlights]);
 
   useEffect(() => {
     if (previewMode !== "pdf" || pageCount === null) return;
@@ -604,42 +672,8 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
 
   const handleScroll = useCallback(() => {
     if (scrollSyncLockRef.current || resizingRef.current || pageCount === null) return;
-
-    const scrollEl = scrollRef.current;
-    if (!scrollEl) return;
-
-    // Read the page under the viewport marker from the rendered page positions.
-    // Deriving it from an estimated row height drifts when PDF pages have
-    // different dimensions or the virtualizer has measured their real sizes.
-    const scrollRect = scrollEl.getBoundingClientRect();
-    const marker = scrollRect.top + scrollEl.clientHeight * 0.3;
-    let bestPage: number | null = null;
-    let nearestDistance = Number.POSITIVE_INFINITY;
-
-    for (const [page, pageEl] of pageRefs.current) {
-      const rect = pageEl.getBoundingClientRect();
-      if (rect.top <= marker && rect.bottom > marker) {
-        bestPage = page;
-        break;
-      }
-
-      const distance = marker < rect.top ? rect.top - marker : marker - rect.bottom;
-      if (distance < nearestDistance) {
-        nearestDistance = distance;
-        bestPage = page;
-      }
-    }
-
-    if (bestPage === null) return;
-    bestPage = Math.min(pageCount, Math.max(1, bestPage));
-
-    ensurePagesLoaded(bestPage);
-    setCurrentPage((prev) => {
-      if (prev === bestPage) return prev;
-      setPageInput(String(bestPage));
-      return bestPage;
-    });
-  }, [ensurePagesLoaded, pageCount]);
+    syncCurrentPageFromScroll();
+  }, [pageCount, syncCurrentPageFromScroll]);
 
   useEffect(() => {
     if (previewMode !== "pdf" || pageCount === null) return;
@@ -691,6 +725,24 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
       }
     }
   }, [loadedPages, markPageImageReady, previewMode, targetRegionsKey]);
+
+  useLayoutEffect(() => {
+    if (
+      previewMode !== "pdf" ||
+      targetPage === null ||
+      !readyPageImages.has(targetPage)
+    ) {
+      return;
+    }
+    scheduleScrollToCurrentTarget(1);
+  }, [
+    estimatedPageRowHeight,
+    previewMode,
+    readyPageImages,
+    scheduleScrollToCurrentTarget,
+    scrollWidth,
+    targetPage,
+  ]);
 
   const showToolbar =
     !error &&
@@ -778,8 +830,8 @@ export default function DocumentViewer({ target, onClose }: DocumentViewerProps)
                                 ) {
                                   updateHighlights();
                                 }
-                                if (primaryRegion?.page === page) {
-                                  scheduleScrollToCurrentTarget();
+                                if (targetPage === page) {
+                                  scheduleScrollToCurrentTarget(2);
                                 }
                               }}
                               onError={() => setError(t("errors.loadDocumentFailed"))}

@@ -7,6 +7,8 @@ import { I18nProvider } from "./i18n";
 import type { ViewerTarget } from "./citations";
 
 let virtualizedItemLimit: number | null = null;
+let scrollToIndexMock: ReturnType<typeof vi.fn>;
+let resizeCallbacks: ResizeObserverCallback[] = [];
 
 vi.mock("@tanstack/react-virtual", () => ({
   useVirtualizer: ({
@@ -28,7 +30,7 @@ vi.mock("@tanstack/react-virtual", () => ({
         })),
       measureElement: vi.fn(),
       measure: vi.fn(),
-      scrollToIndex: vi.fn(),
+      scrollToIndex: scrollToIndexMock,
       range: { startIndex: 0, endIndex: Math.max(0, count - 1) },
     };
   },
@@ -38,7 +40,19 @@ let intersectionCallback: IntersectionObserverCallback | null = null;
 
 beforeEach(() => {
   intersectionCallback = null;
+  resizeCallbacks = [];
   virtualizedItemLimit = null;
+  scrollToIndexMock = vi.fn();
+  class ResizeObserverMock implements ResizeObserver {
+    constructor(callback: ResizeObserverCallback) {
+      resizeCallbacks.push(callback);
+    }
+
+    observe = vi.fn();
+    disconnect = vi.fn();
+    unobserve = vi.fn();
+  }
+
   class IntersectionObserverMock implements IntersectionObserver {
     readonly root = null;
     readonly rootMargin = "";
@@ -54,10 +68,12 @@ beforeEach(() => {
     takeRecords = vi.fn();
   }
 
+  vi.stubGlobal("ResizeObserver", ResizeObserverMock);
   vi.stubGlobal("IntersectionObserver", IntersectionObserverMock);
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -195,6 +211,127 @@ describe("DocumentViewer", () => {
     });
   });
 
+  it("repositions the initial PDF target after the measured page aspect changes", async () => {
+    const scrollTo = vi
+      .spyOn(HTMLElement.prototype, "scrollTo")
+      .mockImplementation(vi.fn());
+    renderViewer({
+      ...pdfTarget,
+      page: 3,
+      pageCount: 5,
+      regions: [{ page: 3, bbox: [0.1, 0.2, 0.3, 0.4] }],
+    });
+
+    const image = await screen.findByRole("img", { name: /manual.pdf p\.3/i });
+    const scrollEl = document.querySelector(".doc-viewer-scroll") as HTMLElement;
+    Object.defineProperty(scrollEl, "clientHeight", { value: 800, configurable: true });
+    Object.defineProperty(image, "complete", { value: true, configurable: true });
+    Object.defineProperty(image, "naturalWidth", { value: 800, configurable: true });
+    Object.defineProperty(image, "naturalHeight", { value: 1600, configurable: true });
+    Object.defineProperty(image, "offsetWidth", { value: 400, configurable: true });
+    Object.defineProperty(image, "offsetHeight", { value: 800, configurable: true });
+    scrollTo.mockClear();
+
+    image.dispatchEvent(new Event("load"));
+
+    await waitFor(() => {
+      expect(scrollTo).toHaveBeenCalledWith({ top: 1296, behavior: "auto" });
+    });
+  });
+
+  it("keeps page tracking active after the target PDF image loads", async () => {
+    renderViewer({
+      ...pdfTarget,
+      regions: [{ page: 1, bbox: [0.1, 0.8, 0.3, 0.9] }],
+    });
+
+    const pageInput = await screen.findByRole("textbox", { name: /Page number|页码/i });
+    const image = await screen.findByRole("img", { name: /manual.pdf p\.1/i });
+    const scrollEl = document.querySelector(".doc-viewer-scroll") as HTMLElement;
+    const pages = Array.from(
+      document.querySelectorAll<HTMLElement>(".doc-viewer-page"),
+    );
+    Object.defineProperty(scrollEl, "clientHeight", { value: 1000, configurable: true });
+    vi.spyOn(scrollEl, "getBoundingClientRect").mockReturnValue({
+      top: 100,
+      bottom: 1100,
+      left: 0,
+      right: 400,
+      width: 400,
+      height: 1000,
+      x: 0,
+      y: 100,
+      toJSON: () => ({}),
+    });
+    pages.forEach((page, index) => {
+      const top = [-700, 150, 1050][index];
+      vi.spyOn(page, "getBoundingClientRect").mockReturnValue({
+        top,
+        bottom: top + 800,
+        left: 0,
+        right: 400,
+        width: 400,
+        height: 800,
+        x: 0,
+        y: top,
+        toJSON: () => ({}),
+      });
+    });
+    Object.defineProperty(image, "complete", { value: true, configurable: true });
+    Object.defineProperty(image, "naturalWidth", { value: 800, configurable: true });
+    Object.defineProperty(image, "naturalHeight", { value: 1200, configurable: true });
+    Object.defineProperty(image, "offsetWidth", { value: 400, configurable: true });
+    Object.defineProperty(image, "offsetHeight", { value: 600, configurable: true });
+
+    image.dispatchEvent(new Event("load"));
+
+    await waitFor(() => {
+      fireEvent.scroll(scrollEl);
+      expect(pageInput).toHaveValue("2");
+    });
+  });
+
+  it("recomputes bbox highlights after the PDF viewer width settles", async () => {
+    renderViewer(pdfTarget);
+
+    const image = await screen.findByRole("img", { name: /manual.pdf p\.1/i });
+    const stage = document.querySelector(".doc-viewer-stage") as HTMLElement;
+    Object.defineProperty(image, "complete", { value: true, configurable: true });
+    Object.defineProperty(image, "naturalWidth", { value: 800, configurable: true });
+    Object.defineProperty(image, "naturalHeight", { value: 1200, configurable: true });
+    Object.defineProperty(image, "offsetWidth", { value: 400, configurable: true });
+    Object.defineProperty(image, "offsetHeight", { value: 600, configurable: true });
+    image.dispatchEvent(new Event("load"));
+
+    let highlight = await waitFor(() => {
+      const element = document.querySelector<HTMLElement>(".doc-viewer-highlight");
+      expect(element).toBeInTheDocument();
+      return element;
+    });
+    expect(highlight.style.left).toBe("40px");
+
+    Object.defineProperty(image, "offsetWidth", { value: 500, configurable: true });
+    vi.spyOn(stage, "getBoundingClientRect").mockReturnValue({
+      top: 0,
+      bottom: 800,
+      left: 0,
+      right: 500,
+      width: 500,
+      height: 800,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    });
+    resizeCallbacks[0]?.([], {} as ResizeObserver);
+
+    highlight = await waitFor(() => {
+      const element = document.querySelector<HTMLElement>(".doc-viewer-highlight");
+      expect(element?.style.left).toBe("50px");
+      return element;
+    });
+    expect(Number.parseFloat(highlight.style.width)).toBeCloseTo(100);
+  });
+
   it("keeps bbox highlights visible without showing the resize mask when changing citations", async () => {
     const view = renderViewer(pdfTarget);
     const image = await screen.findByRole("img", { name: /manual.pdf p\.1/i });
@@ -227,82 +364,6 @@ describe("DocumentViewer", () => {
     expect(document.querySelector(".doc-viewer-resize-mask")).not.toHaveClass(
       "is-visible",
     );
-  });
-
-  it("cancels a pending citation scroll retry when the target changes", async () => {
-    virtualizedItemLimit = 0;
-    const cancelAnimationFrameSpy = vi.spyOn(window, "cancelAnimationFrame");
-    const { rerender } = renderViewer({
-      ...pdfTarget,
-      page: 3,
-      regions: [{ page: 3, bbox: [0.1, 0.2, 0.3, 0.4] }],
-    });
-
-    rerender(
-      <I18nProvider>
-        <DocumentViewer
-          target={{
-            ...pdfTarget,
-            page: 2,
-            regions: [{ page: 2, bbox: [0.2, 0.3, 0.4, 0.5] }],
-          }}
-          onClose={vi.fn()}
-        />
-      </I18nProvider>,
-    );
-
-    expect(cancelAnimationFrameSpy).toHaveBeenCalled();
-  });
-
-  it("ignores a delayed page-load scroll from the previous citation", async () => {
-    let nextFrame = 1;
-    const frameCallbacks = new Map<number, FrameRequestCallback>();
-    const requestAnimationFrameSpy = vi
-      .spyOn(window, "requestAnimationFrame")
-      .mockImplementation((callback) => {
-        const frame = nextFrame;
-        nextFrame += 1;
-        frameCallbacks.set(frame, callback);
-        return frame;
-      });
-    vi.spyOn(window, "cancelAnimationFrame").mockImplementation((frame) => {
-      frameCallbacks.delete(frame);
-    });
-
-    const view = renderViewer(pdfTarget);
-    const pageInput = await screen.findByRole("textbox", { name: /Page number|页码/i });
-    const image = await screen.findByRole("img", { name: /manual.pdf p\.1/i });
-    Object.defineProperty(image, "complete", { value: true, configurable: true });
-    Object.defineProperty(image, "naturalWidth", { value: 800, configurable: true });
-    Object.defineProperty(image, "naturalHeight", { value: 1200, configurable: true });
-    Object.defineProperty(image, "offsetWidth", { value: 400, configurable: true });
-    Object.defineProperty(image, "offsetHeight", { value: 600, configurable: true });
-
-    image.dispatchEvent(new Event("load"));
-    expect(requestAnimationFrameSpy).toHaveBeenCalled();
-
-    view.rerender(
-      <I18nProvider>
-        <DocumentViewer
-          target={{
-            ...pdfTarget,
-            page: 2,
-            regions: [{ page: 2, bbox: [0.2, 0.3, 0.4, 0.5] }],
-          }}
-          onClose={vi.fn()}
-        />
-      </I18nProvider>,
-    );
-
-    await waitFor(() => {
-      expect(pageInput).toHaveValue("2");
-    });
-
-    for (const callback of [...frameCallbacks.values()]) {
-      callback(0);
-    }
-
-    expect(pageInput).toHaveValue("2");
   });
 
   it("navigates PDF pages with arrow keys", async () => {
@@ -401,6 +462,40 @@ describe("DocumentViewer", () => {
     fireEvent.blur(pageInput);
 
     expect(pageInput).toHaveValue("1");
+  });
+
+  it("scrolls the PDF viewport when committing a page number", async () => {
+    const scrollTo = vi
+      .spyOn(HTMLElement.prototype, "scrollTo")
+      .mockImplementation(vi.fn());
+    const user = userEvent.setup();
+    renderViewer(pdfTarget);
+
+    const pageInput = await screen.findByRole("textbox", { name: /Page number|页码/i });
+    await user.clear(pageInput);
+    await user.type(pageInput, "3");
+    fireEvent.blur(pageInput);
+
+    await waitFor(() => {
+      expect(scrollTo).toHaveBeenCalledWith({ top: 936, behavior: "smooth" });
+    });
+  });
+
+  it("asks the virtualizer to render the target page before precise scrolling", async () => {
+    virtualizedItemLimit = 1;
+    renderViewer({
+      ...pdfTarget,
+      page: 3,
+      pageCount: 10,
+      regions: [{ page: 3, bbox: [0.1, 0.2, 0.3, 0.4] }],
+    });
+
+    await waitFor(() => {
+      expect(scrollToIndexMock).toHaveBeenCalledWith(2, {
+        align: "start",
+        behavior: "auto",
+      });
+    });
   });
 
   it("renders image previews for supported image documents", () => {

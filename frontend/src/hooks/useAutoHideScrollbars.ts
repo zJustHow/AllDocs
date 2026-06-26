@@ -4,6 +4,7 @@ const HIDE_DELAY_MS = 800;
 const MIN_THUMB_SIZE = 24;
 const HOVER_HIT_SLOP = 12;
 const HIDE_SCROLLBARS_EVENT = "alldocs:hide-floating-scrollbars";
+const SUPPRESS_CHAT_SCROLLBARS_EVENT = "alldocs:suppress-chat-scrollbars";
 
 interface FloatingBars {
   horizontal: HTMLDivElement;
@@ -69,6 +70,8 @@ export function useAutoHideScrollbars() {
     const barsByElement = new Map<HTMLElement, FloatingBars>();
     let dragState: DragState | null = null;
     let hoverElement: HTMLElement | null = null;
+    let chatScrollbarsSuppressed = false;
+    let chatSuppressionTimer: number | null = null;
 
     const scheduleHide = (element: HTMLElement, bars: FloatingBars) => {
       const previousTimer = hideTimers.get(element);
@@ -132,6 +135,28 @@ export function useAutoHideScrollbars() {
       for (const bars of barsByElement.values()) {
         bars.horizontal.classList.remove("is-visible");
         bars.vertical.classList.remove("is-visible");
+      }
+    };
+
+    const isChatArea = (element: HTMLElement) =>
+      element.classList.contains("chat-area");
+
+    const isSuppressed = (element: HTMLElement) =>
+      chatScrollbarsSuppressed && isChatArea(element);
+
+    const hideBarsForElement = (element: HTMLElement) => {
+      const bars = barsByElement.get(element);
+      if (!bars) return;
+      bars.horizontal.classList.remove("is-visible");
+      bars.vertical.classList.remove("is-visible");
+      const timer = hideTimers.get(element);
+      if (timer !== undefined) window.clearTimeout(timer);
+      hideTimers.delete(element);
+    };
+
+    const hideChatBars = () => {
+      for (const element of barsByElement.keys()) {
+        if (isChatArea(element)) hideBarsForElement(element);
       }
     };
 
@@ -284,6 +309,10 @@ export function useAutoHideScrollbars() {
 
     const showScrollbar = (element: HTMLElement | null) => {
       if (!element || !isScrollable(element)) return;
+      if (isSuppressed(element)) {
+        hideBarsForElement(element);
+        return;
+      }
 
       const bars = getBars(element);
       updateBars(element, bars);
@@ -336,12 +365,30 @@ export function useAutoHideScrollbars() {
       for (const [element, bars] of barsByElement) updateBars(element, bars);
     };
 
+    const handleSuppressChatScrollbars = (event: Event) => {
+      const durationMs =
+        event instanceof CustomEvent && typeof event.detail?.durationMs === "number"
+          ? event.detail.durationMs
+          : 0;
+      chatScrollbarsSuppressed = true;
+      hideChatBars();
+      if (chatSuppressionTimer !== null) window.clearTimeout(chatSuppressionTimer);
+      chatSuppressionTimer = window.setTimeout(() => {
+        chatScrollbarsSuppressed = false;
+        chatSuppressionTimer = null;
+      }, Math.max(0, durationMs));
+    };
+
     document.addEventListener("scroll", handleScroll, true);
     document.addEventListener("wheel", handleWheel, { capture: true, passive: true });
     document.addEventListener("pointermove", handlePointerMove);
     document.addEventListener("pointerup", handlePointerUp);
     document.addEventListener("pointercancel", handlePointerUp);
     document.addEventListener(HIDE_SCROLLBARS_EVENT, hideAllBars);
+    document.addEventListener(
+      SUPPRESS_CHAT_SCROLLBARS_EVENT,
+      handleSuppressChatScrollbars,
+    );
     window.addEventListener("resize", handleResize);
 
     return () => {
@@ -351,8 +398,13 @@ export function useAutoHideScrollbars() {
       document.removeEventListener("pointerup", handlePointerUp);
       document.removeEventListener("pointercancel", handlePointerUp);
       document.removeEventListener(HIDE_SCROLLBARS_EVENT, hideAllBars);
+      document.removeEventListener(
+        SUPPRESS_CHAT_SCROLLBARS_EVENT,
+        handleSuppressChatScrollbars,
+      );
       window.removeEventListener("resize", handleResize);
       for (const timer of hideTimers.values()) window.clearTimeout(timer);
+      if (chatSuppressionTimer !== null) window.clearTimeout(chatSuppressionTimer);
       for (const bars of barsByElement.values()) {
         bars.horizontal.remove();
         bars.vertical.remove();
@@ -363,4 +415,20 @@ export function useAutoHideScrollbars() {
 
 export function hideFloatingScrollbars() {
   document.dispatchEvent(new Event(HIDE_SCROLLBARS_EVENT));
+}
+
+export function hideFloatingScrollbarsAfterLayout() {
+  hideFloatingScrollbars();
+  const schedule =
+    window.requestAnimationFrame ??
+    ((callback: FrameRequestCallback) => window.setTimeout(() => callback(0), 0));
+  schedule(() => hideFloatingScrollbars());
+}
+
+export function suppressChatFloatingScrollbars(durationMs: number) {
+  document.dispatchEvent(
+    new CustomEvent(SUPPRESS_CHAT_SCROLLBARS_EVENT, {
+      detail: { durationMs },
+    }),
+  );
 }

@@ -10,7 +10,8 @@ import Composer from "./Composer";
 import DocumentViewer from "./DocumentViewer";
 import { useDocuments } from "./hooks/useDocuments";
 import {
-  hideFloatingScrollbars,
+  hideFloatingScrollbarsAfterLayout,
+  suppressChatFloatingScrollbars,
   useAutoHideScrollbars,
 } from "./hooks/useAutoHideScrollbars";
 import { useChat } from "./hooks/useChat";
@@ -31,8 +32,10 @@ import {
 import MessageList from "./MessageList";
 import Sidebar from "./Sidebar";
 import { useConfirmDialog } from "./useConfirmDialog";
+import { PANEL_CLOSE_MS } from "./layout";
 
 const SettingsPanel = lazy(() => import("./SettingsPanel"));
+const VIEWER_SCROLLBAR_SUPPRESSION_MS = PANEL_CLOSE_MS + 120;
 
 export default function App() {
   useAutoHideScrollbars();
@@ -43,12 +46,12 @@ export default function App() {
   const { sidebarOpen, closeSidebar, toggleSidebar } = useSidebarLayout();
 
   const handleCloseSidebar = () => {
-    hideFloatingScrollbars();
+    hideFloatingScrollbarsAfterLayout();
     closeSidebar();
   };
 
   const handleToggleSidebar = () => {
-    hideFloatingScrollbars();
+    hideFloatingScrollbarsAfterLayout();
     toggleSidebar();
   };
 
@@ -90,7 +93,13 @@ export default function App() {
   const viewerSlotRef = useRef<HTMLDivElement>(null);
   const [viewerExitWidth, setViewerExitWidth] = useState<number | null>(null);
 
+  const hideScrollbarsForViewerTransition = () => {
+    suppressChatFloatingScrollbars(VIEWER_SCROLLBAR_SUPPRESSION_MS);
+    hideFloatingScrollbarsAfterLayout();
+  };
+
   const closeViewerWithTransition = (immediate = false) => {
+    hideScrollbarsForViewerTransition();
     if (!immediate) {
       const width =
         viewerSlotRef.current
@@ -99,6 +108,11 @@ export default function App() {
       if (width > 0) setViewerExitWidth(width);
     }
     closeViewer(immediate);
+  };
+
+  const handleOpenDocument = (target: Parameters<typeof openDocument>[0]) => {
+    openDocument(target);
+    hideScrollbarsForViewerTransition();
   };
 
   const {
@@ -257,7 +271,7 @@ export default function App() {
               <MessageList
                 messages={messages}
                 scrollRef={chatAreaRef}
-                onOpenDocument={openDocument}
+                onOpenDocument={handleOpenDocument}
                 registerRef={registerMessageRef}
                 spacerRef={spacerRef}
               />

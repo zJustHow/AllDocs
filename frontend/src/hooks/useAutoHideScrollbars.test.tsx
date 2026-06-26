@@ -3,6 +3,8 @@ import { act, fireEvent, render } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   hideFloatingScrollbars,
+  hideFloatingScrollbarsAfterLayout,
+  suppressChatFloatingScrollbars,
   useAutoHideScrollbars,
 } from "./useAutoHideScrollbars";
 
@@ -40,6 +42,18 @@ function CitationHarness() {
   );
 }
 
+function ChatAndViewerHarness() {
+  useAutoHideScrollbars();
+  return (
+    <>
+      <div className="chat-area" data-testid="chat" style={{ overflowY: "auto" }} />
+      <div className="doc-viewer" data-testid="viewer-shell">
+        <div data-testid="viewer" style={{ overflowY: "auto" }} />
+      </div>
+    </>
+  );
+}
+
 const rect = {
   top: 0,
   right: 100,
@@ -53,7 +67,10 @@ const rect = {
 };
 
 describe("useAutoHideScrollbars", () => {
-  afterEach(() => vi.useRealTimers());
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
 
   it("shows a scrollbar while scrolling and hides it after inactivity", () => {
     vi.useFakeTimers();
@@ -95,6 +112,76 @@ describe("useAutoHideScrollbars", () => {
     expect(floatingBar).not.toHaveClass("is-visible");
     act(() => vi.advanceTimersByTime(800));
     expect(floatingBar).not.toHaveClass("is-visible");
+  });
+
+  it("hides scrollbars again after layout events can make them visible", () => {
+    let frameCallback: FrameRequestCallback | null = null;
+    vi.stubGlobal(
+      "requestAnimationFrame",
+      vi.fn((callback: FrameRequestCallback) => {
+        frameCallback = callback;
+        return 1;
+      }),
+    );
+    const { getByTestId } = render(<Harness />);
+    const scroller = getByTestId("scroller");
+
+    Object.defineProperties(scroller, {
+      clientHeight: { value: 100, configurable: true },
+      scrollHeight: { value: 300, configurable: true },
+    });
+
+    fireEvent.scroll(scroller);
+    const floatingBar = document.querySelector(".floating-scrollbar--vertical");
+    expect(floatingBar).toHaveClass("is-visible");
+
+    hideFloatingScrollbarsAfterLayout();
+    expect(floatingBar).not.toHaveClass("is-visible");
+
+    fireEvent.scroll(scroller);
+    expect(floatingBar).toHaveClass("is-visible");
+
+    act(() => frameCallback?.(0));
+    expect(floatingBar).not.toHaveClass("is-visible");
+  });
+
+  it("suppresses chat scrollbars during viewer layout transitions only", () => {
+    vi.useFakeTimers();
+    const { getByTestId } = render(<ChatAndViewerHarness />);
+    const chat = getByTestId("chat");
+    const viewer = getByTestId("viewer");
+
+    Object.defineProperties(chat, {
+      clientHeight: { value: 100, configurable: true },
+      scrollHeight: { value: 300, configurable: true },
+    });
+    Object.defineProperties(viewer, {
+      clientHeight: { value: 100, configurable: true },
+      scrollHeight: { value: 300, configurable: true },
+    });
+
+    suppressChatFloatingScrollbars(600);
+
+    fireEvent.scroll(chat);
+    expect(
+      Array.from(document.querySelectorAll(".floating-scrollbar.is-visible")),
+    ).toHaveLength(0);
+
+    fireEvent.scroll(viewer);
+    expect(
+      Array.from(
+        document.querySelectorAll(".floating-scrollbar--viewer.is-visible"),
+      ).length,
+    ).toBeGreaterThan(0);
+
+    act(() => vi.advanceTimersByTime(600));
+    fireEvent.scroll(chat);
+
+    expect(
+      Array.from(document.querySelectorAll(".floating-scrollbar.is-visible")).some(
+        (bar) => !bar.classList.contains("floating-scrollbar--viewer"),
+      ),
+    ).toBe(true);
   });
 
   it("does not activate a horizontal child for vertical wheel input", () => {
