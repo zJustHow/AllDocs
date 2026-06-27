@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from app.db.models import Base, Message, Session
 from app.services.chat_sessions import CHAT_HISTORY_MAX_MESSAGES, load_recent_chat_history
+from tests.sqlite_schema import create_sqlite_schema
 
 
 @pytest.fixture
@@ -15,7 +16,7 @@ async def auth_db():
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+        await conn.run_sync(lambda bind: create_sqlite_schema(bind, Base.metadata))
 
     async with session_factory() as session:
         yield session

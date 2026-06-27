@@ -39,16 +39,26 @@ def test_build_settings_response_marks_overrides() -> None:
 
 
 def test_invalidate_service_caches_clears_infra_clients() -> None:
+    from unittest.mock import MagicMock, patch
+
     from app.services.deps import get_agent_service
     from app.services.fulltext_store import get_elasticsearch_client
     from app.services.runtime_settings import invalidate_service_caches
     from app.services.storage import get_minio_client
     from app.services.vector_store import get_qdrant_client
 
-    get_agent_service()
-    get_minio_client()
-    get_qdrant_client()
-    get_elasticsearch_client()
+    invalidate_service_caches()
+
+    with (
+        patch("app.services.deps.AgentRAGService", MagicMock()),
+        patch("app.services.storage.Minio", MagicMock()),
+        patch("app.services.vector_store.QdrantClient", MagicMock()),
+        patch("app.services.fulltext_store.Elasticsearch", MagicMock()),
+    ):
+        get_agent_service()
+        get_minio_client()
+        get_qdrant_client()
+        get_elasticsearch_client()
 
     assert get_agent_service.cache_info().currsize == 1
     assert get_minio_client.cache_info().currsize == 1
@@ -75,10 +85,10 @@ def test_update_overrides_records_changes() -> None:
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
 
-    from app.db.models import Base
+    from app.db.models import AppSetting
 
     engine = create_engine("sqlite:///:memory:")
-    Base.metadata.create_all(engine)
+    AppSetting.__table__.create(engine)
     Session = sessionmaker(bind=engine)
     session = Session()
     try:

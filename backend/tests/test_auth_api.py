@@ -5,16 +5,18 @@ from __future__ import annotations
 import asyncio
 import sys
 from collections.abc import Generator
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from starlette.testclient import TestClient
 
+from app.config import Settings, _env_settings
 from app.db.models import Base, UserRole
 from app.db.session import get_db
 from app.services.auth_service import bind_phone_to_user, register_with_email
+from tests.sqlite_schema import create_sqlite_schema
 
 
 def _install_import_stubs() -> None:
@@ -27,6 +29,29 @@ def _install_import_stubs() -> None:
         celery_app.task = lambda *args, **kwargs: (lambda fn: fn)
         celery_mod.Celery.return_value = celery_app
         sys.modules["celery"] = celery_mod
+
+
+def _test_auth_settings() -> Settings:
+    return _env_settings().model_copy(
+        update={
+            "auth_disabled": False,
+            "metrics_enabled": False,
+            "jwt_secret": "test-jwt-secret",
+            "jwt_access_ttl_minutes": 30,
+            "jwt_refresh_ttl_days": 14,
+        }
+    )
+
+
+def _patch_auth_settings(settings: Settings) -> tuple:
+    getter = lambda: settings
+    return (
+        patch("app.config.get_settings", getter),
+        patch("app.api.auth_deps.get_settings", getter),
+        patch("app.services.auth_tokens.get_settings", getter),
+        patch("app.services.auth_service.get_settings", getter),
+        patch("app.services.rate_limit.get_settings", getter),
+    )
 
 
 @contextmanager
@@ -45,25 +70,17 @@ def _auth_api_context(session_factory: async_sessionmaker[AsyncSession]) -> Gene
         async def __aexit__(self, *_args: object) -> None:
             return None
 
-    settings = MagicMock()
-    settings.auth_disabled = False
-    settings.metrics_enabled = False
-    settings.log_level = "INFO"
-    settings.jwt_secret = "test-jwt-secret"
-    settings.jwt_access_ttl_minutes = 30
-    settings.jwt_refresh_ttl_days = 14
-    settings.cors_origin_list = lambda: ["http://localhost:3000"]
+    settings = _test_auth_settings()
 
-    with (
-        patch("sqlalchemy.ext.asyncio.create_async_engine", return_value=MagicMock()),
-        patch("app.db.session.init_db", AsyncMock()),
-        patch("app.db.session.async_session_factory", lambda: _SessionCtx()),
-        patch("app.services.runtime_settings.refresh_from_session", AsyncMock()),
-        patch("app.services.infra_init.ensure_external_stores_async", AsyncMock()),
-        patch("app.config.get_settings", return_value=settings),
-        patch("app.api.auth_deps.get_settings", return_value=settings),
-        patch("app.services.auth_tokens.get_settings", return_value=settings),
-    ):
+    with ExitStack() as stack:
+        stack.enter_context(patch("sqlalchemy.ext.asyncio.create_async_engine", return_value=MagicMock()))
+        stack.enter_context(patch("sqlalchemy.create_engine", return_value=MagicMock()))
+        stack.enter_context(patch("app.db.session.init_db", AsyncMock()))
+        stack.enter_context(patch("app.db.session.async_session_factory", lambda: _SessionCtx()))
+        stack.enter_context(patch("app.services.runtime_settings.refresh_from_session", AsyncMock()))
+        stack.enter_context(patch("app.services.infra_init.ensure_external_stores_async", AsyncMock()))
+        for settings_patch in _patch_auth_settings(settings):
+            stack.enter_context(settings_patch)
         _install_import_stubs()
         from app.main import app
 
@@ -104,12 +121,12 @@ def auth_api_client() -> Generator[tuple[TestClient, dict[str, str]], None, None
 
     async def init_db_schema() -> None:
         async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
+            await conn.run_sync(lambda bind: create_sqlite_schema(bind, Base.metadata))
 
     asyncio.run(init_db_schema())
-    tokens = asyncio.run(_seed_auth_users(session_factory))
 
     with _auth_api_context(session_factory):
+        tokens = asyncio.run(_seed_auth_users(session_factory))
         from app.main import app
 
         with TestClient(app) as client:

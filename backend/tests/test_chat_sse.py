@@ -59,7 +59,7 @@ def test_chat_sse_clarify_emits_delta_and_done(chat_client) -> None:
 
     with (
         patch("app.api.chat.get_agent_service", return_value=MagicMock()),
-        patch("app.api.chat._get_or_create_session", AsyncMock(return_value=session)),
+        patch("app.api.chat.get_or_create_chat_session", AsyncMock(return_value=(session, []))),
         patch("app.api.chat.stream_agent_answer", _clarify_stream),
         patch("app.api.chat.persist_turn", AsyncMock()) as persist_mock,
     ):
@@ -85,7 +85,7 @@ def test_chat_sse_complete_persists_turn(chat_client) -> None:
 
     with (
         patch("app.api.chat.get_agent_service", return_value=MagicMock()),
-        patch("app.api.chat._get_or_create_session", AsyncMock(return_value=session)),
+        patch("app.api.chat.get_or_create_chat_session", AsyncMock(return_value=(session, []))),
         patch("app.api.chat.stream_agent_answer", _complete_stream),
         patch("app.api.chat.persist_turn", AsyncMock()) as persist_mock,
     ):
