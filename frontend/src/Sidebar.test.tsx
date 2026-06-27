@@ -173,4 +173,19 @@ describe("Sidebar", () => {
     await user.click(screen.getByRole("button", { name: /Collapse sidebar|收起侧栏/i }));
     expect(onToggle).toHaveBeenCalledTimes(1);
   });
+
+  it("hides admin controls for non-admin users", () => {
+    renderSidebar({ isAdmin: false });
+
+    expect(screen.queryByText(/Upload document|上传文档/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+    expect(screen.getByText(/Manual.pdf/i)).toBeInTheDocument();
+    expect(screen.getByText(/Available guides|可用文档/i)).toBeInTheDocument();
+  });
+
+  it("shows readonly empty state for non-admin users", () => {
+    renderSidebar({ documents: [], readyCount: 0, isAdmin: false });
+
+    expect(screen.getByText(/No guides available yet|暂无可用文档/i)).toBeInTheDocument();
+  });
 });

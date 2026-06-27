@@ -89,4 +89,42 @@ describe("ProfilePage", () => {
     await user.click(screen.getByRole("button", { name: /退出|Sign out/i }));
     expect(onLogout).toHaveBeenCalledTimes(1);
   });
+
+  it("shows loading state when user is not yet available", async () => {
+    mockUser = null;
+    renderPage();
+
+    expect(await screen.findByText(/Loading settings|加载设置/i)).toBeInTheDocument();
+  });
+
+  it("shows admin role badge and phone-only subtitle", async () => {
+    mockUser = {
+      id: "admin-1",
+      role: "admin",
+      display_name: "Admin User",
+      email: null,
+      phone: "+8613800138000",
+      wechat_bound: true,
+    };
+    renderPage();
+
+    expect(await screen.findByRole("heading", { name: /Admin User/i, level: 2 })).toBeInTheDocument();
+    expect(document.querySelector(".profile-role-badge")?.textContent).toMatch(/Admin|管理员/);
+    expect(document.querySelector(".profile-subtitle")?.textContent).toBe("****8000");
+  });
+
+  it("keeps short phone numbers visible without masking", async () => {
+    mockUser = {
+      id: "user-2",
+      role: "user",
+      display_name: "Phone User",
+      email: null,
+      phone: "123",
+      wechat_bound: false,
+    };
+    renderPage();
+
+    expect(await screen.findByRole("heading", { name: /Phone User/i, level: 2 })).toBeInTheDocument();
+    expect(document.querySelector(".profile-subtitle")?.textContent).toBe("123");
+  });
 });

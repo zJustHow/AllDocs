@@ -1,14 +1,17 @@
 /** @vitest-environment jsdom */
 import { describe, expect, it, vi } from "vitest";
 import {
+  assetUrl,
   createVoiceSocket,
   deleteDocument,
   documentFileUrl,
   documentPageRenderUrl,
+  documentPreviewUrl,
   fetchSettings,
   listDocuments,
   patchSettings,
   reindexDocument,
+  setDocumentChatEnabled,
   streamChat,
   uploadDocument,
 } from "./api";
@@ -27,14 +30,16 @@ function mockSseResponse(events: Array<Record<string, unknown>>) {
 }
 
 describe("document URL builders", () => {
-  it("builds file and page render URLs", () => {
+  it("builds file, preview, page render, and asset URLs", () => {
     expect(documentFileUrl("doc-1")).toBe("/api/v1/documents/doc-1/file");
+    expect(documentPreviewUrl("doc-1")).toBe("/api/v1/documents/doc-1/preview");
     expect(documentPageRenderUrl("doc-1", 3)).toBe(
       "/api/v1/documents/doc-1/pages/3/render?scale=2",
     );
     expect(documentPageRenderUrl("doc-1", 5, 3)).toBe(
       "/api/v1/documents/doc-1/pages/5/render?scale=3",
     );
+    expect(assetUrl("asset-1")).toBe("/api/v1/assets/asset-1");
   });
 });
 
@@ -402,6 +407,50 @@ describe("reindexDocument", () => {
     );
 
     await expect(reindexDocument("doc-1")).rejects.toThrow(/Reindex failed|重新索引失败/i);
+    vi.unstubAllGlobals();
+  });
+});
+
+describe("setDocumentChatEnabled", () => {
+  it("patches chat_enabled and returns the updated document", async () => {
+    const doc = { id: "doc-1", name: "Manual.pdf", status: "ready", chat_enabled: false };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => doc,
+      }),
+    );
+
+    await expect(setDocumentChatEnabled("doc-1", false)).resolves.toEqual(doc);
+    vi.unstubAllGlobals();
+  });
+
+  it("throws when chat_enabled update fails", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        text: async () => "update failed",
+      }),
+    );
+
+    await expect(setDocumentChatEnabled("doc-1", true)).rejects.toThrow("update failed");
+    vi.unstubAllGlobals();
+  });
+
+  it("throws the fallback update error when response body is empty", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        text: async () => "",
+      }),
+    );
+
+    await expect(setDocumentChatEnabled("doc-1", true)).rejects.toThrow(
+      /Failed to update document|更新文档失败/i,
+    );
     vi.unstubAllGlobals();
   });
 });

@@ -42,4 +42,24 @@ describe("routing", () => {
 
     expect(pushState).toHaveBeenCalledWith(null, "", "/settings");
   });
+
+  it("AppLink keeps default browser behavior for modified clicks", () => {
+    const pushState = vi.spyOn(window.history, "pushState");
+
+    render(
+      <AppLink href="/settings" aria-label="Settings">
+        Settings
+      </AppLink>,
+    );
+
+    fireEvent.click(screen.getByRole("link", { name: "Settings" }), {
+      metaKey: true,
+    });
+    expect(pushState).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("link", { name: "Settings" }), {
+      ctrlKey: true,
+    });
+    expect(pushState).not.toHaveBeenCalled();
+  });
 });

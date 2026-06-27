@@ -21,6 +21,7 @@ export default defineConfig({
         "src/vite-env.d.ts",
         "src/i18n/locales/**",
         "src/types.ts",
+        "src/auth/types.ts",
         "src/shared-contract.d.ts",
       ],
       thresholds: {
