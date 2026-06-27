@@ -78,10 +78,15 @@ def _serialize_user(user: User, identities: list[UserIdentity]) -> AdminUserItem
 
 @users_router.get("", response_model=AdminUserListResponse)
 async def list_users(
+    limit: int | None = Query(default=None, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_admin),
 ) -> AdminUserListResponse:
-    result = await db.execute(select(User).order_by(User.created_at.desc()))
+    stmt = select(User).order_by(User.created_at.desc())
+    if limit is not None:
+        stmt = stmt.offset(offset).limit(limit)
+    result = await db.execute(stmt)
     users = list(result.scalars().all())
     if not users:
         return AdminUserListResponse(users=[])

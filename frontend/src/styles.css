@@ -45,7 +45,7 @@
   --surface-elevated: var(--panel-bg);
   --surface-hover: var(--color-gray-75);
   --surface-muted: var(--panel-bg-subtle);
-  --input-bg: var(--panel-bg-subtle);
+  --input-bg: var(--panel-bg);
 
   /* ── Semantic: text ── */
   --text: var(--color-black);
@@ -88,7 +88,7 @@
 
   /* ── Semantic: document viewer (dark stage) ── */
   --viewer-bg: var(--color-viewer-bg);
-  --viewer-panel: var(--alpha-white-96);
+  --viewer-panel: var(--color-white);
   --viewer-toolbar: var(--alpha-viewer-toolbar);
   --viewer-text: var(--color-viewer-text);
   --viewer-link: var(--color-blue-300);
@@ -829,11 +829,11 @@ button {
 }
 
 .message.user .message-content {
-  background: var(--surface-muted);
+  background: var(--panel-bg);
   border: none;
   box-shadow: var(--panel-shadow);
   padding: 12px 18px;
-  border-radius: var(--radius-lg);
+  border-radius: var(--panel-radius);
   max-width: 85%;
 }
 
@@ -1557,7 +1557,7 @@ button {
   position: relative;
   z-index: 2;
   background: var(--panel-bg);
-  border-radius: var(--radius-xl);
+  border-radius: var(--panel-radius);
   padding: 6px 6px 6px 20px;
   border: none;
   box-shadow: var(--panel-shadow);
@@ -1667,7 +1667,7 @@ button {
   gap: 8px;
   padding: 6px 14px;
   border-radius: var(--radius-full);
-  background: var(--surface-muted);
+  background: var(--panel-bg);
   border: none;
   font-size: 0.8rem;
   color: var(--muted);
@@ -1933,7 +1933,25 @@ button {
 }
 
 .subpage-app .top-bar.subpage-top-bar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
   border-radius: var(--panel-radius);
+}
+
+.subpage-top-bar-start,
+.subpage-top-bar-end {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.subpage-top-bar-start {
+  justify-self: start;
+}
+
+.subpage-top-bar-end {
+  justify-self: end;
 }
 
 .subpage-top-bar .top-bar-title {
@@ -1942,15 +1960,25 @@ button {
   font-weight: 500;
   line-height: 1.2;
   min-width: 0;
+  max-width: min(240px, 52vw);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  text-align: center;
+  justify-self: center;
 }
 
 .subpage-top-bar-back {
   text-decoration: none;
   color: inherit;
   flex-shrink: 0;
+}
+
+.settings-search.subpage-top-bar-search {
+  width: min(200px, 28vw);
+  max-width: min(200px, 28vw);
+  flex: 0 1 auto;
+  min-width: 120px;
 }
 
 .subpage-content {
@@ -1970,18 +1998,13 @@ button {
 .subpage-app--with-nav .subpage-main {
   flex: 1;
   min-width: 0;
-  margin-top: calc(-1 * var(--app-padding));
-  padding-top: 0;
+  min-height: 0;
   overflow-x: hidden;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
-  display: flex;
-  flex-direction: column;
 }
 
 .subpage-app--with-nav .subpage-main > .subpage-content.settings-page {
-  flex: 1 0 auto;
-  min-height: min-content;
   overflow: visible;
 }
 
@@ -1990,27 +2013,14 @@ button {
   box-sizing: border-box;
 }
 
-.subpage-app--with-nav .settings-page {
-  flex: 1 0 auto;
-  min-height: min-content;
-  display: flex;
-  flex-direction: column;
-}
-
 .subpage-app--with-nav .settings-page-main {
   flex: 1 0 auto;
   min-height: min-content;
 }
 
-.subpage-app--with-nav .settings-page--admin .settings-page-toolbar {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  background: var(--bg-base);
-}
-
 .subpage-app--with-nav .settings-page-nav {
   margin-top: var(--app-padding);
+  margin-bottom: var(--page-inset-bottom);
 }
 
 .subpage-app .subpage-main:has(.settings-page-footer-slot) > .subpage-content {
@@ -2019,12 +2029,12 @@ button {
   overflow: hidden;
 }
 
-.subpage-app--with-nav {
-  --sidebar-bg: var(--color-white);
-  --panel-bg: var(--color-white);
-  --panel-bg-subtle: var(--color-white);
-  --surface-muted: var(--color-white);
-  --surface-elevated: var(--color-white);
+.app.subpage-app.subpage-app--with-nav {
+  gap: 0;
+  padding: max(var(--app-padding), var(--safe-top))
+    max(var(--app-padding), var(--safe-right))
+    0
+    max(var(--app-padding), var(--safe-left));
 }
 
 .subpage-app--with-nav .subpage-body {
@@ -2177,7 +2187,6 @@ button {
   min-height: 0;
 }
 
-.settings-page--admin .settings-page-toolbar,
 .settings-page--admin .settings-page-body {
   width: 100%;
   max-width: calc(var(--content-max) + 2 * var(--chat-inline-padding));
@@ -2188,14 +2197,23 @@ button {
   min-height: 0;
 }
 
-.settings-page-toolbar {
-  flex-shrink: 0;
-  padding: 16px var(--chat-inline-padding) 0;
+.settings-search-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
-.settings-page-search {
-  width: 100%;
-  max-width: 420px;
+.settings-search-section + .settings-search-section,
+.settings-search-section + .settings-page-groups,
+.settings-page-groups + .settings-search-section {
+  margin-top: 20px;
+}
+
+.settings-search-section-title {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text);
 }
 
 .settings-page-status {
@@ -2216,13 +2234,12 @@ button {
 }
 
 .settings-page--admin .settings-page-body {
-  padding-top: 20px;
+  padding-top: 16px;
 }
 
 .subpage-app--with-nav .settings-page--admin .settings-page-body {
-  flex: 1 0 auto;
-  min-height: min-content;
   overflow: visible;
+  padding-bottom: calc(24px + var(--page-inset-bottom) + 8px);
 }
 
 .settings-page-groups {
@@ -2473,14 +2490,14 @@ button {
   font-size: 0.9rem;
   border: 1px dashed var(--line);
   border-radius: var(--panel-radius);
-  background: var(--surface-muted);
+  background: var(--panel-bg);
 }
 
 .settings-group {
   min-width: 0;
   border: none;
   border-radius: var(--panel-radius);
-  background: var(--surface-muted);
+  background: var(--panel-bg);
   overflow: hidden;
   box-shadow: var(--panel-shadow);
 }
@@ -2868,7 +2885,7 @@ button {
   margin-top: 12px;
   padding: 12px 16px;
   border-radius: var(--radius-md);
-  background: var(--surface-muted);
+  background: var(--panel-bg);
   border: none;
   box-shadow: var(--panel-shadow);
   display: flex;
@@ -3315,6 +3332,11 @@ button {
     padding-top: 12px;
   }
 
+  .app.subpage-app.subpage-app--with-nav {
+    padding: max(12px, var(--safe-top)) max(12px, var(--safe-right)) 0
+      max(12px, var(--safe-left));
+  }
+
   .subpage-app--with-nav > .top-bar-slot {
     margin-bottom: 0;
   }
@@ -3323,19 +3345,17 @@ button {
     margin-top: 0;
   }
 
-  .subpage-app--with-nav .subpage-main {
-    margin-top: -12px;
-    padding-top: 0;
-    overflow-x: hidden;
-    overflow-y: auto;
-  }
-
   .subpage-app--with-nav .subpage-main > .subpage-content.settings-page--admin {
     padding-top: 12px;
   }
 
+  .subpage-app--with-nav .settings-page--admin .settings-page-body {
+    padding-bottom: calc(24px + max(12px, var(--safe-bottom)) + 8px);
+  }
+
   .subpage-app--with-nav .settings-page-nav {
     margin-top: 12px;
+    margin-bottom: max(12px, var(--safe-bottom));
   }
 
   .subpage-app .top-bar.subpage-top-bar {
@@ -3371,9 +3391,15 @@ button {
     border-bottom: 1px solid var(--line);
   }
 
-  .settings-page--admin .settings-page-toolbar,
   .settings-page--admin .settings-page-body {
     max-width: none;
+  }
+
+  .settings-search.subpage-top-bar-search {
+    flex: 0 1 auto;
+    width: min(180px, 42vw);
+    max-width: min(180px, 42vw);
+    min-width: 100px;
   }
 
   .subpage-app .settings-page-main:has(.settings-page-footer-slot) .settings-page-body {
@@ -3407,10 +3433,6 @@ button {
     width: auto;
     white-space: nowrap;
     padding: 8px 14px;
-  }
-
-  .settings-page-toolbar {
-    padding: 12px max(14px, var(--safe-left)) 0 max(14px, var(--safe-right));
   }
 
   .settings-page-body {
@@ -3858,6 +3880,10 @@ button {
   gap: 12px;
 }
 
+.users-admin-section[hidden] {
+  display: none;
+}
+
 .users-admin-head {
   display: flex;
   align-items: center;
@@ -3882,7 +3908,7 @@ button {
   justify-content: space-between;
   gap: 16px;
   border: none;
-  border-radius: var(--radius-lg);
+  border-radius: var(--panel-radius);
   padding: 14px 16px;
   background: var(--sidebar-bg);
   box-shadow: var(--panel-shadow-elevated);
@@ -3958,6 +3984,10 @@ button {
   gap: 12px;
 }
 
+.audit-log-section[hidden] {
+  display: none;
+}
+
 .audit-log-list {
   display: flex;
   flex-direction: column;
@@ -3970,7 +4000,7 @@ button {
   gap: 12px;
   padding: 14px 16px;
   border: none;
-  border-radius: var(--radius-lg);
+  border-radius: var(--panel-radius);
   background: var(--sidebar-bg);
   box-shadow: var(--panel-shadow-elevated);
 }

@@ -1,10 +1,23 @@
+import logging
 from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+logger = logging.getLogger(__name__)
+
+_DEFAULT_JWT_SECRET = "change-me-in-production"
+_DEFAULT_MINIO_ACCESS_KEY = "minioadmin"
+_DEFAULT_MINIO_SECRET_KEY = "minioadmin"
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    app_env: str = "development"
+    cors_origins: str = "http://localhost:3000,http://localhost:5173"
+    max_upload_bytes: int = 100 * 1024 * 1024
+    auth_login_rate_limit_attempts: int = 10
+    auth_login_rate_limit_window_seconds: int = 300
 
     llm_api_base_url: str = "https://api.deepseek.com/v1"
     llm_api_key: str = ""
@@ -54,13 +67,13 @@ class Settings(BaseSettings):
     elasticsearch_bulk_batch_size: int = 500
 
     minio_endpoint: str = "localhost:9000"
-    minio_access_key: str = "minioadmin"
-    minio_secret_key: str = "minioadmin"
+    minio_access_key: str = _DEFAULT_MINIO_ACCESS_KEY
+    minio_secret_key: str = _DEFAULT_MINIO_SECRET_KEY
     minio_bucket: str = "manuals"
     minio_secure: bool = False
 
     auth_disabled: bool = False
-    jwt_secret: str = "change-me-in-production"
+    jwt_secret: str = _DEFAULT_JWT_SECRET
     jwt_access_ttl_minutes: int = 30
     jwt_refresh_ttl_days: int = 14
     bootstrap_admin_email: str = ""
@@ -142,6 +155,10 @@ class Settings(BaseSettings):
     embed_skip_table_when_answer_has_markdown: bool = True
     embed_skip_table_lookback: int = 2
 
+    def cors_origin_list(self) -> list[str]:
+        origins = [item.strip() for item in self.cors_origins.split(",") if item.strip()]
+        return origins or ["http://localhost:3000"]
+
 
 @lru_cache
 def _env_settings() -> Settings:
@@ -152,3 +169,24 @@ def get_settings() -> Settings:
     from app.services.runtime_settings import apply_overrides
 
     return apply_overrides(_env_settings())
+
+
+def validate_settings_for_env(settings: Settings) -> None:
+    if settings.app_env.lower() != "production":
+        return
+
+    errors: list[str] = []
+    if settings.auth_disabled:
+        errors.append("AUTH_DISABLED must be false in production")
+    if settings.jwt_secret == _DEFAULT_JWT_SECRET:
+        errors.append("JWT_SECRET must be set to a strong value in production")
+    if (
+        settings.minio_access_key == _DEFAULT_MINIO_ACCESS_KEY
+        and settings.minio_secret_key == _DEFAULT_MINIO_SECRET_KEY
+    ):
+        errors.append("MINIO_ACCESS_KEY and MINIO_SECRET_KEY must be changed in production")
+
+    if errors:
+        raise RuntimeError("Invalid production configuration: " + "; ".join(errors))
+
+    logger.info("Production configuration validated")

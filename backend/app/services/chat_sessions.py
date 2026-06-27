@@ -3,10 +3,31 @@ from __future__ import annotations
 import uuid
 
 from fastapi import HTTPException
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Session, User
+from app.db.models import Message, Session, User
 from app.services.auth_service import resolve_chat_doc_ids
+
+CHAT_HISTORY_MAX_TURNS = 6
+CHAT_HISTORY_MAX_MESSAGES = CHAT_HISTORY_MAX_TURNS * 2
+
+
+async def load_recent_chat_history(
+    db: AsyncSession,
+    session_id: uuid.UUID,
+    *,
+    max_messages: int = CHAT_HISTORY_MAX_MESSAGES,
+) -> list[dict[str, str]]:
+    result = await db.execute(
+        select(Message)
+        .where(Message.session_id == session_id)
+        .order_by(Message.created_at.desc())
+        .limit(max_messages)
+    )
+    messages = list(result.scalars().all())
+    messages.reverse()
+    return [{"role": message.role, "content": message.content} for message in messages]
 
 
 async def get_or_create_chat_session(

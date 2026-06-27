@@ -14,16 +14,17 @@ export default function SubpageTopBar({ title, children }: SubpageTopBarProps) {
   return (
     <div className="top-bar-slot">
       <header className="top-bar subpage-top-bar">
-        <AppLink
-          href="/"
-          className="icon-btn top-bar-menu subpage-top-bar-back"
-          aria-label={t("settings.back")}
-        >
-          <ChevronLeftIcon />
-        </AppLink>
+        <div className="subpage-top-bar-start">
+          <AppLink
+            href="/"
+            className="icon-btn top-bar-menu subpage-top-bar-back"
+            aria-label={t("settings.back")}
+          >
+            <ChevronLeftIcon />
+          </AppLink>
+        </div>
         <h1 className="top-bar-title">{title}</h1>
-        <div className="top-bar-spacer" aria-hidden="true" />
-        {children}
+        <div className="subpage-top-bar-end">{children}</div>
       </header>
     </div>
   );

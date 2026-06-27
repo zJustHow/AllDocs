@@ -235,7 +235,8 @@ const en = {
     secretPlaceholder: "Enter a new key; leave blank to keep current",
     secretHint: "Currently set: {masked}",
     searchPlaceholder: "Search settings",
-    noResults: "No matching settings",
+    searchPlaceholderAdmin: "Search settings, users, logs",
+    noResults: "No matching results",
     groups: {
       llm: "LLM",
       ingest_caption: "Ingest captions",

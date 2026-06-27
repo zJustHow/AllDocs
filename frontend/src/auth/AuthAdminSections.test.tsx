@@ -60,7 +60,23 @@ const sampleAuditLogs = [
   },
 ];
 
-const emptySettings = { groups: [] };
+const sampleSettings = {
+  groups: [
+    {
+      id: "llm",
+      fields: [
+        {
+          key: "llm_model",
+          type: "string" as const,
+          secret: false,
+          default: "gpt-4",
+          overridden: false,
+          value: "gpt-4",
+        },
+      ],
+    },
+  ],
+};
 
 function renderWithI18n(node: ReactNode) {
   return render(<I18nProvider>{node}</I18nProvider>);
@@ -109,9 +125,19 @@ describe("AuditLogAdminSection", () => {
 describe("SettingsPage admin tabs", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    fetchSettings.mockResolvedValue(emptySettings);
+    fetchSettings.mockResolvedValue(sampleSettings);
+    patchSettings.mockResolvedValue(sampleSettings);
     fetchAdminUsers.mockResolvedValue(sampleUsers);
     fetchAdminAuditLogs.mockResolvedValue(sampleAuditLogs);
+  });
+
+  it("does not fetch admin data on the system tab by default", async () => {
+    renderWithI18n(<SettingsPage isAdmin />);
+
+    await screen.findByRole("heading", { name: /Management|管理/i });
+    expect(fetchSettings).toHaveBeenCalledTimes(1);
+    expect(fetchAdminUsers).not.toHaveBeenCalled();
+    expect(fetchAdminAuditLogs).not.toHaveBeenCalled();
   });
 
   it("shows users and audit tabs for admins", async () => {
@@ -119,13 +145,45 @@ describe("SettingsPage admin tabs", () => {
     renderWithI18n(<SettingsPage isAdmin />);
 
     await screen.findByRole("heading", { name: /Management|管理/i });
+    expect(screen.getByRole("heading", { level: 3, name: /系统配置|System/i })).toBeVisible();
     expect(screen.getByRole("tab", { name: /用户管理|Users/i })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: /审计日志|Audit log/i })).toBeInTheDocument();
 
     await user.click(screen.getByRole("tab", { name: /用户管理|Users/i }));
-    expect(await screen.findByText("Alice")).toBeInTheDocument();
+    expect(await screen.findByText("Alice")).toBeVisible();
+    expect(screen.queryByText(/更新用户|Update user/i)).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("tab", { name: /审计日志|Audit log/i }));
-    expect(await screen.findByText(/更新用户|Update user/i)).toBeInTheDocument();
+    expect(await screen.findByText(/更新用户|Update user/i)).toBeVisible();
+    expect(screen.queryByText("Alice")).not.toBeInTheDocument();
+  });
+
+  it("searches across system settings, users, and audit logs from the top bar", async () => {
+    const user = userEvent.setup();
+    renderWithI18n(<SettingsPage isAdmin />);
+
+    await screen.findByRole("heading", { name: /Management|管理/i });
+
+    await user.type(screen.getByRole("searchbox"), "gpt-4");
+    expect(await screen.findByLabelText(/模型|Model/i)).toBeInTheDocument();
+    expect(screen.queryByText("Alice")).not.toBeInTheDocument();
+
+    await user.clear(screen.getByRole("searchbox"));
+    await user.type(screen.getByRole("searchbox"), "alice@test.com");
+    expect(await screen.findByText("Alice")).toBeInTheDocument();
+    expect(screen.queryByLabelText(/模型|Model/i)).not.toBeInTheDocument();
+  });
+
+  it("clears search when switching tabs", async () => {
+    const user = userEvent.setup();
+    renderWithI18n(<SettingsPage isAdmin />);
+
+    await screen.findByRole("heading", { name: /Management|管理/i });
+    await user.type(screen.getByRole("searchbox"), "alice@test.com");
+    expect(await screen.findByText("Alice")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("tab", { name: /用户管理|Users/i }));
+    expect(screen.getByRole("searchbox")).toHaveValue("");
+    expect(screen.queryByLabelText(/模型|Model/i)).not.toBeInTheDocument();
   });
 });

@@ -1,4 +1,7 @@
 import {
+  lazy,
+  Suspense,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -6,8 +9,6 @@ import {
   type CSSProperties,
 } from "react";
 import Composer from "./Composer";
-import DocumentViewer from "./DocumentViewer";
-import LoginPage from "./auth/LoginPage";
 import AuthCallback from "./auth/AuthCallback";
 import { useAuth } from "./auth/AuthContext";
 import { useDocuments } from "./hooks/useDocuments";
@@ -38,10 +39,22 @@ import { useConfirmDialog } from "./useConfirmDialog";
 import { PANEL_CLOSE_MS } from "./layout";
 
 import { hasStoredSession } from "./auth/session";
-import ProfilePage from "./ProfilePage";
-import SettingsPage from "./SettingsPage";
 import { AppLink } from "./AppLink";
 import { navigate, useAppPath } from "./routing";
+
+const LoginPage = lazy(() => import("./auth/LoginPage"));
+const ProfilePage = lazy(() => import("./ProfilePage"));
+const SettingsPage = lazy(() => import("./SettingsPage"));
+const DocumentViewer = lazy(() => import("./DocumentViewer"));
+
+function RouteFallback() {
+  return (
+    <div className="auth-page">
+      <div className="auth-loading">…</div>
+    </div>
+  );
+}
+
 const VIEWER_SCROLLBAR_SUPPRESSION_MS = PANEL_CLOSE_MS + 120;
 
 export default function App() {
@@ -61,31 +74,47 @@ export default function App() {
 
   if (bootstrapping) {
     if (path === "/profile" && hasStoredSession()) {
-      return <ProfilePage onLogout={logout} />;
+      return (
+        <Suspense fallback={<RouteFallback />}>
+          <ProfilePage onLogout={logout} />
+        </Suspense>
+      );
     }
     if (path === "/settings" && hasStoredSession()) {
-      return <SettingsPage isAdmin={false} />;
+      return (
+        <Suspense fallback={<RouteFallback />}>
+          <SettingsPage isAdmin={false} />
+        </Suspense>
+      );
     }
-    return (
-      <div className="auth-page">
-        <div className="auth-loading">{/* i18n not required for bootstrap */}…</div>
-      </div>
-    );
+    return <RouteFallback />;
   }
 
   if (!user) {
-    return <LoginPage />;
+    return (
+      <Suspense fallback={<RouteFallback />}>
+        <LoginPage />
+      </Suspense>
+    );
   }
 
   if (path === "/profile") {
-    return <ProfilePage onLogout={logout} />;
+    return (
+      <Suspense fallback={<RouteFallback />}>
+        <ProfilePage onLogout={logout} />
+      </Suspense>
+    );
   }
 
   if (path === "/settings") {
     if (!isAdmin) {
       return null;
     }
-    return <SettingsPage isAdmin />;
+    return (
+      <Suspense fallback={<RouteFallback />}>
+        <SettingsPage isAdmin />
+      </Suspense>
+    );
   }
 
   return <MainApp isAdmin={isAdmin} />;
@@ -144,10 +173,10 @@ function MainApp({ isAdmin }: MainAppProps) {
   const viewerSlotRef = useRef<HTMLDivElement>(null);
   const [viewerExitWidth, setViewerExitWidth] = useState<number | null>(null);
 
-  const hideScrollbarsForViewerTransition = () => {
+  const hideScrollbarsForViewerTransition = useCallback(() => {
     suppressChatFloatingScrollbars(VIEWER_SCROLLBAR_SUPPRESSION_MS);
     hideFloatingScrollbarsAfterLayout();
-  };
+  }, []);
 
   const closeViewerWithTransition = (immediate = false) => {
     hideScrollbarsForViewerTransition();
@@ -161,10 +190,13 @@ function MainApp({ isAdmin }: MainAppProps) {
     closeViewer(immediate);
   };
 
-  const handleOpenDocument = (target: Parameters<typeof openDocument>[0]) => {
-    openDocument(target);
-    hideScrollbarsForViewerTransition();
-  };
+  const handleOpenDocument = useCallback(
+    (target: Parameters<typeof openDocument>[0]) => {
+      openDocument(target);
+      hideScrollbarsForViewerTransition();
+    },
+    [openDocument, hideScrollbarsForViewerTransition],
+  );
 
   const {
     messages,
@@ -378,11 +410,13 @@ function MainApp({ isAdmin }: MainAppProps) {
                   : undefined
               }
             >
-              <DocumentViewer
-                key={viewerTarget.documentId}
-                target={viewerTarget}
-                onClose={() => closeViewerWithTransition()}
-              />
+              <Suspense fallback={null}>
+                <DocumentViewer
+                  key={viewerTarget.documentId}
+                  target={viewerTarget}
+                  onClose={() => closeViewerWithTransition()}
+                />
+              </Suspense>
             </div>
           );
         }

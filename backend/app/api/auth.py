@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse
 from jwt.exceptions import InvalidTokenError
 from pydantic import BaseModel, Field
@@ -30,6 +30,7 @@ from app.services.auth_service import (
 from app.services.auth_tokens import create_oauth_state, parse_oauth_state
 from app.services.email_otp_service import send_register_email_otp, verify_register_email_otp
 from app.services.otp_service import consume_phone_otp, send_phone_otp, verify_phone_otp
+from app.services.rate_limit import enforce_auth_rate_limit
 from app.services.wechat_oauth import (
     WeChatOAuthError,
     build_frontend_bind_callback_url,
@@ -153,8 +154,10 @@ async def _primary_identities(db: AsyncSession, user: User) -> tuple[str | None,
 @router.post("/register/email", response_model=TokenResponse)
 async def register_email(
     body: EmailRegisterRequest,
+    request: Request,
     db: AsyncSession = Depends(get_db),
 ) -> TokenResponse:
+    enforce_auth_rate_limit(request)
     try:
         _user, access_token, refresh_token = await register_with_email(
             db,
@@ -184,8 +187,10 @@ async def send_register_email_otp_route(
 @router.post("/register/email-otp/verify", response_model=TokenResponse)
 async def verify_register_email_otp_route(
     body: EmailOtpRegisterRequest,
+    request: Request,
     db: AsyncSession = Depends(get_db),
 ) -> TokenResponse:
+    enforce_auth_rate_limit(request)
     try:
         _user, access_token, refresh_token = await verify_register_email_otp(
             db,
@@ -203,8 +208,10 @@ async def verify_register_email_otp_route(
 @router.post("/login/email", response_model=TokenResponse)
 async def login_email(
     body: EmailLoginRequest,
+    request: Request,
     db: AsyncSession = Depends(get_db),
 ) -> TokenResponse:
+    enforce_auth_rate_limit(request)
     try:
         _user, access_token, refresh_token = await login_with_email(
             db,
@@ -233,8 +240,10 @@ async def send_otp(
 @router.post("/otp/verify", response_model=TokenResponse)
 async def verify_otp(
     body: OtpVerifyRequest,
+    request: Request,
     db: AsyncSession = Depends(get_db),
 ) -> TokenResponse:
+    enforce_auth_rate_limit(request)
     try:
         _user, access_token, refresh_token = await verify_phone_otp(
             db,

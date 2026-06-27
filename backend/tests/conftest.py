@@ -51,6 +51,7 @@ def _patched_app_lifecycle() -> Generator[None, None, None]:
         settings.auth_disabled = True
         settings.metrics_enabled = True
         settings.log_level = "INFO"
+        settings.cors_origin_list = lambda: ["http://localhost:3000"]
         mock_settings.return_value = settings
         _install_import_stubs()
         yield

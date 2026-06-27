@@ -52,6 +52,7 @@ def _auth_api_context(session_factory: async_sessionmaker[AsyncSession]) -> Gene
     settings.jwt_secret = "test-jwt-secret"
     settings.jwt_access_ttl_minutes = 30
     settings.jwt_refresh_ttl_days = 14
+    settings.cors_origin_list = lambda: ["http://localhost:3000"]
 
     with (
         patch("sqlalchemy.ext.asyncio.create_async_engine", return_value=MagicMock()),

@@ -1,8 +1,21 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { fetchAdminUsers, patchAdminUser, type AdminUserItem } from "./api";
+import { normalizeSearch, userMatchesSearch } from "../adminSearch";
 import { useI18n } from "../i18n";
 
-export default function UsersAdminSection() {
+interface UsersAdminSectionProps {
+  searchQuery?: string;
+  searchMode?: boolean;
+  hidden?: boolean;
+  onSearchMatchChange?: (hasMatches: boolean | null) => void;
+}
+
+export default function UsersAdminSection({
+  searchQuery = "",
+  searchMode = false,
+  hidden = false,
+  onSearchMatchChange,
+}: UsersAdminSectionProps) {
   const { t } = useI18n();
   const [users, setUsers] = useState<AdminUserItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -25,6 +38,30 @@ export default function UsersAdminSection() {
     void loadUsers();
   }, [loadUsers]);
 
+  const normalizedQuery = normalizeSearch(searchQuery);
+  const hasSearch = normalizedQuery.length > 0;
+
+  const filteredUsers = useMemo(() => {
+    if (!hasSearch) return users;
+    const labels = {
+      roleUser: t("account.roleUser"),
+      roleAdmin: t("account.roleAdmin"),
+      bound: t("account.bound"),
+      unbound: t("account.unbound"),
+      active: t("adminUsers.active"),
+    };
+    return users.filter((item) => userMatchesSearch(item, normalizedQuery, labels));
+  }, [users, hasSearch, normalizedQuery, t]);
+
+  useEffect(() => {
+    if (!searchMode || !onSearchMatchChange) return;
+    if (loading) {
+      onSearchMatchChange(null);
+      return;
+    }
+    onSearchMatchChange(filteredUsers.length > 0);
+  }, [searchMode, loading, filteredUsers.length, onSearchMatchChange]);
+
   const handlePatch = async (
     userId: string,
     patch: Partial<Pick<AdminUserItem, "role" | "is_active" | "display_name">>,
@@ -41,21 +78,32 @@ export default function UsersAdminSection() {
     }
   };
 
+  if (searchMode && hasSearch && !loading && filteredUsers.length === 0 && !error) {
+    return null;
+  }
+
   return (
-    <section className="users-admin-section">
-      <div className="users-admin-head">
-        <h3>{t("adminUsers.title")}</h3>
-      </div>
+    <section
+      className={`users-admin-section${searchMode ? " settings-search-section" : ""}`}
+      hidden={hidden}
+    >
+      {searchMode ? (
+        <h3 className="settings-search-section-title">{t("adminUsers.title")}</h3>
+      ) : (
+        <div className="users-admin-head">
+          <h3>{t("adminUsers.title")}</h3>
+        </div>
+      )}
 
       {loading ? <p className="settings-panel-status">{t("adminUsers.loading")}</p> : null}
       {error ? <div className="banner error settings-panel-banner">{error}</div> : null}
 
-      {!loading && users.length === 0 ? (
+      {!loading && filteredUsers.length === 0 ? (
         <p className="settings-empty">{t("adminUsers.empty")}</p>
       ) : null}
 
       <div className="users-admin-list">
-        {users.map((item) => (
+        {filteredUsers.map((item) => (
           <article key={item.id} className="users-admin-item">
             <div className="users-admin-item-main">
               <strong>{item.display_name ?? item.email ?? item.phone ?? item.id}</strong>

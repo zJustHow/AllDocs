@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth_deps import get_current_user, get_current_user_flexible, require_admin
 from app.api.schemas import DocumentChatEnabledRequest, DocumentResponse
+from app.config import get_settings
 from app.db.models import Document, DocumentStatus, User
 from app.db.session import get_db
 from app.services.audit_service import record_admin_audit
@@ -46,6 +47,25 @@ def _document_media_type(document: Document) -> str:
     return resolve_content_type(document.name)
 
 
+def _reject_oversized_upload(file: UploadFile, max_bytes: int) -> None:
+    if file.size is not None and file.size > max_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File exceeds maximum upload size of {max_bytes // (1024 * 1024)} MB",
+        )
+
+
+async def _read_upload_with_limit(file: UploadFile, max_bytes: int) -> bytes:
+    _reject_oversized_upload(file, max_bytes)
+    data = await file.read()
+    if len(data) > max_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File exceeds maximum upload size of {max_bytes // (1024 * 1024)} MB",
+        )
+    return data
+
+
 @router.post("", response_model=DocumentResponse)
 async def upload_document(
     file: UploadFile = File(...),
@@ -60,7 +80,8 @@ async def upload_document(
             detail=f"Unsupported file type. Supported formats: {supported_formats_label()}",
         )
 
-    data = await file.read()
+    max_bytes = get_settings().max_upload_bytes
+    data = await _read_upload_with_limit(file, max_bytes)
     if not data:
         raise HTTPException(status_code=400, detail="Empty file")
 
@@ -117,10 +138,15 @@ async def upload_document(
 
 @router.get("", response_model=list[DocumentResponse])
 async def list_documents(
+    limit: int | None = Query(default=None, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_user),
 ) -> list[DocumentResponse]:
-    result = await db.execute(select(Document).order_by(Document.created_at.desc()))
+    stmt = select(Document).order_by(Document.created_at.desc())
+    if limit is not None:
+        stmt = stmt.offset(offset).limit(limit)
+    result = await db.execute(stmt)
     return [DocumentResponse.model_validate(item) for item in result.scalars().all()]
 
 

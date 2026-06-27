@@ -235,7 +235,8 @@ const zh = {
     secretPlaceholder: "输入新密钥；留空则保持不变",
     secretHint: "当前已设置：{masked}",
     searchPlaceholder: "搜索设置",
-    noResults: "没有匹配的设置项",
+    searchPlaceholderAdmin: "搜索配置、用户、日志",
+    noResults: "没有匹配的内容",
     groups: {
       llm: "LLM",
       ingest_caption: "入库图片描述",

@@ -6,16 +6,15 @@ import uuid
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from jwt.exceptions import InvalidTokenError
-from sqlalchemy import select
 
 from app.api.schemas import ChunkFilter
 from app.config import get_settings
-from app.db.models import Message, User
+from app.db.models import User
 from app.db.session import async_session_factory
 from app.services.agent.answer_flow import persist_turn, stream_agent_answer
 from app.services.auth_service import get_user_by_id
 from app.services.auth_tokens import decode_access_token
-from app.services.chat_sessions import get_or_create_chat_session
+from app.services.chat_sessions import get_or_create_chat_session, load_recent_chat_history
 from app.services.citations_util import strip_inline_citation_markers
 from app.services.deps import get_agent_service
 from app.services.rag import detect_language
@@ -179,13 +178,7 @@ async def voice_websocket(websocket: WebSocket) -> None:
                 )
                 await db.commit()
                 session_id = session.id
-                history_result = await db.execute(
-                    select(Message).where(Message.session_id == session_id).order_by(Message.created_at)
-                )
-                history = [
-                    {"role": message.role, "content": message.content}
-                    for message in history_result.scalars().all()
-                ]
+                history = await load_recent_chat_history(db, session_id)
 
             async def on_agent_step(event: dict) -> None:
                 await _send_json(websocket, event)

@@ -38,11 +38,30 @@ def test_upload_rejects_invalid_files_before_storage(
     file = UploadFile(filename=filename, file=BytesIO(content))
     admin = SimpleNamespace(id=uuid.uuid4())
 
-    with pytest.raises(HTTPException) as exc_info:
+    with (
+        patch("app.api.documents.get_settings") as get_settings,
+        pytest.raises(HTTPException) as exc_info,
+    ):
+        get_settings.return_value = SimpleNamespace(max_upload_bytes=1024)
         asyncio.run(upload_document(file=file, db=AsyncMock(), admin=admin))
 
     assert exc_info.value.status_code == 400
     assert detail in str(exc_info.value.detail)
+
+
+def test_upload_rejects_oversized_files() -> None:
+    file = UploadFile(filename="manual.pdf", file=BytesIO(b"x" * 2048))
+    admin = SimpleNamespace(id=uuid.uuid4())
+
+    with (
+        patch("app.api.documents.get_settings") as get_settings,
+        pytest.raises(HTTPException) as exc_info,
+    ):
+        get_settings.return_value = SimpleNamespace(max_upload_bytes=1024)
+        asyncio.run(upload_document(file=file, db=AsyncMock(), admin=admin))
+
+    assert exc_info.value.status_code == 413
+    assert "maximum upload size" in str(exc_info.value.detail).lower()
 
 
 def test_preview_rejects_unsupported_document_types() -> None:

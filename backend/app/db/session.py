@@ -146,6 +146,30 @@ def _ensure_indexes(sync_conn) -> None:
             "CREATE INDEX IF NOT EXISTS ix_sessions_doc_ids "
             "ON sessions USING gin (doc_ids)",
         ),
+        (
+            "sessions",
+            "ix_sessions_user_id",
+            "CREATE INDEX IF NOT EXISTS ix_sessions_user_id "
+            "ON sessions (user_id)",
+        ),
+        (
+            "messages",
+            "ix_messages_session_id_created_at",
+            "CREATE INDEX IF NOT EXISTS ix_messages_session_id_created_at "
+            "ON messages (session_id, created_at)",
+        ),
+        (
+            "documents",
+            "ix_documents_status_chat_enabled",
+            "CREATE INDEX IF NOT EXISTS ix_documents_status_chat_enabled "
+            "ON documents (status, chat_enabled)",
+        ),
+        (
+            "refresh_tokens",
+            "ix_refresh_tokens_token_hash",
+            "CREATE INDEX IF NOT EXISTS ix_refresh_tokens_token_hash "
+            "ON refresh_tokens (token_hash)",
+        ),
     ]
     for table_name, index_name, ddl in index_statements:
         if table_name not in table_names:

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   fetchSettings,
   patchSettings,
@@ -6,11 +6,19 @@ import {
   type SettingsGroup,
   type SettingsPayload,
 } from "./api";
-import UsersAdminSection from "./auth/UsersAdminSection";
-import AuditLogAdminSection from "./auth/AuditLogAdminSection";
+import {
+  normalizeSearch,
+  settingsFieldMatchesSearch,
+} from "./adminSearch";
 import { ChevronDownIcon } from "./icons";
+import { useDebouncedValue } from "./hooks/useDebouncedValue";
 import { useI18n } from "./i18n";
 import SubpageTopBar from "./SubpageTopBar";
+
+const SEARCH_DEBOUNCE_MS = 200;
+
+const UsersAdminSection = lazy(() => import("./auth/UsersAdminSection"));
+const AuditLogAdminSection = lazy(() => import("./auth/AuditLogAdminSection"));
 
 type DraftValue = string | number | boolean | null | undefined;
 
@@ -25,24 +33,6 @@ function readDraftValue(
   if (field.key in drafts) return drafts[field.key];
   if (field.secret) return "";
   return field.value ?? field.default;
-}
-
-function normalizeSearch(query: string): string {
-  return query.trim().toLowerCase();
-}
-
-function fieldMatchesSearch(
-  field: SettingField,
-  normalizedQuery: string,
-  label: string,
-  groupLabel: string,
-): boolean {
-  if (!normalizedQuery) return true;
-  return (
-    label.toLowerCase().includes(normalizedQuery) ||
-    groupLabel.toLowerCase().includes(normalizedQuery) ||
-    field.key.toLowerCase().includes(normalizedQuery)
-  );
 }
 
 interface SettingsFieldRowProps {
@@ -160,6 +150,107 @@ function buildPatchValue(
   return draft as string | number | boolean;
 }
 
+interface SettingsGroupsProps {
+  groups: Array<SettingsGroup & { visibleFields: SettingField[] }>;
+  drafts: Record<string, DraftValue>;
+  isGroupExpanded: (groupId: string) => boolean;
+  toggleGroup: (groupId: string) => void;
+  resetGroup: (group: SettingsGroup) => void;
+  setDraft: (key: string, value: DraftValue) => void;
+  searchMode?: boolean;
+  showSectionTitle?: boolean;
+}
+
+function SettingsGroups({
+  groups,
+  drafts,
+  isGroupExpanded,
+  toggleGroup,
+  resetGroup,
+  setDraft,
+  searchMode = false,
+  showSectionTitle = false,
+}: SettingsGroupsProps) {
+  const { t } = useI18n();
+
+  if (groups.length === 0) return null;
+
+  const content = (
+    <div className="settings-page-groups">
+      {groups.map((group) => {
+        const expanded = isGroupExpanded(group.id);
+        const groupLabel = t(`settings.groups.${group.id}`);
+        return (
+          <section
+            key={group.id}
+            className={`settings-group ${expanded ? "expanded" : "collapsed"}`}
+          >
+            <div className="settings-group-header">
+              <button
+                type="button"
+                className="settings-group-toggle"
+                onClick={() => toggleGroup(group.id)}
+                aria-expanded={expanded}
+                aria-controls={`settings-group-${group.id}`}
+              >
+                <span className="settings-group-chevron" aria-hidden="true">
+                  <ChevronDownIcon />
+                </span>
+                <span className="settings-group-title">{groupLabel}</span>
+              </button>
+              <button
+                type="button"
+                className="settings-reset-btn settings-group-reset-btn"
+                onClick={() => resetGroup(group)}
+                disabled={!canResetGroup(group, drafts)}
+                aria-label={t("settings.resetSection", { section: groupLabel })}
+              >
+                {t("settings.reset")}
+              </button>
+              <span className="settings-group-count">
+                {group.visibleFields.length}
+              </span>
+            </div>
+
+            {expanded ? (
+              <div id={`settings-group-${group.id}`} className="settings-fields">
+                {group.visibleFields.map((field) => (
+                  <SettingsFieldRow
+                    key={field.key}
+                    field={field}
+                    label={t(`settings.fields.${field.key}`)}
+                    draft={readDraftValue(field, drafts)}
+                    onDraftChange={setDraft}
+                  />
+                ))}
+              </div>
+            ) : null}
+          </section>
+        );
+      })}
+    </div>
+  );
+
+  if (!searchMode) {
+    if (!showSectionTitle) return content;
+    return (
+      <section className="users-admin-section">
+        <div className="users-admin-head">
+          <h3>{t("settings.systemTab")}</h3>
+        </div>
+        {content}
+      </section>
+    );
+  }
+
+  return (
+    <section className="settings-search-section">
+      <h3 className="settings-search-section-title">{t("settings.systemTab")}</h3>
+      {content}
+    </section>
+  );
+}
+
 export default function SettingsPage({ isAdmin = false }: SettingsPageProps) {
   const { t } = useI18n();
   const [settingsTab, setSettingsTab] = useState<"system" | "users" | "audit">("system");
@@ -170,6 +261,9 @@ export default function SettingsPage({ isAdmin = false }: SettingsPageProps) {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const debouncedSearchQuery = useDebouncedValue(searchQuery, SEARCH_DEBOUNCE_MS);
+  const [userSearchMatch, setUserSearchMatch] = useState<boolean | null>(null);
+  const [auditSearchMatch, setAuditSearchMatch] = useState<boolean | null>(null);
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(
     () => new Set(),
   );
@@ -218,12 +312,12 @@ export default function SettingsPage({ isAdmin = false }: SettingsPageProps) {
   const filteredGroups = useMemo(() => {
     if (!payload)
       return [] as Array<SettingsGroup & { visibleFields: SettingField[] }>;
-    const query = normalizeSearch(searchQuery);
+    const query = normalizeSearch(debouncedSearchQuery);
     return payload.groups
       .map((group) => {
         const groupLabel = t(`settings.groups.${group.id}`);
         const visibleFields = group.fields.filter((field) =>
-          fieldMatchesSearch(
+          settingsFieldMatchesSearch(
             field,
             query,
             t(`settings.fields.${field.key}`),
@@ -233,9 +327,12 @@ export default function SettingsPage({ isAdmin = false }: SettingsPageProps) {
         return { ...group, visibleFields };
       })
       .filter((group) => group.visibleFields.length > 0);
-  }, [payload, searchQuery, t]);
+  }, [payload, debouncedSearchQuery, t]);
 
-  const hasSearch = normalizeSearch(searchQuery).length > 0;
+  const hasSearch = normalizeSearch(debouncedSearchQuery).length > 0;
+  const showUnifiedSearch = isAdmin && hasSearch;
+  const showUsersSection = isAdmin && (settingsTab === "users" || showUnifiedSearch);
+  const showAuditSection = isAdmin && (settingsTab === "audit" || showUnifiedSearch);
 
   const isGroupExpanded = useCallback(
     (groupId: string) => {
@@ -341,11 +438,39 @@ export default function SettingsPage({ isAdmin = false }: SettingsPageProps) {
     return () => window.clearTimeout(timer);
   }, [payload, loading, dirtyKeys, drafts, persistDirtyFields]);
 
-  const showSystemSettings = !isAdmin || settingsTab === "system";
+  const showSystemSettings = !isAdmin || settingsTab === "system" || showUnifiedSearch;
+
+  const selectSettingsTab = (tab: typeof settingsTab) => {
+    setSearchQuery("");
+    setSettingsTab(tab);
+  };
 
   useEffect(() => {
     subpageMainRef.current?.scrollTo({ top: 0 });
-  }, [settingsTab]);
+  }, [settingsTab, showUnifiedSearch]);
+
+  useEffect(() => {
+    if (!showUnifiedSearch) {
+      setUserSearchMatch(null);
+      setAuditSearchMatch(null);
+    }
+  }, [showUnifiedSearch]);
+
+  const unifiedSearchPending =
+    showUnifiedSearch && (loading || userSearchMatch === null || auditSearchMatch === null);
+  const unifiedSearchEmpty =
+    showUnifiedSearch &&
+    !unifiedSearchPending &&
+    filteredGroups.length === 0 &&
+    userSearchMatch === false &&
+    auditSearchMatch === false;
+
+  const showSystemEmpty =
+    showSystemSettings &&
+    !loading &&
+    payload &&
+    filteredGroups.length === 0 &&
+    !showUnifiedSearch;
 
   const navItems = isAdmin
     ? ([
@@ -357,7 +482,16 @@ export default function SettingsPage({ isAdmin = false }: SettingsPageProps) {
 
   return (
     <div className={`app subpage-app${isAdmin ? " subpage-app--with-nav" : ""}`}>
-      <SubpageTopBar title={t("settings.title")} />
+      <SubpageTopBar title={t("settings.title")}>
+        <input
+          type="search"
+          className="settings-search subpage-top-bar-search"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          placeholder={t(isAdmin ? "settings.searchPlaceholderAdmin" : "settings.searchPlaceholder")}
+          aria-label={t(isAdmin ? "settings.searchPlaceholderAdmin" : "settings.searchPlaceholder")}
+        />
+      </SubpageTopBar>
 
       <div className="subpage-body">
         {isAdmin ? (
@@ -369,9 +503,9 @@ export default function SettingsPage({ isAdmin = false }: SettingsPageProps) {
                     key={item.id}
                     type="button"
                     role="tab"
-                    aria-selected={settingsTab === item.id}
-                    className={`settings-page-nav-item${settingsTab === item.id ? " active" : ""}`}
-                    onClick={() => setSettingsTab(item.id)}
+                    aria-selected={!showUnifiedSearch && settingsTab === item.id}
+                    className={`settings-page-nav-item${!showUnifiedSearch && settingsTab === item.id ? " active" : ""}`}
+                    onClick={() => selectSettingsTab(item.id)}
                   >
                     {item.label}
                   </button>
@@ -384,107 +518,64 @@ export default function SettingsPage({ isAdmin = false }: SettingsPageProps) {
         <div className="main subpage-main" ref={isAdmin ? subpageMainRef : undefined}>
           <div className={`subpage-content settings-page${isAdmin ? " settings-page--admin" : ""}`}>
             <div className="settings-page-main">
-          {showSystemSettings ? (
-            <div className="settings-page-toolbar">
-              <input
-                type="search"
-                className="settings-search settings-page-search"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder={t("settings.searchPlaceholder")}
-                aria-label={t("settings.searchPlaceholder")}
-              />
-            </div>
-          ) : null}
+              <div className="settings-page-body">
+                {loading ? (
+                  <p className="settings-page-status">{t("settings.loading")}</p>
+                ) : null}
+                {error ? (
+                  <div className="banner error settings-page-banner">{error}</div>
+                ) : null}
+                {notice ? (
+                  <div className="banner settings-page-banner">{notice}</div>
+                ) : null}
+                {saving ? (
+                  <p className="settings-page-status">{t("settings.saving")}</p>
+                ) : null}
 
-          <div className="settings-page-body">
-            {loading ? (
-              <p className="settings-page-status">{t("settings.loading")}</p>
-            ) : null}
-            {error ? (
-              <div className="banner error settings-page-banner">{error}</div>
-            ) : null}
-            {notice ? (
-              <div className="banner settings-page-banner">{notice}</div>
-            ) : null}
-            {saving ? (
-              <p className="settings-page-status">{t("settings.saving")}</p>
-            ) : null}
+                {unifiedSearchEmpty ? (
+                  <p className="settings-empty">{t("settings.noResults")}</p>
+                ) : null}
 
-            {isAdmin && settingsTab === "users" ? (
-              <div className="settings-page-section">
-                <UsersAdminSection />
+                {showSystemEmpty ? (
+                  <p className="settings-empty">{t("settings.noResults")}</p>
+                ) : null}
+
+                {showSystemSettings && !loading && payload ? (
+                  <SettingsGroups
+                    groups={filteredGroups}
+                    drafts={drafts}
+                    isGroupExpanded={isGroupExpanded}
+                    toggleGroup={toggleGroup}
+                    resetGroup={resetGroup}
+                    setDraft={setDraft}
+                    searchMode={showUnifiedSearch}
+                    showSectionTitle={isAdmin && !showUnifiedSearch}
+                  />
+                ) : null}
+
+                {showUsersSection || showAuditSection ? (
+                  <Suspense fallback={null}>
+                    {showUsersSection ? (
+                      <UsersAdminSection
+                        searchQuery={debouncedSearchQuery}
+                        searchMode={showUnifiedSearch}
+                        onSearchMatchChange={
+                          showUnifiedSearch ? setUserSearchMatch : undefined
+                        }
+                      />
+                    ) : null}
+                    {showAuditSection ? (
+                      <AuditLogAdminSection
+                        searchQuery={debouncedSearchQuery}
+                        searchMode={showUnifiedSearch}
+                        onSearchMatchChange={
+                          showUnifiedSearch ? setAuditSearchMatch : undefined
+                        }
+                      />
+                    ) : null}
+                  </Suspense>
+                ) : null}
               </div>
-            ) : null}
-            {isAdmin && settingsTab === "audit" ? (
-              <div className="settings-page-section">
-                <AuditLogAdminSection />
-              </div>
-            ) : null}
-
-            {showSystemSettings && !loading && payload && filteredGroups.length === 0 ? (
-              <p className="settings-empty">{t("settings.noResults")}</p>
-            ) : null}
-
-            {showSystemSettings ? (
-              <div className="settings-page-groups">
-                {filteredGroups.map((group) => {
-                  const expanded = isGroupExpanded(group.id);
-                  const groupLabel = t(`settings.groups.${group.id}`);
-                  return (
-                    <section
-                      key={group.id}
-                      className={`settings-group ${expanded ? "expanded" : "collapsed"}`}
-                    >
-                      <div className="settings-group-header">
-                        <button
-                          type="button"
-                          className="settings-group-toggle"
-                          onClick={() => toggleGroup(group.id)}
-                          aria-expanded={expanded}
-                          aria-controls={`settings-group-${group.id}`}
-                        >
-                          <span className="settings-group-chevron" aria-hidden="true">
-                            <ChevronDownIcon />
-                          </span>
-                          <span className="settings-group-title">{groupLabel}</span>
-                        </button>
-                        <button
-                          type="button"
-                          className="settings-reset-btn settings-group-reset-btn"
-                          onClick={() => resetGroup(group)}
-                          disabled={!canResetGroup(group, drafts)}
-                          aria-label={t("settings.resetSection", { section: groupLabel })}
-                        >
-                          {t("settings.reset")}
-                        </button>
-                        <span className="settings-group-count">
-                          {group.visibleFields.length}
-                        </span>
-                      </div>
-
-                      {expanded ? (
-                        <div
-                          id={`settings-group-${group.id}`}
-                          className="settings-fields"
-                        >
-                          {group.visibleFields.map((field) => (
-                            <SettingsFieldRow
-                              key={field.key}
-                              field={field}
-                              label={t(`settings.fields.${field.key}`)}
-                              draft={readDraftValue(field, drafts)}
-                              onDraftChange={setDraft}
-                            />
-                          ))}
-                        </div>
-                      ) : null}
-                    </section>
-                  );
-                })}
-              </div>
-            ) : null}
-          </div>
             </div>
           </div>
         </div>

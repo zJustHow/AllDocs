@@ -3,15 +3,14 @@ import uuid
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select
 
 from app.api.auth_deps import get_current_user
 from app.api.schemas import ChatRequest
 from app.config import get_settings
-from app.db.models import Message, User
+from app.db.models import User
 from app.db.session import async_session_factory
 from app.services.agent.answer_flow import persist_turn, stream_agent_answer
-from app.services.chat_sessions import get_or_create_chat_session
+from app.services.chat_sessions import get_or_create_chat_session, load_recent_chat_history
 from app.services.deps import get_agent_service
 from app.services.rag import detect_language
 
@@ -41,13 +40,7 @@ async def chat(payload: ChatRequest, user: User = Depends(get_current_user)):
         )
         await db.commit()
         session_id = session.id
-        history_result = await db.execute(
-            select(Message).where(Message.session_id == session_id).order_by(Message.created_at)
-        )
-        history = [
-            {"role": message.role, "content": message.content}
-            for message in history_result.scalars().all()
-        ]
+        history = await load_recent_chat_history(db, session_id)
 
     chunk_filters = payload.filters
     lang = detect_language(payload.message)

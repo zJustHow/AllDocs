@@ -8,7 +8,7 @@ from fastapi.responses import Response
 
 from app.api import admin, assets, auth, chat, documents, settings, ws_voice
 from app.db.session import async_session_factory, init_db
-from app.config import get_settings
+from app.config import get_settings, validate_settings_for_env
 from app.observability import (
     RequestObservabilityMiddleware,
     configure_logging,
@@ -24,6 +24,8 @@ configure_logging(get_settings().log_level)
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    settings = get_settings()
+    validate_settings_for_env(settings)
     await init_db()
     async with async_session_factory() as db:
         await db.run_sync(refresh_from_session)
@@ -49,7 +51,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=get_settings().cors_origin_list(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

@@ -85,8 +85,10 @@ describe("SettingsPage", () => {
     await screen.findByRole("heading", { name: /Management|管理/i });
     await user.type(screen.getByRole("searchbox"), "llm_api_key");
 
-    expect(screen.getByLabelText(/API Key/i)).toBeInTheDocument();
-    expect(screen.queryByLabelText(/^模型$|^Model$/i)).not.toBeInTheDocument();
+    expect(await screen.findByLabelText(/API Key/i)).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.queryByLabelText(/^模型$|^Model$/i)).not.toBeInTheDocument();
+    });
   });
 
   it("auto-saves dirty field changes", async () => {
@@ -207,7 +209,7 @@ describe("SettingsPage", () => {
     await screen.findByRole("heading", { name: /Management|管理/i });
     await user.type(screen.getByRole("searchbox"), "does-not-exist");
 
-    expect(await screen.findByText(/No matching settings|没有匹配的设置/i)).toBeInTheDocument();
+    expect(await screen.findByText(/No matching results|没有匹配的内容/i)).toBeInTheDocument();
   });
 
   it("expands collapsed groups while searching", async () => {
@@ -220,7 +222,7 @@ describe("SettingsPage", () => {
     expect(screen.queryByLabelText(/模型|Model/i)).not.toBeInTheDocument();
 
     await user.type(screen.getByRole("searchbox"), "llm_model");
-    expect(screen.getByLabelText(/模型|Model/i)).toBeInTheDocument();
+    expect(await screen.findByLabelText(/模型|Model/i)).toBeInTheDocument();
   });
 
   it("links back to the main app from the top bar", async () => {
