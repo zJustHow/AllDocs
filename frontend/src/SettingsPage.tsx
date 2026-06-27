@@ -175,6 +175,7 @@ export default function SettingsPage({ isAdmin = false }: SettingsPageProps) {
   );
   const savingRef = useRef(false);
   const draftsRef = useRef(drafts);
+  const subpageMainRef = useRef<HTMLDivElement>(null);
   draftsRef.current = drafts;
 
   const load = useCallback(async () => {
@@ -341,7 +342,10 @@ export default function SettingsPage({ isAdmin = false }: SettingsPageProps) {
   }, [payload, loading, dirtyKeys, drafts, persistDirtyFields]);
 
   const showSystemSettings = !isAdmin || settingsTab === "system";
-  const isAdminSectionTab = isAdmin && settingsTab !== "system";
+
+  useEffect(() => {
+    subpageMainRef.current?.scrollTo({ top: 0 });
+  }, [settingsTab]);
 
   const navItems = isAdmin
     ? ([
@@ -377,11 +381,9 @@ export default function SettingsPage({ isAdmin = false }: SettingsPageProps) {
           </aside>
         ) : null}
 
-        <div className="main subpage-main">
+        <div className="main subpage-main" ref={isAdmin ? subpageMainRef : undefined}>
           <div className={`subpage-content settings-page${isAdmin ? " settings-page--admin" : ""}`}>
-            <div
-              className={`settings-page-main${isAdminSectionTab ? " settings-page-main--section-tab" : ""}`}
-            >
+            <div className="settings-page-main">
           {showSystemSettings ? (
             <div className="settings-page-toolbar">
               <input

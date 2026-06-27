@@ -212,7 +212,7 @@ print_next_steps() {
   echo "  5. push 到 main 触发自动部署，或手动执行:"
   echo "       docker compose -f docker-compose.prod.yml up -d --build"
   echo
-  echo "  查看日志: docker compose -f docker-compose.prod.yml logs -f api worker"
+  echo "  查看日志: docker compose -f docker-compose.prod.yml logs -f api worker-ingestion worker-maintenance"
   echo
 }
 

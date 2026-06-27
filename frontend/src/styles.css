@@ -1967,10 +1967,50 @@ button {
   overflow: visible;
 }
 
+.subpage-app--with-nav .subpage-main {
+  flex: 1;
+  min-width: 0;
+  margin-top: calc(-1 * var(--app-padding));
+  padding-top: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  display: flex;
+  flex-direction: column;
+}
+
 .subpage-app--with-nav .subpage-main > .subpage-content.settings-page {
-  flex: 1 1 0;
-  min-height: 0;
-  overflow: hidden;
+  flex: 1 0 auto;
+  min-height: min-content;
+  overflow: visible;
+}
+
+.subpage-app--with-nav .subpage-main > .subpage-content.settings-page--admin {
+  padding-top: var(--app-padding);
+  box-sizing: border-box;
+}
+
+.subpage-app--with-nav .settings-page {
+  flex: 1 0 auto;
+  min-height: min-content;
+  display: flex;
+  flex-direction: column;
+}
+
+.subpage-app--with-nav .settings-page-main {
+  flex: 1 0 auto;
+  min-height: min-content;
+}
+
+.subpage-app--with-nav .settings-page--admin .settings-page-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--bg-base);
+}
+
+.subpage-app--with-nav .settings-page-nav {
+  margin-top: var(--app-padding);
 }
 
 .subpage-app .subpage-main:has(.settings-page-footer-slot) > .subpage-content {
@@ -1994,23 +2034,6 @@ button {
   width: 100%;
   gap: var(--app-padding);
   align-items: stretch;
-}
-
-.subpage-app--with-nav .subpage-main {
-  flex: 1;
-  min-width: 0;
-  margin-top: var(--app-padding);
-  padding-top: 0;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-}
-
-.subpage-app--with-nav .settings-page {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
 }
 
 .subpage-app .subpage-main:has(.settings-page-footer-slot) {
@@ -2044,10 +2067,6 @@ button {
   padding-bottom: calc(24px + var(--layout-header) + var(--app-padding));
 }
 
-.subpage-app--with-nav .settings-page-nav {
-  margin-top: var(--app-padding);
-}
-
 .subpage-body {
   display: flex;
   flex: 1;
@@ -2064,7 +2083,6 @@ button {
   flex-direction: column;
 }
 
-.subpage-app--with-nav .settings-page,
 .subpage-app .settings-page:has(.settings-page-footer-slot) {
   flex: 1 1 0;
   min-height: 0;
@@ -2201,6 +2219,12 @@ button {
   padding-top: 20px;
 }
 
+.subpage-app--with-nav .settings-page--admin .settings-page-body {
+  flex: 1 0 auto;
+  min-height: min-content;
+  overflow: visible;
+}
+
 .settings-page-groups {
   display: flex;
   flex-direction: column;
@@ -2215,53 +2239,6 @@ button {
 .settings-page-section .settings-panel-banner {
   padding: 0;
   margin: 0 0 12px;
-}
-
-.settings-page-main--section-tab {
-  flex: 1;
-  min-height: 0;
-  width: 100%;
-  align-items: center;
-}
-
-.subpage-app--with-nav .settings-page-main--section-tab .settings-page-body {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  padding: 20px var(--chat-inline-padding) 24px;
-  overflow: hidden;
-  background: transparent;
-  border-radius: 0;
-  box-shadow: none;
-}
-
-.settings-page-main--section-tab .settings-page-section {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  padding: 0;
-  width: 100%;
-  box-sizing: border-box;
-}
-
-.settings-page-main--section-tab .users-admin-section,
-.settings-page-main--section-tab .audit-log-section {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-.settings-page-main--section-tab .users-admin-list,
-.settings-page-main--section-tab .audit-log-list {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  -webkit-overflow-scrolling: touch;
 }
 
 .settings-page-footer-slot {
@@ -3347,13 +3324,14 @@ button {
   }
 
   .subpage-app--with-nav .subpage-main {
-    margin-top: 0;
+    margin-top: -12px;
     padding-top: 0;
-    overflow: hidden;
+    overflow-x: hidden;
+    overflow-y: auto;
   }
 
-  .subpage-app--with-nav .settings-page-main--section-tab .settings-page-body {
-    border-radius: 0;
+  .subpage-app--with-nav .subpage-main > .subpage-content.settings-page--admin {
+    padding-top: 12px;
   }
 
   .subpage-app--with-nav .settings-page-nav {
